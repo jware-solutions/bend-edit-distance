@@ -1,8 +1,6 @@
 import pytest
 
-from tests.helpers import bend_lengths
-
-pytestmark = pytest.mark.smoke
+from tests.helpers import bend_align, cpp_edlib_align
 
 
 @pytest.mark.parametrize("query,target", [
@@ -11,9 +9,11 @@ pytestmark = pytest.mark.smoke
     ("--threads", "--gpu"), ("--help", "--bend-help"),
     ("';$(echo x)", '"\\*'),
 ])
-def test_python_bend_integration(bend_binary, query, target):
-    assert bend_lengths(query, target, binary=bend_binary) == (len(query), len(target))
+def test_python_bend_integration(bend_binary, cpp_binary, query, target):
+    assert bend_align(query, target, binary=bend_binary) == cpp_edlib_align(
+        query, target, binary=cpp_binary,
+    )
 
 
 def test_native_cpu_threads(bend_binary):
-    assert bend_lengths("ACGT", "ACG", binary=bend_binary, threads=2) == (4, 3)
+    assert bend_align("ACGT", "ACG", binary=bend_binary, threads=2) == 1

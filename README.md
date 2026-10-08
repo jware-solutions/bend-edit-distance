@@ -32,48 +32,66 @@ failures, process failures, invalid output and timeouts fail tests with command
 diagnostics. Build products and the Python environment stay under ignored
 `build/`; no existing Edlib CMake build is needed.
 
-## Starter protocol
+## Alignment protocol
 
-`main.bend` currently returns the two sequence lengths, as in the proposal:
+`main.bend` returns the global Levenshtein edit distance:
 
 ```text
 build/bend-edlib --threads 1 -- ACGT ACG
-4,3
+1
 ```
 
-The two independent length computations use Bend's parallel binding. The default
-suite checks normal and empty arguments, whitespace, literal shell characters,
-arguments resembling runtime flags, two CPU threads, invalid argument counts,
-the C++ oracle, subprocess error handling and `bend PROOF.bend`. Alignment tests
-are explicitly skipped until enabled; a passing smoke suite validates the bridge,
-not alignment correctness.
+The default suite checks distances for normal and empty arguments, whitespace,
+literal shell characters, arguments resembling runtime flags, two CPU threads,
+invalid argument counts, the C++ oracle, subprocess error handling and
+`bend PROOF.bend`. `--alignment` adds the extended differential suite.
 
 `IO.args()` includes the program name in this compiler version. Keep the
 `Con{_, Con{query, Con{target, Nil{}}}}` pattern in `run`. The Python adapter places
 `--` before the sequences so strings such as `--threads` reach your program
 unchanged. Exactly two sequences are required; other argument counts exit 2.
 
-## Implement and test alignment
+## Implementation
 
-1. Implement your distance function in `main.bend` and change `response` to return
-   its decimal distance, for example `Nat.show(edlib_align(query, target))` for
-   a function returning `Nat`. Keep the CLI adapter and print only that result
-   on stdout; send diagnostics to stderr.
-2. Replace the starter smoke laws in `LAWS.bend` with the intended alignment
-   properties and update `PROOF.bend` to prove them.
-3. Run the distance suite:
+The Bend implementation ports the distance path from the vendored `edlib.cpp`:
+`build_peq`/`build_peq_word` build equality masks, `calculate_block` advances a
+Myers bit-vector block, `get_block_cell_value` removes wildcard padding from the
+final score, and `myers_calc_edit_distance_nw` advances the global alignment.
+`edlib_align` handles empty inputs and selects the shorter sequence as the query.
+
+Blocks use native `U32` words with 32 query positions, adapting Edlib's 64-bit
+words. Immutable byte-indexed query tables are built with balanced parallel
+calls; the two input lengths are also computed in parallel. Blocks within a
+column and consecutive columns remain sequential because their carries depend
+on the preceding calculation. The unlimited-distance implementation evaluates
+all blocks directly, without threshold-band retries or traceback storage.
+For lengths `m <= n`, it advances `n * ceil(m / 32)` blocks and stores only the
+current column and query profiles.
+
+`LAWS.bend` states quantified empty-input and wildcard-padding laws plus concrete
+alignment examples; `PROOF.bend` proves them. These laws cover those properties,
+while differential tests check the general distance implementation against Edlib.
+
+## Test alignment
+
+Run the extended distance suite from PowerShell:
 
 ```powershell
 python run_tests.py --alignment -v
 ```
 
-`--alignment` replaces the temporary length tests with differential tests against
-C++ Edlib. It tests known examples, empty inputs, insertions/deletions/substitutions,
-63/64/65 and 127/128/129 length boundaries, 100 reproducible random DNA pairs, and
-multiple CPU threads. It deliberately fails against the starter length response.
-Use it from the start of algorithm development for a red/green TDD cycle.
+Or invoke WSL directly:
 
-The initial distance contract is **NW/global Levenshtein distance**, unit costs,
+```powershell
+wsl bash -ic 'python3 run_tests.py --alignment -v'
+```
+
+The suite checks known examples, empty inputs, insertions/deletions/substitutions,
+32-bit and 64-bit block boundaries through 257 characters, every final-word
+padding size, large distances, 100 reproducible random DNA pairs, ASCII pairs up
+to 1,024 characters, and one, two and four CPU threads.
+
+The distance contract is **NW/global Levenshtein distance**, unit costs,
 unlimited threshold (`k = -1`), and one nonnegative decimal integer on stdout.
 Inputs are ASCII strings so Edlib's byte semantics match Bend's characters.
 The CLI bridge cannot transport NUL bytes and has operating-system argument

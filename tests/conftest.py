@@ -11,7 +11,7 @@ from tests.helpers import BEND_BINARY, CPP_BINARY, ROOT, execute
 def pytest_addoption(parser):
     parser.addoption(
         "--alignment", action="store_true",
-        help="Test main.bend's integer global distance protocol instead of smoke lengths",
+        help="Enable the extended differential global-distance tests",
     )
 
 
@@ -20,8 +20,6 @@ def pytest_collection_modifyitems(config, items):
     for item in items:
         if "alignment" in item.keywords and not alignment:
             item.add_marker(pytest.mark.skip(reason="Enable distance tests with --alignment"))
-        if "smoke" in item.keywords and alignment:
-            item.add_marker(pytest.mark.skip(reason="Length protocol replaced by alignment"))
 
 
 @pytest.fixture(scope="session")

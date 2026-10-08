@@ -5,7 +5,7 @@ import shlex
 
 import pytest
 
-from tests.helpers import BEND_BINARY, CPP_BINARY, ROOT, execute
+from tests.helpers import BEND_BINARY, CPP_BINARY, DP_BINARY, ROOT, execute
 
 
 def pytest_addoption(parser):
@@ -42,6 +42,13 @@ def bend_binary(bend_tool):
     # Rebuild once every run, so changes to imported .bend files are never stale.
     execute([bend_tool, ROOT / "main.bend", "-o", BEND_BINARY], timeout=180)
     return BEND_BINARY
+
+
+@pytest.fixture(scope="session")
+def dp_binary(bend_tool):
+    DP_BINARY.parent.mkdir(parents=True, exist_ok=True)
+    execute([bend_tool, ROOT / "tests" / "distance_dp.bend", "-o", DP_BINARY], timeout=180)
+    return DP_BINARY
 
 
 @pytest.fixture(scope="session")

@@ -1,9 +1,10 @@
 # bend-edlib
 
-Python tests call a compiled native executable built from the root `main.bend`.
-Each pytest session compiles it once, then invokes it with literal CLI arguments
-using `subprocess`. The test framework also compiles a small oracle against the
-vendored C++ Edlib. Neither helper implements the Bend alignment algorithm.
+Python tests compare three native executables on identical ordered input pairs:
+two-row DP from `DistanceDP.bend`, Myers from `main.bend`, and a small oracle
+against the vendored C++ Edlib. Each pytest session compiles each executable
+once, then invokes it with literal CLI arguments using `subprocess`. The Python
+helpers only transport inputs and validate outputs.
 
 ## Run tests
 
@@ -26,8 +27,8 @@ pytest is pinned in `requirements-test.txt`. When upgrading Bend, check the
 argument convention and native compilation before updating the pin. If Edlib's
 submodule is missing, run `git submodule update --init vendor/edlib`.
 
-Every run rebuilds the native binaries to include edits to `main.bend` and its
-imports. The fixtures compile each executable only once per session. Build
+Every run rebuilds the native binaries to include edits to both Bend entry
+points and their imports. The fixtures compile each executable only once per session. Build
 failures, process failures, invalid output and timeouts fail tests with command
 diagnostics. Build products and the Python environment stay under ignored
 `build/`; no existing Edlib CMake build is needed.
@@ -41,8 +42,8 @@ build/bend-edlib --threads 1 -- ACGT ACG
 1
 ```
 
-The default suite checks distances for normal and empty arguments, whitespace,
-literal shell characters, arguments resembling runtime flags, two CPU threads,
+The default suite compares all three algorithms on known distances, normal and
+empty arguments, whitespace, literal shell characters, arguments resembling runtime flags, two CPU threads,
 invalid argument counts, the C++ oracle, subprocess error handling and
 `bend PROOF.bend`. `--alignment` adds the extended differential suite.
 
@@ -53,7 +54,8 @@ unchanged. Exactly two sequences are required; other argument counts exit 2.
 
 ## Implementation
 
-The Bend implementation ports the distance path from the vendored `edlib.cpp`:
+The Myers implementation in `main.bend` ports the distance path from the
+vendored `edlib.cpp`:
 `build_peq`/`build_peq_word` build equality masks, `calculate_block` advances a
 Myers bit-vector block, `get_block_cell_value` removes wildcard padding from the
 final score, and `myers_calc_edit_distance_nw` advances the global alignment.
@@ -68,9 +70,27 @@ all blocks directly, without threshold-band retries or traceback storage.
 For lengths `m <= n`, it advances `n * ceil(m / 32)` blocks and stores only the
 current column and query profiles.
 
-`LAWS.bend` states quantified empty-input and wildcard-padding laws plus concrete
-alignment examples; `PROOF.bend` proves them. These laws cover those properties,
-while differential tests check the general distance implementation against Edlib.
+`DistanceDP.bend` independently exports `distance(query, target) -> Nat` and
+imports only `Base`. It implements the two-row Levenshtein recurrence:
+
+```text
+D[0,j] = j; D[i,0] = i
+D[i,j] = min(D[i-1,j] + 1, D[i,j-1] + 1,
+             D[i-1,j-1] + (row[i-1] != column[j-1]))
+```
+
+The shorter sequence supplies the columns, so both rows have
+`min(m, n) + 1` cells. Each row consumes its predecessor; no distance matrix
+or traceback is retained. This takes `O(m*n)` time and `O(min(m,n))` score
+storage. Scores use `U32`, as in Myers. Input lengths are computed in parallel;
+cells and rows remain sequential because each depends on its predecessor.
+The existing CLI continues to use Myers. Tests compile `tests/distance_dp.bend`
+as `build/bend-distance-dp`, which calls DP directly with the same CLI contract.
+
+`LAWS.bend` states quantified empty-input laws for both implementations,
+Myers wildcard padding, DP's recurrence and initial row width, and concrete
+row and distance examples; `PROOF.bend` proves them. These laws cover those
+properties; three-way differential tests check the broader distance behavior.
 
 ## Limitations
 
@@ -93,25 +113,28 @@ The following features and checks are still missing from this repository:
   to operating-system argument-length limits. Practical sequence-length limits
   are not yet documented or enforced. Each pair starts a new process; there is
   no persistent worker with explicit byte lengths.
-- **Correctness coverage:** there is no independent, simpler Bend alignment
-  algorithm (dynamic programming) for cross-checking Myers. Exhaustive small-input
-  testing, property-based testing with reduced counterexamples, fuzzing,
-  systematic checks of lengths 1-32 and individual bit-vector steps,
-  and some case-sensitivity, repetitive, imbalanced-length and upstream
+- **Correctness coverage:** independent DP now cross-checks Myers and C++ Edlib,
+  including every pair of binary-alphabet strings up to length three and highly
+  unequal lengths in both orders. Property-based testing with reduced
+  counterexamples, fuzzing, systematic checks of lengths 1-32 and individual
+  bit-vector steps, and broader case-sensitivity, repetitive and upstream
   regressions remain to be added. Extended alignment tests require
-  `--alignment`; they do not run by default.
-- **Proof coverage:** the laws cover empty inputs, one padding property and six
-  examples. They do not prove general identity, carry correctness, equivalence
+  `--alignment`; known-distance and unequal-length comparisons run by default.
+- **Proof coverage:** the laws cover empty inputs, wildcard padding, DP's cell
+  recurrence and initial row width, and concrete row and distance examples.
+  They do not prove general identity, carry correctness, equivalence
   with dynamic programming, or optimality for arbitrary inputs. The proof test
   uses the regular checker, and kernel verification with `--verdict` was
   unconfirmed in the reviewed setup because Lean 4.34.0 was missing.
-- **Performance and batching:** there are no reproducible benchmarks or measured
-  speedups over C++ Edlib. Myers evaluates every block without threshold bands,
+- **Performance and batching:** the reproducible comparison reports native CLI
+  latency, including startup; alignment-only benchmarks and measured algorithm
+  speedups over C++ Edlib remain absent. Myers evaluates every block without threshold bands,
   early rejection or adaptive retries. Parallelism currently covers
   preprocessing for one pair; there is no CPU batch API, GPU entry point or
   genuine-device test. Tests with multiple CPU threads check correctness only.
-- **Library and release readiness:** the algorithm still lives in `main.bend`
-  alongside the CLI. A stable reusable library API, release/version metadata,
+- **Library and release readiness:** Myers still lives in `main.bend` alongside
+  the CLI; `DistanceDP.bend` exports a reusable DP function. A stable library API
+  covering both algorithms, release/version metadata,
   compatibility matrix, project CI and automated clean-checkout tool setup are
   still missing; the test runner relies on separately installed system tools.
 
@@ -171,10 +194,12 @@ Or invoke WSL directly:
 wsl bash -ic 'python3 run_tests.py --alignment -v'
 ```
 
+All three algorithms receive the same ordered pair in every differential comparison.
 The suite checks known examples, empty inputs, insertions/deletions/substitutions,
 32-bit and 64-bit block boundaries through 257 characters, every final-word
 padding size, large distances, 100 reproducible random DNA pairs, ASCII pairs up
-to 1,024 characters, and one, two and four CPU threads.
+to 1,024 characters, every pair of binary-alphabet strings up to length three,
+highly unequal lengths in both orders, and one, two and four Bend CPU threads.
 
 The distance contract is **NW/global Levenshtein distance**, unit costs,
 unlimited threshold (`k = -1`), and one nonnegative decimal integer on stdout.
@@ -189,14 +214,14 @@ session fixtures and adapters:
 
 ```python
 import pytest
-from tests.helpers import bend_align, cpp_edlib_align
+from tests.helpers import bend_align, bend_dp_align, cpp_edlib_align
 
 @pytest.mark.alignment
-def test_my_case(bend_binary, cpp_binary):
+def test_my_case(bend_binary, dp_binary, cpp_binary):
     query, target = "ACGT", "AGT"
-    assert bend_align(query, target, binary=bend_binary) == cpp_edlib_align(
-        query, target, binary=cpp_binary,
-    )
+    expected = cpp_edlib_align(query, target, binary=cpp_binary)
+    assert bend_align(query, target, binary=bend_binary) == expected
+    assert bend_dp_align(query, target, binary=dp_binary) == expected
 ```
 
 Normal pytest selectors work through the runner, for example
@@ -205,6 +230,21 @@ Normal pytest selectors work through the runner, for example
 setup, run `build/test-venv/bin/python -m pytest tests/ -v` (add `--alignment`
 for distances). Run `bend PROOF.bend` in WSL before committing, as required by
 `AGENTS.md`.
+
+After running the tests to rebuild the binaries, compare distances and timings
+on a fixed corpus from PowerShell at the project root:
+
+```powershell
+wsl --exec python3 -m tests.compare --repeats 5 --threads 1
+```
+
+Inside WSL, use `python3 -m tests.compare` with the same options. The report is
+CSV with one shared distance and median milliseconds for DP, Myers and C++
+Edlib. It validates every result, uses seed `20261008`, warms each binary once
+per pair, and rotates invocation order. These are **native CLI wall times**,
+including process and runtime startup; they do not isolate alignment time.
+The empty-input case makes the startup contribution visible. Timing differences
+are observations, not test pass/fail thresholds.
 
 The CLI convention follows the installed `bend guide`; see also the official
 [Bend guide](https://github.com/bendlang/bend/blob/main/guide/GUIDE.md) and

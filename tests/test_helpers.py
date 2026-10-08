@@ -2,7 +2,7 @@ import sys
 
 import pytest
 
-from tests.helpers import bend_align, bend_lengths, cpp_edlib_align, execute
+from tests.helpers import bend_align, bend_dp_align, bend_lengths, cpp_edlib_align, execute
 
 
 def test_subprocess_failure_keeps_diagnostics():
@@ -20,13 +20,13 @@ def test_subprocess_timeout():
         execute([sys.executable, "-c", "import time; time.sleep(5)"], timeout=0.1)
 
 
-@pytest.mark.parametrize("helper", [bend_lengths, bend_align, cpp_edlib_align])
+@pytest.mark.parametrize("helper", [bend_lengths, bend_align, bend_dp_align, cpp_edlib_align])
 def test_nul_is_rejected_before_launch(helper):
     with pytest.raises(ValueError, match="NUL"):
         helper("A\0C", "T")
 
 
-@pytest.mark.parametrize("helper", [bend_align, cpp_edlib_align])
+@pytest.mark.parametrize("helper", [bend_align, bend_dp_align, cpp_edlib_align])
 def test_distance_rejects_non_ascii(helper):
     with pytest.raises(ValueError, match="ASCII"):
         helper("é", "e")
@@ -38,6 +38,7 @@ def test_distance_rejects_non_ascii(helper):
     (bend_align, "4,3"), (bend_align, "-1"),
     (bend_align, "log\n1"), (bend_align, "1 2"), (bend_align, ""),
     (cpp_edlib_align, "log\n1"),
+    (bend_dp_align, "log\n1"),
 ])
 def test_malformed_native_output_fails(tmp_path, helper, output):
     binary = tmp_path / "bad-response"

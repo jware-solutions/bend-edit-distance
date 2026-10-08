@@ -9,6 +9,7 @@ from typing import Sequence
 
 ROOT = Path(__file__).resolve().parents[1]
 BEND_BINARY = ROOT / "build" / "bend-edlib"
+DP_BINARY = ROOT / "build" / "bend-distance-dp"
 CPP_BINARY = ROOT / "build" / "edlib-oracle"
 
 
@@ -89,3 +90,11 @@ def cpp_edlib_align(
 ) -> int:
     _validate_sequences(query, target, ascii_only=True)
     return _distance(execute([binary, query, target], timeout=timeout).stdout.strip())
+
+
+def bend_dp_align(
+    query: str, target: str, *, binary: Path = DP_BINARY,
+    timeout: float = 10, threads: int = 1,
+) -> int:
+    """Call the independent two-row DP executable, with the same protocol."""
+    return bend_align(query, target, binary=binary, timeout=timeout, threads=threads)

@@ -44,13 +44,37 @@ build/bend-edlib --threads 1 -- ACGT ACG
 
 The default suite compares all three algorithms on known distances, normal and
 empty arguments, whitespace, literal shell characters, arguments resembling runtime flags, two CPU threads,
-invalid argument counts, the C++ oracle, subprocess error handling and
+invalid argument counts, Unicode and length-limit rejections, the C++ oracle, subprocess error handling and
 `bend PROOF.bend`. `--alignment` adds the extended differential suite.
 
 `IO.args()` includes the program name in this compiler version. Keep the
 `Con{_, Con{query, Con{target, Nil{}}}}` pattern in `run`. The Python adapter places
 `--` before the sequences so strings such as `--threads` reach your program
 unchanged. Exactly two sequences are required; other argument counts exit 2.
+
+Both native Bend executables validate each sequence before computing a distance:
+
+- Characters must be **non-NUL ASCII (U+0001 through U+007F)**. Whitespace,
+  control characters, DEL and strings resembling runtime flags are allowed.
+  Non-ASCII characters are rejected even when both strings are identical or
+  the other string is empty. UTF-8 text is not interpreted as byte input.
+- Each sequence may contain **0 through 4,096 characters**, inclusive. This is
+  an application limit per argument, not a limit on the sum of their lengths
+  or on the edit distance. On supported inputs ASCII characters are one byte.
+- Unsupported characters or excessive lengths exit **2**, write a diagnostic
+  to **stderr**, and leave **stdout empty**. Invalid argument counts use the
+  same error protocol. For example, `build/bend-edlib -- Ā Ā` reports an ASCII
+  error instead of a distance.
+
+The 4,096-character cap bounds query-profile allocation and alignment work:
+Myers advances at most `4096 * 128` blocks, and the DP test executable computes
+at most `4096 * 4096` cells. It also keeps scores well inside `U32` and arguments
+below the tested WSL/Linux transport limits. This is a conservative supported
+size, not a universal latency guarantee. `Cli.bend` validates both inputs in
+parallel with bounded scans (at most 4,097 characters per sequence), before
+either algorithm or its empty-input shortcuts run. The Python test adapters
+also check lengths before launching a process. The pure distance functions
+do not perform this CLI validation; callers must respect the supported domain.
 
 ## Implementation
 
@@ -89,7 +113,9 @@ as `build/bend-distance-dp`, which calls DP directly with the same CLI contract.
 
 `LAWS.bend` states quantified empty-input laws for both implementations,
 Myers wildcard padding, DP's recurrence and initial row width, and concrete
-row and distance examples; `PROOF.bend` proves them. These laws cover those
+row, distance and CLI-validation examples; `PROOF.bend` proves them. The CLI
+laws also record the length cap, empty inputs and exhausted scan capacity.
+These laws cover those
 properties; three-way differential tests check the broader distance behavior.
 
 ## Limitations
@@ -105,14 +131,12 @@ The following features and checks are still missing from this repository:
   descriptions of the edits) are unsupported. The API and C++ test oracle return
   only a nonnegative distance; they do not expose Edlib's full configuration,
   status, task-dependent results, or `-1` values for missing results/positions.
-- **Input validation:** the Python distance adapters reject non-ASCII text, but
-  the executable itself does not. Unsupported Unicode can silently produce wrong
-  distances: aligning `"Ā"` with `"Ā"` returned `1` in the review. Use ASCII only.
 - **Input transport and size:** command-line arguments cannot carry embedded
   NUL bytes, do not provide a protocol for all 256 byte values, and are subject
-  to operating-system argument-length limits. Practical sequence-length limits
-  are not yet documented or enforced. Each pair starts a new process; there is
-  no persistent worker with explicit byte lengths.
+  to operating-system argument-length limits. The native Bend CLI explicitly
+  rejects non-ASCII characters and sequences longer than 4,096 characters.
+  Each pair starts a new process; there is no persistent worker with explicit
+  byte lengths or support for larger inputs.
 - **Correctness coverage:** independent DP now cross-checks Myers and C++ Edlib,
   including every pair of binary-alphabet strings up to length three and highly
   unequal lengths in both orders. Property-based testing with reduced
@@ -121,7 +145,8 @@ The following features and checks are still missing from this repository:
   regressions remain to be added. Extended alignment tests require
   `--alignment`; known-distance and unequal-length comparisons run by default.
 - **Proof coverage:** the laws cover empty inputs, wildcard padding, DP's cell
-  recurrence and initial row width, and concrete row and distance examples.
+  recurrence and initial row width, concrete row and distance examples, and
+  bounded CLI-validation cases.
   They do not prove general identity, carry correctness, equivalence
   with dynamic programming, or optimality for arbitrary inputs. The proof test
   uses the regular checker, and kernel verification with `--verdict` was
@@ -203,7 +228,10 @@ highly unequal lengths in both orders, and one, two and four Bend CPU threads.
 
 The distance contract is **NW/global Levenshtein distance**, unit costs,
 unlimited threshold (`k = -1`), and one nonnegative decimal integer on stdout.
-Inputs are ASCII strings so Edlib's byte semantics match Bend's characters.
+Inputs are non-NUL ASCII strings of at most 4,096 characters each, so Edlib's
+byte semantics match Bend's characters. Direct native CLI tests cover Unicode
+rejection in either argument (including empty counterparts), every non-NUL
+ASCII character, and accepted/rejected length boundaries on one and two threads.
 The CLI bridge cannot transport NUL bytes and has operating-system argument
 length limits; the persistent binary worker from the proposal remains a later
 extension. Prefix/infix modes, thresholds and alignment paths need new protocol

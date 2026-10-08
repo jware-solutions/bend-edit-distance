@@ -1,6 +1,7 @@
 import Base
 import ./main.bend as Main
 import ./DistanceDP.bend as DP
+import ./Cli.bend as CLI
 
 # NW boundary conditions: deleting or inserting a whole sequence costs its
 # length. These quantify over every string, rather than selected examples.
@@ -82,10 +83,42 @@ law dp_insertion:
 law dp_example:
   {DP.distance("kitten", "sitting") == 3n : Nat}
 
+# The bounded CLI validator is shared by both native Bend executables.
+law cli_empty:
+  for remaining: Nat
+  {CLI.scan("", remaining) == CLI.Supported{} : CLI.InputStatus}
+
+law cli_no_capacity:
+  for h: Char
+  for tail: String
+  {CLI.scan(SCon{h, tail}, 0n) == CLI.TooLong{} : CLI.InputStatus}
+
+law cli_ascii_edges:
+  {CLI.scan(SCon{Chr{1}, SCon{Chr{127}, ""}}, 2n) == CLI.Supported{} : CLI.InputStatus}
+
+law cli_non_ascii:
+  {CLI.validate(SCon{Chr{256}, ""}, SCon{Chr{256}, ""}) == CLI.NonAscii{} : CLI.InputStatus}
+
+law cli_empty_query_non_ascii:
+  {CLI.validate("", SCon{Chr{256}, ""}) == CLI.NonAscii{} : CLI.InputStatus}
+
+law cli_empty_target_non_ascii:
+  {CLI.validate(SCon{Chr{256}, ""}, "") == CLI.NonAscii{} : CLI.InputStatus}
+
+law cli_nul:
+  {CLI.scan(SCon{Chr{0}, ""}, 1n) == CLI.NonAscii{} : CLI.InputStatus}
+
+law cli_length_limit:
+  {CLI.max_sequence_length() == 4096n : Nat}
+
 # CLI contract (checked by Python integration tests):
 # - Exactly two positional sequence arguments after the program name.
 # - Successful stdout contains only the response and a trailing newline.
-# - Invalid argument counts exit with status 2.
-# - ASCII sequences, NW/global mode, unit edit costs,
+# - Invalid argument counts, non-ASCII characters and overlong inputs exit 2,
+#   with a diagnostic on stderr and empty stdout, before distance evaluation.
+# - Each sequence has at most 4096 characters (empty is allowed), U+0001..007F.
+#   This bounds preprocessing, U32 scores and quadratic DP work. Each scan
+#   examines at most 4097 characters; the two scans run in parallel.
+# - Supported sequences use NW/global mode, unit edit costs,
 #   unlimited distance (k = -1), one nonnegative decimal integer on stdout.
 # - CLI arguments cannot contain NUL; use a future binary worker for that.

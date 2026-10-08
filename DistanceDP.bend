@@ -2,7 +2,7 @@ import Base
 
 # Independent NW/global Levenshtein distance with unit edit costs.
 # Keep only the previous and current rows, each min(m, n) + 1 cells.
-# U32 scores have the same practical length limit as the Myers implementation.
+# The CLI caps each input at 4096 characters before calling either algorithm.
 
 def initial_row(length: Nat, +column: U32) -> List<U32>:
   match length:

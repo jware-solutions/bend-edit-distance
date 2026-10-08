@@ -11,6 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 BEND_BINARY = ROOT / "build" / "bend-edlib"
 DP_BINARY = ROOT / "build" / "bend-distance-dp"
 CPP_BINARY = ROOT / "build" / "edlib-oracle"
+MAX_SEQUENCE_LENGTH = 4096
 
 
 def execute(
@@ -43,6 +44,10 @@ def _validate_sequences(query: str, target: str, *, ascii_only: bool = False) ->
             raise ValueError("CLI sequences cannot contain NUL; use a binary worker")
         if ascii_only and not sequence.isascii():
             raise ValueError("Distance tests use ASCII so Bend characters match Edlib bytes")
+        if len(sequence) > MAX_SEQUENCE_LENGTH:
+            raise ValueError(
+                f"Sequence length exceeds maximum of {MAX_SEQUENCE_LENGTH} characters per sequence"
+            )
 
 
 def bend_output(

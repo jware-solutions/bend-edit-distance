@@ -75,3 +75,27 @@ def Laws.dp_insertion():
 
 def Laws.dp_example():
   {==}
+
+def Laws.cli_empty(remaining):
+  {==}
+
+def Laws.cli_no_capacity(h, tail):
+  {==}
+
+def Laws.cli_ascii_edges():
+  {==}
+
+def Laws.cli_non_ascii():
+  {==}
+
+def Laws.cli_empty_query_non_ascii():
+  {==}
+
+def Laws.cli_empty_target_non_ascii():
+  {==}
+
+def Laws.cli_nul():
+  {==}
+
+def Laws.cli_length_limit():
+  {==}

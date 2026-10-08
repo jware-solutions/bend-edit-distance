@@ -2,7 +2,9 @@ import sys
 
 import pytest
 
-from tests.helpers import bend_align, bend_dp_align, bend_lengths, cpp_edlib_align, execute
+from tests.helpers import (
+    MAX_SEQUENCE_LENGTH, bend_align, bend_dp_align, bend_lengths, cpp_edlib_align, execute,
+)
 
 
 def test_subprocess_failure_keeps_diagnostics():
@@ -27,9 +29,23 @@ def test_nul_is_rejected_before_launch(helper):
 
 
 @pytest.mark.parametrize("helper", [bend_align, bend_dp_align, cpp_edlib_align])
-def test_distance_rejects_non_ascii(helper):
+@pytest.mark.parametrize("reverse", [False, True])
+def test_distance_rejects_non_ascii(helper, reverse):
+    pair = ("é", "e")
+    if reverse:
+        pair = pair[::-1]
     with pytest.raises(ValueError, match="ASCII"):
-        helper("é", "e")
+        helper(*pair)
+
+
+@pytest.mark.parametrize("helper", [bend_lengths, bend_align, bend_dp_align, cpp_edlib_align])
+@pytest.mark.parametrize("reverse", [False, True])
+def test_overlong_sequences_are_rejected_before_launch(helper, reverse):
+    pair = ("A" * (MAX_SEQUENCE_LENGTH + 1), "")
+    if reverse:
+        pair = pair[::-1]
+    with pytest.raises(ValueError, match=f"maximum of {MAX_SEQUENCE_LENGTH}"):
+        helper(*pair)
 
 
 @pytest.mark.parametrize("helper,output", [

@@ -1,4 +1,5 @@
 import Base
+import ./Cli.bend as CLI
 
 # The NW/distance path from vendor/edlib/edlib/src/edlib.cpp. Bend's native
 # integer is U32, so a Myers word covers 32 query characters instead of 64.
@@ -185,12 +186,7 @@ def response(query: String, target: String) -> String:
   Nat.show(edlib_align(query, target))
 
 def run(args: List<String>) -> IO(Unit):
-  match args:
-    # IO.args includes argv[0]; the native runtime consumes flags before --.
-    case Con{_, Con{query, Con{target, Nil{}}}}:
-      IO.print(response(query, target))
-    case _:
-      IO.die(Unit, 2, "Expected QUERY TARGET")
+  CLI.run(~edlib_align, args)
 
 def main() -> IO(Unit):
   do IO<Unit>:

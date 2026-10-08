@@ -1,0 +1,62 @@
+"""Compile each native executable once per pytest session."""
+
+import os
+import shlex
+
+import pytest
+
+from tests.helpers import BEND_BINARY, CPP_BINARY, ROOT, execute
+
+
+def pytest_addoption(parser):
+    parser.addoption(
+        "--alignment", action="store_true",
+        help="Test main.bend's integer global distance protocol instead of smoke lengths",
+    )
+
+
+def pytest_collection_modifyitems(config, items):
+    alignment = config.getoption("--alignment")
+    for item in items:
+        if "alignment" in item.keywords and not alignment:
+            item.add_marker(pytest.mark.skip(reason="Enable distance tests with --alignment"))
+        if "smoke" in item.keywords and alignment:
+            item.add_marker(pytest.mark.skip(reason="Length protocol replaced by alignment"))
+
+
+@pytest.fixture(scope="session")
+def bend_tool():
+    if os.name == "nt":
+        pytest.fail("Bend must run in WSL. Use: python run_tests.py", pytrace=False)
+    version = execute(["bend", "version"], timeout=30).stdout.strip()
+    expected = (ROOT / ".bend-version").read_text().strip()
+    if version != f"bend {expected}":
+        pytest.fail(
+            f"Expected Bend {expected}, got {version!r}. "
+            "Review CLI compatibility before changing .bend-version.", pytrace=False,
+        )
+    return "bend"
+
+
+@pytest.fixture(scope="session")
+def bend_binary(bend_tool):
+    BEND_BINARY.parent.mkdir(parents=True, exist_ok=True)
+    # Rebuild once every run, so changes to imported .bend files are never stale.
+    execute([bend_tool, ROOT / "main.bend", "-o", BEND_BINARY], timeout=180)
+    return BEND_BINARY
+
+
+@pytest.fixture(scope="session")
+def cpp_binary():
+    if os.name == "nt":
+        pytest.fail("Native tests must run in WSL. Use: python run_tests.py", pytrace=False)
+    source = ROOT / "vendor" / "edlib" / "edlib"
+    if not (source / "src" / "edlib.cpp").exists():
+        pytest.fail("Missing Edlib. Run: git submodule update --init vendor/edlib", pytrace=False)
+    CPP_BINARY.parent.mkdir(parents=True, exist_ok=True)
+    execute([
+        *shlex.split(os.environ.get("CXX", "g++")), "-std=c++14", "-O2",
+        "-I", source / "include", ROOT / "tests" / "edlib_oracle.cpp",
+        source / "src" / "edlib.cpp", "-o", CPP_BINARY,
+    ], timeout=180)
+    return CPP_BINARY

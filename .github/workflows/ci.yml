@@ -1,0 +1,93 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: '23 4 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Superseded PRs may stop. Every main push keeps its own run and release.
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  BEND_NO_TELEMETRY: '1'
+
+jobs:
+  fast:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Provision native tools, pinned Bend, submodule and Python environment
+        run: bash scripts/setup.sh --native-only
+      - name: Fast tests, including boundary and shrinking differential cases
+        run: python3 run_tests.py -v --junitxml=build/fast.xml
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: fast-results
+          path: |
+            build/fast.xml
+            build/environment.txt
+          if-no-files-found: error
+
+  extended:
+    needs: fast
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, ubuntu-24.04]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Provision complete environment, including pinned Lean and a fresh kernel
+        run: bash scripts/setup.sh
+      - name: Exhaustive, property, multithreaded and regular/kernel proof tests
+        run: python3 run_tests.py --alignment --verdict -v --junitxml=build/extended.xml
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: extended-${{ matrix.os }}
+          path: |
+            build/extended.xml
+            build/environment.txt
+          if-no-files-found: error
+
+  benchmark:
+    if: github.event_name != 'pull_request'
+    needs: fast
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Provision tools independently of the test jobs
+        run: bash scripts/setup.sh --native-only
+      - name: Rebuild and validate all three native executables
+        run: python3 run_tests.py tests/test_smoke.py -v
+      - name: Compare native CLI latency on the fixed corpus
+        run: |
+          build/test-venv/bin/python -m tests.compare --repeats 5 --threads 1 > build/benchmark-1.csv
+          build/test-venv/bin/python -m tests.compare --repeats 5 --threads 4 > build/benchmark-4.csv
+          echo 'Timings include process/runtime startup; there are no speed pass/fail thresholds.' >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: benchmark-results
+          path: |
+            build/benchmark-*.csv
+            build/environment.txt
+          if-no-files-found: error

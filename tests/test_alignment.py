@@ -37,7 +37,6 @@ def test_distance_matches_cpp(bend_binary, dp_binary, cpp_binary, query, target,
     assert compare_distances(query, target, bend_binary, dp_binary, cpp_binary) == expected
 
 
-@pytest.mark.alignment
 @pytest.mark.parametrize("length", [31, 32, 33, 63, 64, 65, 95, 96, 97,
                                    127, 128, 129, 255, 256, 257])
 def test_word_boundaries(bend_binary, dp_binary, cpp_binary, length):

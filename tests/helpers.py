@@ -103,3 +103,16 @@ def bend_dp_align(
 ) -> int:
     """Call the independent two-row DP executable, with the same protocol."""
     return bend_align(query, target, binary=binary, timeout=timeout, threads=threads)
+
+
+def compare_distances(query, target, bend_binary, dp_binary, cpp_binary, *, threads=1):
+    """Unrestricted NW, unit costs, ordinary equality; identical ordered inputs."""
+    distances = {
+        "dp": bend_dp_align(query, target, binary=dp_binary, threads=threads),
+        "myers": bend_align(query, target, binary=bend_binary, threads=threads),
+        "cpp_edlib": cpp_edlib_align(query, target, binary=cpp_binary),
+    }
+    assert len(set(distances.values())) == 1, (
+        f"query={query!r}, target={target!r}, threads={threads}, {distances=}"
+    )
+    return distances["cpp_edlib"]

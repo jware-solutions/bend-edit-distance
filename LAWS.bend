@@ -18,6 +18,32 @@ law wildcard_padding:
   for symbol: Char
   {Main.build_peq_word("", symbol, 1) == 4294967295 : U32}
 
+# Ordinary equality is case-sensitive; padding alone is a wildcard. Bit 31
+# remains a real query position when the word is full (no wildcard high bits).
+law mask_case_sensitive:
+  {Main.build_peq_word("aA", 'A', 1) == 4294967294 : U32}
+
+law mask_full_word_high_bit:
+  {Main.build_peq_word("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAC", 'C', 1) == 2147483648 : U32}
+
+# Reachable first-column states distinguish a negative carry from zero.
+law block_match_carry:
+  {Main.calculate_block(Main.Block{4294967295, 0, 32}, 4294967295, Main.Carry{1, 0}) ==
+    (Main.Block{4294967294, 1, 31}, Main.Carry{0, 1}) : Main.Block & Main.Carry}
+
+law block_mismatch_carry:
+  {Main.calculate_block(Main.Block{4294967295, 0, 32}, 0, Main.Carry{1, 0}) ==
+    (Main.Block{4294967294, 0, 32}, Main.Carry{0, 0}) : Main.Block & Main.Carry}
+
+# After a full matching column sequence, a trailing mismatch inserts one more
+# target character and produces a positive horizontal carry.
+law block_positive_carry:
+  {Main.calculate_block(Main.Block{0, 4294967295, 0}, 0, Main.Carry{1, 0}) ==
+    (Main.Block{0, 4294967295, 1}, Main.Carry{1, 0}) : Main.Block & Main.Carry}
+
+law block_decode_high_bit:
+  {Main.get_block_cell_value(31n, 4294967294, 1, 31) == 0 : U32}
+
 law distance_empty:
   {Main.response("", "") == "0" : String}
 
@@ -121,4 +147,8 @@ law cli_length_limit:
 #   examines at most 4097 characters; the two scans run in parallel.
 # - Supported sequences use NW/global mode, unit edit costs,
 #   unlimited distance (k = -1), one nonnegative decimal integer on stdout.
+# - Identity, symmetry, length bounds and triangle inequality are tested only
+#   for this unrestricted NW distance with ordinary character equality. These
+#   tests are not proofs of the general metric laws, and do not apply to HW,
+#   SHW, threshold sentinel results or arbitrary custom equality relations.
 # - CLI arguments cannot contain NUL; use a future binary worker for that.

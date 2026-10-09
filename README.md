@@ -4,14 +4,15 @@ Python tests compare three native executables on identical ordered input pairs:
 two-row DP from `DistanceDP.bend`, Myers from `main.bend`, and a small oracle
 against the vendored C++ Edlib. Each pytest session compiles each executable
 once, then invokes it with literal CLI arguments using `subprocess`. The Python
-helpers only transport inputs and validate outputs.
+alignment helpers transport inputs and validate outputs. Direct Myers block
+tests also use scalar Python DP columns as an independent internal-state oracle.
 
 ## Run tests
 
 From PowerShell at the project root:
 
 ```powershell
-python run_tests.py --setup  # First run: create a WSL venv and install pytest
+python run_tests.py --setup  # First run: create a WSL venv and install test dependencies
 python run_tests.py -v
 ```
 
@@ -21,9 +22,10 @@ and a C++14 compiler must be available in that distribution, along with Python
 3.10+ and its `venv` module. For Debian/Ubuntu, install the build prerequisites
 with `sudo apt-get install clang g++ python3-venv`. `--setup` installs only
 Python test dependencies into `build/test-venv`; it does not install system tools.
+Run `--setup` again when `requirements-test.txt` changes.
 
 The compiler is pinned to the verified **Bend 2.0.36** in `.bend-version`, and
-pytest is pinned in `requirements-test.txt`. When upgrading Bend, check the
+pytest and Hypothesis are pinned in `requirements-test.txt`. When upgrading Bend, check the
 argument convention and native compilation before updating the pin. If Edlib's
 submodule is missing, run `git submodule update --init vendor/edlib`.
 
@@ -112,7 +114,8 @@ The existing CLI continues to use Myers. Tests compile `tests/distance_dp.bend`
 as `build/bend-distance-dp`, which calls DP directly with the same CLI contract.
 
 `LAWS.bend` states quantified empty-input laws for both implementations,
-Myers wildcard padding, DP's recurrence and initial row width, and concrete
+Myers wildcard padding, case-sensitive masks, high-bit masks, concrete block
+transitions and cell decoding, DP's recurrence and initial row width, and concrete
 row, distance and CLI-validation examples; `PROOF.bend` proves them. The CLI
 laws also record the length cap, empty inputs and exhausted scan capacity.
 These laws cover those
@@ -137,15 +140,14 @@ The following features and checks are still missing from this repository:
   rejects non-ASCII characters and sequences longer than 4,096 characters.
   Each pair starts a new process; there is no persistent worker with explicit
   byte lengths or support for larger inputs.
-- **Correctness coverage:** independent DP now cross-checks Myers and C++ Edlib,
-  including every pair of binary-alphabet strings up to length three and highly
-  unequal lengths in both orders. Property-based testing with reduced
-  counterexamples, fuzzing, systematic checks of lengths 1-32 and individual
-  bit-vector steps, and broader case-sensitivity, repetitive and upstream
-  regressions remain to be added. Extended alignment tests require
-  `--alignment`; known-distance and unequal-length comparisons run by default.
+- **Correctness coverage:** independent DP cross-checks Myers and C++ Edlib,
+  including the exhaustive small-input matrix, shrinking properties, direct
+  masks/block checks and upstream NW regressions described below. This is
+  finite test coverage; continuous fuzzing and general correctness proofs
+  remain future work. Extended alignment tests require `--alignment`;
+  known-distance, case, motif, unequal-length and upstream regressions run by default.
 - **Proof coverage:** the laws cover empty inputs, wildcard padding, DP's cell
-  recurrence and initial row width, concrete row and distance examples, and
+  recurrence and initial row width, concrete mask/block, row and distance examples, and
   bounded CLI-validation cases.
   They do not prove general identity, carry correctness, equivalence
   with dynamic programming, or optimality for arbitrary inputs. The proof test
@@ -223,8 +225,37 @@ All three algorithms receive the same ordered pair in every differential compari
 The suite checks known examples, empty inputs, insertions/deletions/substitutions,
 32-bit and 64-bit block boundaries through 257 characters, every final-word
 padding size, large distances, 100 reproducible random DNA pairs, ASCII pairs up
-to 1,024 characters, every pair of binary-alphabet strings up to length three,
-highly unequal lengths in both orders, and one, two and four Bend CPU threads.
+to 1,024 characters, and one, two and four Bend CPU threads. The completed
+correctness matrix also includes:
+
+- All **14,641 ordered pairs** of the 121 strings over `{A,C,G}` of lengths
+  zero through four, compared across all three native implementations.
+- Every single-word length **1-32**, with identity, disjoint and empty inputs,
+  substitutions/deletions/insertions at every position, and both input orders.
+- Hypothesis differential comparisons and identity, symmetry, length bounds
+  and triangle inequality for each implementation. These metric properties
+  apply only to **unrestricted NW with unit costs and ordinary equality**.
+  They must not be applied to prefix/infix distances, threshold sentinels or
+  arbitrary custom equalities. Strategies include DNA, mixed case, non-NUL
+  ASCII, motifs and lengths around word boundaries through 257.
+- A test-only native Bend probe importing production functions. Mask tests
+  check each real bit, wildcard padding and every byte-indexed table entry.
+  Transition tests compare positive/negative masks, bottom scores, all carry
+  signs, complete `advance_column` results and every decoded cell against
+  independent scalar DP columns, across single and multiple words.
+- Explicit case-sensitive, repetitive-motif and highly imbalanced regressions
+  up to the 4,096-character cap, and 17 cases migrated from pinned upstream
+  Edlib tests. Migration preserves declared C++ array lengths and zero-filled
+  tails via an injective ASCII relabeling; unsupported modes/results are excluded.
+
+Hypothesis uses 100 examples per property (40 for block traces), with replay,
+generation and shrinking enabled, no timing deadline, and persistent reduced
+failures in ignored `build/hypothesis/`. Re-run the same command to replay them.
+Checked-in examples in `tests/regressions/nw.json` run both as explicit
+distance regressions and Hypothesis `@example`s, even on a clean checkout.
+See [the regression corpus notes](tests/regressions/README.md) for provenance
+and how to preserve a newly discovered counterexample. The exhaustive matrix
+starts three native processes per pair, so the extended suite can take several minutes.
 
 The distance contract is **NW/global Levenshtein distance**, unit costs,
 unlimited threshold (`k = -1`), and one nonnegative decimal integer on stdout.

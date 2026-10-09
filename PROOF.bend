@@ -15,6 +15,24 @@ def Laws.empty_target(query):
 def Laws.wildcard_padding(symbol):
   {==}
 
+def Laws.mask_case_sensitive():
+  {==}
+
+def Laws.mask_full_word_high_bit():
+  {==}
+
+def Laws.block_match_carry():
+  {==}
+
+def Laws.block_mismatch_carry():
+  {==}
+
+def Laws.block_positive_carry():
+  {==}
+
+def Laws.block_decode_high_bit():
+  {==}
+
 def Laws.distance_empty():
   {==}
 

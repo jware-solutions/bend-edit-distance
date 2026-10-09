@@ -1,0 +1,10 @@
+[
+  {"id": "empty", "query": "", "target": "", "distance": 0},
+  {"id": "transposition", "query": "AB", "target": "BA", "distance": 2},
+  {"id": "ordinary-case-sensitive-equality", "query": "a", "target": "A", "distance": 1},
+  {"id": "ordinary-N-is-not-a-wildcard", "query": "N", "target": "A", "distance": 1},
+  {"id": "full-word-high-bit", "query": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAC", "target": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "distance": 1},
+  {"id": "next-word-first-bit", "query": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAC", "target": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "distance": 1},
+  {"id": "motif-shift", "query": "ACGACGACGACG", "target": "CGACGACGACGA", "distance": 2},
+  {"id": "literal-control-and-flags", "query": "--threads\t\n", "target": "--threads\n", "distance": 1}
+]

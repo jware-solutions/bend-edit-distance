@@ -1,0 +1,127 @@
+{
+  "revision": "0ddc23ea06abd95ab6227442acb4c27bd7607b68",
+  "attribution": "Edlib, Copyright (c) 2014 Martin Sosic; MIT license in vendor/edlib/LICENSE",
+  "adaptation": "Numeric C++ symbols 0..9 mapped injectively to A..J, including implicit zero-filled tails. NW distance only; original declared lengths retained.",
+  "excluded": "test11's full byte range, HW/SHW-only test12..16, custom equalities, locations, paths/CIGAR and Python Unicode/256-symbol inputs are outside the Bend CLI contract.",
+  "cases": [
+    {
+      "id": "cpp-test1",
+      "source": "test/runTests.cpp::test1",
+      "query": "ABCD",
+      "target": "ABCD",
+      "distance": 0
+    },
+    {
+      "id": "cpp-test2",
+      "source": "test/runTests.cpp::test2",
+      "query": "ABCDE",
+      "target": "IFABDEGHF",
+      "distance": 6
+    },
+    {
+      "id": "cpp-test3",
+      "source": "test/runTests.cpp::test3",
+      "query": "ABCDE",
+      "target": "BCABCDEFE",
+      "distance": 4
+    },
+    {
+      "id": "cpp-test4",
+      "source": "test/runTests.cpp::test4",
+      "query": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+      "target": "BAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+      "distance": 1
+    },
+    {
+      "id": "cpp-test5",
+      "source": "test/runTests.cpp::test5",
+      "query": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+      "target": "BAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+      "distance": 1
+    },
+    {
+      "id": "cpp-test6",
+      "source": "test/runTests.cpp::test6",
+      "query": "BDABBBDABDBDD",
+      "target": "ABBBABDABDDDBDCCDCDDBABBBABDABDDDBDCCDCDDBABBBABDABDDDBDCCDCDDBABBBABDABDDDBDCCDCDDBABBBABDABDDDBDCCDCDDBABBBABDABDDDBDCCDCDDBABBBABDABDDDBDCCDCDDBABBBABDABDDDBDCCDCDDBABBBABDABDDDBDCCDCDDBABBBABDABDDDBDCCDCDDBABBBABDABDDDBDCCDCDDBABBBABDABDDDBDCCDCDDBABBBABDABDDDBDCCDCDDBABBBABDABDDDBDCCDCDDBABBBABDABDDDBDCCDCDDBABBBABDABDDDBDCCDCDDBABBBABDABDDDBDCCDCDDBABBBABDABDDDBDCCDCDDBABBBABDABDDDBDCCDCDDBABBBABDABDDDBDCCDCDDB",
+      "distance": 407
+    },
+    {
+      "id": "cpp-test7",
+      "source": "test/runTests.cpp::test7",
+      "query": "CDA",
+      "target": "ABCCA",
+      "distance": 3
+    },
+    {
+      "id": "cpp-test8",
+      "source": "test/runTests.cpp::test8",
+      "query": "CDA",
+      "target": "CCA",
+      "distance": 1
+    },
+    {
+      "id": "cpp-test9",
+      "source": "test/runTests.cpp::test9",
+      "query": "JFFJJEGABBFEGAGFFGFCCAGAIDHAGGEIDBJEFFFHICDGEBBCHHGAJCAJGJJEGFCJ",
+      "target": "HBGCJBBHFFEJGHDEGJEFCGGAHIEDDJFCABHBEAJJHFAGCEAJDGGHEDJDDEHIFEBHHAJDAIEADEGHAIGGGFFCAFFDBEBGIEDHGCAJAEJFBFDBDBJJGFBIAGBBBFJBBCBIFBHHIGFJBACEBCFAJGIBECEFJDJAFAIADHABDFAGFFCIJHAIFBJADDHCGGEDIFGCCGFIDIEADHICGJACABCFGBJEIDHIIFCDBIBGGHGJGFDDGFHIGBDECEAAHHBIFDDGBEFHDBIAIBFGGCEEDJIHDIADIBDDEGBICGHFIGHIHEFGGJABBBJEJBJJCCEIAGGEEECCCJDBGIHCJIGABHHCIGCCBGADEJIJDCDFDGGJGGCGGAIHJFJHEDBHCBAGAAHFCBCGJBFGH",
+      "distance": 329
+    },
+    {
+      "id": "cpp-test10",
+      "source": "test/runTests.cpp::test10",
+      "query": "ABC",
+      "target": "BBB",
+      "distance": 2
+    },
+    {
+      "id": "cpp-test5-bend-word-size",
+      "source": "test/runTests.cpp::test5 (32-bit adaptation)",
+      "query": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+      "target": "BAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+      "distance": 1
+    },
+    {
+      "id": "cpp-empty-query",
+      "source": "test/runTests.cpp::testEmptySequences",
+      "query": "",
+      "target": "ACTG",
+      "distance": 4
+    },
+    {
+      "id": "cpp-empty-target",
+      "source": "test/runTests.cpp::testEmptySequences",
+      "query": "ACTG",
+      "target": "",
+      "distance": 4
+    },
+    {
+      "id": "python-telephone",
+      "source": "bindings/python/test.py",
+      "query": "telephone",
+      "target": "elephant",
+      "distance": 3
+    },
+    {
+      "id": "python-empty-query",
+      "source": "bindings/python/test.py",
+      "query": "",
+      "target": "elephant",
+      "distance": 8
+    },
+    {
+      "id": "python-empty-target",
+      "source": "bindings/python/test.py",
+      "query": "telephone",
+      "target": "",
+      "distance": 9
+    },
+    {
+      "id": "python-nw-alignment-distance",
+      "source": "bindings/python/test.py",
+      "query": "TAAGGATGGTCCCATTC",
+      "target": "AAGGGGTCTCATATC",
+      "distance": 5
+    }
+  ]
+}

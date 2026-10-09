@@ -1,8 +1,13 @@
 import random
+from itertools import product
 
 import pytest
 
-from tests.helpers import bend_align, bend_dp_align, cpp_edlib_align
+from tests.helpers import compare_distances, cpp_edlib_align
+
+SMALL_SEQUENCES = tuple(
+    "".join(chars) for size in range(5) for chars in product("ACG", repeat=size)
+)
 
 # These cases independently check both Bend algorithms and the C++ oracle.
 KNOWN_DISTANCES = [
@@ -12,19 +17,6 @@ KNOWN_DISTANCES = [
     ("kitten", "sitting", 3), ("ACT", "CGACTGAC", 5),
     ("--threads", "--threads", 0), ("A C\n", "AC\n", 1),
 ]
-
-
-def compare_distances(query, target, bend_binary, dp_binary, cpp_binary, *, threads=1):
-    """Every implementation receives exactly the same ordered pair."""
-    distances = {
-        "dp": bend_dp_align(query, target, binary=dp_binary, threads=threads),
-        "myers": bend_align(query, target, binary=bend_binary, threads=threads),
-        "cpp_edlib": cpp_edlib_align(query, target, binary=cpp_binary),
-    }
-    assert len(set(distances.values())) == 1, (
-        f"query={query!r}, target={target!r}, threads={threads}, {distances=}"
-    )
-    return distances["cpp_edlib"]
 
 
 @pytest.mark.parametrize("query,target,expected", KNOWN_DISTANCES)
@@ -111,10 +103,50 @@ def test_dp_recurrence_and_shorter_rows(bend_binary, dp_binary, cpp_binary,
 
 
 @pytest.mark.alignment
-def test_exhaustive_small_inputs(bend_binary, dp_binary, cpp_binary):
-    from itertools import product
+@pytest.mark.parametrize("query", SMALL_SEQUENCES, ids=repr)
+def test_exhaustive_small_inputs(bend_binary, dp_binary, cpp_binary, query):
+    # 1 + 3 + 9 + 27 + 81 = 121 strings; all 121**2 = 14,641 ordered
+    # pairs, including empty inputs and both orientations. Do not deduplicate.
+    assert len(SMALL_SEQUENCES) == 121
+    for target in SMALL_SEQUENCES:
+        compare_distances(query, target, bend_binary, dp_binary, cpp_binary)
 
-    sequences = ["".join(chars) for size in range(4) for chars in product("AC", repeat=size)]
-    for query in sequences:
-        for target in sequences:
-            compare_distances(query, target, bend_binary, dp_binary, cpp_binary)
+
+@pytest.mark.alignment
+@pytest.mark.parametrize("length", range(1, 33))
+def test_every_single_word_length(bend_binary, dp_binary, cpp_binary, length):
+    query = ("ACG" * 11)[:length]
+    cases = [(query, 0), ("T" * length, length), ("", length)]
+    # Every real bit can be the site of each edit, including the high bit at 32.
+    for position in range(length):
+        cases.extend([
+            (query[:position] + "T" + query[position + 1:], 1),
+            (query[:position] + query[position + 1:], 1),
+            (query[:position] + "T" + query[position:], 1),
+        ])
+    cases.append((query + "T", 1))
+    for target, expected in cases:
+        assert compare_distances(query, target, bend_binary, dp_binary, cpp_binary) == expected
+        assert compare_distances(target, query, bend_binary, dp_binary, cpp_binary) == expected
+
+
+@pytest.mark.parametrize("query,target,expected", [
+    pytest.param("a", "A", 1, id="case-single"),
+    pytest.param("acgt" * 33, "ACGT" * 33, 132, id="case-multiblock"),
+    pytest.param("AaCcGgTt", "AACCGGTT", 4, id="mixed-case"),
+    pytest.param("N", "A", 1, id="ordinary-equality-no-wildcard"),
+    pytest.param("AC" * 64, "CA" * 64, 2, id="alternating-phase"),
+    pytest.param("ACG" * 43, "CGA" * 43, 2, id="triplet-phase"),
+    pytest.param("A" * 129, "A" * 64 + "C" + "A" * 64, 1, id="homopolymer"),
+    pytest.param("ACGT" * 32, "ACGT" * 16 + "ACGT" * 15, 4, id="motif-deletion"),
+    pytest.param("A", "C" * 4095 + "A", 4095, id="imbalanced-last-match"),
+    pytest.param("AC", "C" * 4096, 4095, id="imbalanced-one-match"),
+    pytest.param("ACG", "T" * 4096, 4096, id="imbalanced-disjoint"),
+    pytest.param("ACG", "T" * 2046 + "ACG" + "T" * 2047, 4093, id="imbalanced-internal-match"),
+])
+def test_distance_regressions(bend_binary, dp_binary, cpp_binary, query, target, expected):
+    for threads in (1, 2):
+        assert compare_distances(query, target, bend_binary, dp_binary, cpp_binary,
+                                 threads=threads) == expected
+        assert compare_distances(target, query, bend_binary, dp_binary, cpp_binary,
+                                 threads=threads) == expected

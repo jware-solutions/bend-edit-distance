@@ -4,8 +4,19 @@ import os
 import shlex
 
 import pytest
+from hypothesis import settings
+from hypothesis.database import DirectoryBasedExampleDatabase
 
 from tests.helpers import BEND_BINARY, CPP_BINARY, DP_BINARY, ROOT, execute
+
+
+# Keep replay, generation and shrinking enabled. Native process startup is not
+# a correctness deadline; reduced failures survive between runs in build/.
+settings.register_profile(
+    "alignment", max_examples=100, deadline=None, print_blob=True,
+    database=DirectoryBasedExampleDatabase(ROOT / "build" / "hypothesis"),
+)
+settings.load_profile(os.environ.get("HYPOTHESIS_PROFILE", "alignment"))
 
 
 def pytest_addoption(parser):
@@ -49,6 +60,14 @@ def dp_binary(bend_tool):
     DP_BINARY.parent.mkdir(parents=True, exist_ok=True)
     execute([bend_tool, ROOT / "tests" / "distance_dp.bend", "-o", DP_BINARY], timeout=180)
     return DP_BINARY
+
+
+@pytest.fixture(scope="session")
+def myers_probe(bend_tool):
+    binary = ROOT / "build" / "myers-probe"
+    binary.parent.mkdir(parents=True, exist_ok=True)
+    execute([bend_tool, ROOT / "tests" / "myers_probe.bend", "-o", binary], timeout=180)
+    return binary
 
 
 @pytest.fixture(scope="session")

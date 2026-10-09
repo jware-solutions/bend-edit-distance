@@ -78,16 +78,16 @@ jobs:
         run: bash scripts/setup.sh --native-only
       - name: Rebuild and validate all three native executables
         run: python3 run_tests.py tests/test_smoke.py -v
-      - name: Compare native CLI latency on the fixed corpus
+      - name: Measure latency, batches, phases and peak RSS on the fixed corpus
         run: |
-          build/test-venv/bin/python -m tests.compare --repeats 5 --threads 1 > build/benchmark-1.csv
-          build/test-venv/bin/python -m tests.compare --repeats 5 --threads 4 > build/benchmark-4.csv
-          echo 'Timings include process/runtime startup; there are no speed pass/fail thresholds.' >> "$GITHUB_STEP_SUMMARY"
+          threads=$(python3 -c 'import os; print(min(4, len(os.sched_getaffinity(0))))')
+          python3 run_benchmarks.py --repeats 5 --batch-size 16 --threads 1 "$threads"
+          cat build/benchmarks/results/REPORT.md >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with:
           name: benchmark-results
           path: |
-            build/benchmark-*.csv
+            build/benchmarks/results/
             build/environment.txt
           if-no-files-found: error

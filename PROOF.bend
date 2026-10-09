@@ -21,6 +21,12 @@ def Laws.mask_case_sensitive():
 def Laws.mask_full_word_high_bit():
   {==}
 
+def Laws.table_lookup_ascii():
+  {==}
+
+def Laws.table_lookup_missing():
+  {==}
+
 def Laws.block_match_carry():
   {==}
 

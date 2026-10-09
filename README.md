@@ -178,11 +178,13 @@ The following features and checks are still missing from this repository:
   with dynamic programming, or optimality for arbitrary inputs. The proof test
   runs the regular checker by default; extended CI also provisions Lean 4.34.0
   and requests kernel verification with `--verdict`.
-- **Performance and batching:** the reproducible comparison reports native CLI
-  latency, including startup; alignment-only benchmarks and measured algorithm
-  speedups over C++ Edlib remain absent. Myers evaluates every block without threshold bands,
+- **Performance and batching:** the benchmark runner below records phase timings,
+  one-core latency, homogeneous batch throughput and whole-process peak RSS
+  against C++ Edlib. Measurements are host/workload observations, not a general
+  speedup claim. Myers evaluates every block without threshold bands,
   early rejection or adaptive retries. Parallelism currently covers
-  preprocessing for one pair; there is no CPU batch API, GPU entry point or
+  preprocessing for one pair; balanced benchmark batches are benchmark-only.
+  There is no production CPU batch API, GPU entry point or
   genuine-device test. Tests with multiple CPU threads check correctness only.
 - **Library and release readiness:** Myers still lives in `main.bend` alongside
   the CLI; `DistanceDP.bend` exports a reusable DP function. A stable library API
@@ -327,8 +329,8 @@ Keep Lean's bundled Clang out of the native test `PATH`; setup exposes it only
 while building the kernel. The test runner needs only the downloaded Bend and
 the explicit `BENDTT` kernel path.
 
-After running the tests to rebuild the binaries, compare distances and timings
-on a fixed corpus from PowerShell at the project root:
+The legacy `tests.compare` helper still reports DP/Myers/Edlib CLI wall times
+after tests rebuild their executables:
 
 ```powershell
 wsl --exec python3 -m tests.compare --repeats 5 --threads 1
@@ -341,6 +343,118 @@ per pair, and rotates invocation order. These are **native CLI wall times**,
 including process and runtime startup; they do not isolate alignment time.
 The empty-input case makes the startup contribution visible. Timing differences
 are observations, not test pass/fail thresholds.
+
+## Reproducible performance benchmarks
+
+From PowerShell at the project root, after native tools and the Edlib submodule
+are available (use `python run_tests.py --setup` for a fresh environment):
+
+```powershell
+python run_benchmarks.py --repeats 5 --batch-size 16 --threads 1 4
+```
+
+Windows automatically forwards to WSL. Inside WSL/Linux, the same command is
+`python3 run_benchmarks.py ...`; only the Python standard library is needed.
+For a fresh Linux checkout, `bash scripts/setup.sh --native-only` provisions the
+tools first. The runner verifies `.bend-version` and rebuilds its own native
+executables every run in `build/benchmarks/`. It compiles Edlib with
+`g++ -std=c++14 -O2 -DNDEBUG` (override the compiler with `CXX`); Bend uses its
+normal pinned native backend. Build times are recorded separately from runtime.
+It does not require running the exhaustive correctness suite to build benchmarks.
+
+The checked-in [corpus](benchmarks/corpus.json) contains 16 named ordered pairs:
+empty inputs, the standard edit-distance example, 31/32/33 and 63/64/65 word
+boundaries, similar and independent DNA, repetitive motifs, non-NUL ASCII,
+4,096-character DNA, and a 3-versus-4,096 pair in both orders. Expected distances
+come from independent scalar DP. `python3 benchmarks/generate.py` regenerates
+the exact collection with xorshift32 seed `20261009`; an integrity test checks
+that regeneration matches. The runner hashes the corpus and validates every
+single-pair/batch checksum, including warmups, against its expected distance;
+lookup checksums are independently computed in Python. A disagreement, invalid
+output, nonzero exit or timeout fails the run and produces no successful report.
+
+Each workload runs once as a discarded warmup and then five times by default.
+Invocation order rotates across algorithms, modes and thread counts. Processes
+run one at a time to avoid competing benchmark workers. One-thread Bend and
+Edlib inherit affinity to the same single logical CPU. Multi-thread Bend inherits
+the first N selected logical CPUs; Edlib remains single threaded. `--threads`
+always includes 1. Choose cores deliberately on machines with SMT or hybrid CPUs;
+`lscpu -e=CPU,CORE,SOCKET` shows WSL/Linux topology and `--cpus` sets the ordered
+CPU list. The report records exact affinity, host topology, tool versions, source
+and binary hashes, Git commit/dirty status, compiler commands and build durations.
+No test or benchmark claims a speedup from correctness on multiple threads.
+
+Workloads measure the same pair repeatedly within one native process. These are
+**homogeneous batches**, not a persistent worker protocol or a mixed-query batch
+API. Batch sizes are powers of two, 2 through 512. Bend splits independent
+alignments into a balanced fork/join tree; columns/carries stay sequential. Edlib
+runs the same number of independent alignments in a sequential loop.
+
+| Workload | Timed work | Profile treatment |
+| --- | --- | --- |
+| `full`, batch size 1 | One-core native alignment latency, or the requested thread count | Each production `edlib_align`/public `edlibAlign` call constructs/frees its own profile |
+| `full`, batch size B | Full alignment throughput, B / work wall seconds | Constructs a new profile per pair, as production does |
+| `prepared`, sizes 1 and B | Alignment with initialized blocks, column updates, score decoding and runtime/refcount work | Builds one profile before timing work and retains it until the separate release phase |
+| Bend `lookup`, size B | All target-symbol/block `peq_get` calls, with consumed mask checksums | Uses the unchanged 256-symbol trees, prepared before timing |
+| Bend `scan`, size B | The matching target/block traversal with the tree lookup omitted | A control workload; no alignment distance is computed |
+
+The prepared Edlib probe includes the unmodified vendored `edlib.cpp` in its
+translation unit, allowing access to `buildPeq` and `myersCalcEditDistanceNW`.
+It preserves the public NW distance algorithm's dynamic threshold retries from
+64 upward, with no traceback. Alphabet transformation and equality setup occur
+in the preparation phase. Bend chooses the shorter query internally; Edlib keeps
+the original order, as the test oracle does. Their 32/64-bit words, full/banded
+columns, alphabet representations and retry behavior differ. Prepared timings
+exclude public API result/location packaging, so compare them separately from
+the full public-call workload. They are benchmark entry points, not new APIs.
+
+Native `CLOCK_MONOTONIC` barriers record each phase directly, with evaluated
+values passed across them so profile construction cannot be optimized away or
+charged to the alignment phase. Production alignment/table/lookup functions
+remain unchanged. The measurements distinguish:
+
+| Metric | Boundary / units |
+| --- | --- |
+| Launcher and native startup | Parent launch to small RSS launcher; native fork/exec to first entry-point effect, respectively; their sum is startup |
+| Transport | `IO.args()` / materialization of argv strings after entry-point readiness; kernel argv copying is in startup |
+| Preparation | Mode/count parsing, validation, orientation/lengths; Edlib prepared mode also transforms its alphabet |
+| Profile construction | Direct Bend `build_peq` (256 symbols per 32-character word), or Edlib `buildPeq`; reported separately in prepared/lookup/scan modes |
+| Work / release | Workload above, then persistent-profile release; `full` includes per-call profile construction and freeing within work |
+| Native wall / end-to-end wall | Native fork to reaped worker; parent launch to reaped RSS launcher, respectively; E2E includes startup, transport, phases, output and teardown |
+| CPU time / peak RSS | Worker user + system CPU time; worker's lifetime maximum resident set in KiB, including runtime and profiles, from native `wait4` |
+| Latency / throughput | Work time / batch size in microseconds; B / work seconds and B / E2E seconds for full/prepared alignments |
+
+The small C launcher forks from its own native address space to avoid inheriting
+Python's memory high-water mark. Its overhead is included in E2E and separately
+recorded; its own RSS is excluded from worker RSS. RSS is not a phase allocation
+counter or reserved virtual memory. Timed phases include timer/IO scheduling
+overhead, with no subtraction from another process run. Empty cases expose the
+measurement floor; very small workloads and p95 values from five samples are
+especially sensitive to scheduling. Warmups warm executable/filesystem caches;
+each sample still starts a fresh process. CPU frequency, other host activity,
+virtualization and filesystem placement can change results.
+
+The lookup probe includes target/list traversal, reference counting and checksum
+arithmetic. The scan control records that traversal separately, but their
+difference is not an exact fraction of alignment time: allocation/cache behavior
+and Bend scheduling can differ. Use these direct measurements to investigate the
+current table and tree before changing their representation. Thread scaling is
+an observed per-workload ratio, never inferred from thread count alone.
+
+Reports default to `build/benchmarks/results/`: `results.json` retains every raw
+sample and median/min/max/nearest-rank-p95 statistics; `summary.csv` contains phase
+times, peak RSS, per-pair latency and both throughput rates; `REPORT.md` compares
+Bend work/E2E/RSS against Edlib. Existing result directories are protected from
+overwrite. Select a fresh path and/or subset for later runs, for example:
+
+```powershell
+python run_benchmarks.py --case dna-random-512 --case dna-random-4096 --repeats 10 --batch-size 32 --threads 1 2 4 --output build/benchmarks/recheck
+```
+
+Use `--warmups 2`, `--timeout 180` or `--cpus 0,2,4,6` as appropriate for the host.
+The checked-in [WSL observation](benchmarks/results/wsl-2026-10-09/REPORT.md)
+includes its raw JSON and CSV alongside [interpretation of table/lookup costs](benchmarks/results/wsl-2026-10-09/NOTES.md).
+It is one reproducible observation, not a portable performance guarantee.
 
 The CLI convention follows the installed `bend guide`; see also the official
 [Bend guide](https://github.com/bendlang/bend/blob/main/guide/GUIDE.md) and
@@ -356,10 +470,11 @@ restoring tools, binaries or a venv from a cache:
 | --- | --- | --- |
 | `fast` | CLI, known distances, all listed word boundaries, shrinking differential examples, regular proofs, release automation tests | Ubuntu 24.04 / system Python 3.12 |
 | `extended` | Full suite with 14,641 exhaustive ordered pairs, shrinking properties, direct masks/block traces, regressions, 1/2/4 threads, regular and kernel proofs | Ubuntu 22.04 / Python 3.10 and Ubuntu 24.04 / Python 3.12 |
-| `benchmark` | Fresh native builds, validated corpus, five repeats with 1 and 4 Bend threads | Ubuntu 24.04; pushes, schedule and manual runs |
+| `benchmark` | Fresh native builds, fixed validated corpus, phase timing/latency/batch throughput/RSS, five repeats with 1 and up to 4 available Bend threads | Ubuntu 24.04; pushes, schedule and manual runs |
 
 Test reports, tool/package versions and benchmark CSVs are retained as workflow
-artifacts. Benchmark timings include startup and carry no speed thresholds.
+artifacts. Benchmark reports include separate work and end-to-end timings and
+carry no speed thresholds.
 Extended jobs depend on the fast gate and run independently in a matrix;
 benchmark work runs alongside them. Pull requests receive read-only tokens.
 

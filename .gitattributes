@@ -4,3 +4,4 @@
 *.yml text eol=lf
 *.sha256 text eol=lf
 .*-version text eol=lf
+/benchmarks/** text eol=lf

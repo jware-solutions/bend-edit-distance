@@ -7,13 +7,12 @@ supported CLI domain. Hypothesis keeps replay/generate/shrink phases enabled.
 
 import json
 
-from hypothesis import example, given, strategies as st
+from hypothesis import example, given, settings, strategies as st
 import pytest
 
 from tests.helpers import ROOT, bend_align, bend_dp_align, compare_distances, cpp_edlib_align
 
 SAVED = json.loads((ROOT / "tests" / "regressions" / "nw.json").read_text())
-pytestmark = pytest.mark.alignment
 ASCII = "".join(chr(code) for code in range(1, 128))
 BOUNDARIES = (0, 1, 2, 31, 32, 33, 63, 64, 65, 127, 128, 129, 255, 256, 257)
 
@@ -41,12 +40,14 @@ def saved_examples(test):
     return test
 
 
+@pytest.mark.alignment
 @pytest.mark.parametrize("case", SAVED, ids=lambda case: case["id"])
 def test_saved_regressions(bend_binary, dp_binary, cpp_binary, case):
     assert compare_distances(case["query"], case["target"], bend_binary,
                              dp_binary, cpp_binary) == case["distance"]
 
 
+@pytest.mark.alignment
 @given(query=SEQUENCES, target=SEQUENCES)
 @saved_examples
 def test_nw_differential(bend_binary, dp_binary, cpp_binary, query, target):
@@ -58,6 +59,7 @@ IMPLEMENTATIONS = [
 ]
 
 
+@pytest.mark.alignment
 @pytest.mark.parametrize("fixture,align", IMPLEMENTATIONS, ids=["myers", "dp", "edlib"])
 @given(query=SEQUENCES, target=SEQUENCES)
 @saved_examples
@@ -70,6 +72,7 @@ def test_unrestricted_nw_identity_symmetry_bounds(request, fixture, align, query
     assert abs(len(query) - len(target)) <= distance <= max(len(query), len(target))
 
 
+@pytest.mark.alignment
 @pytest.mark.parametrize("fixture,align", IMPLEMENTATIONS, ids=["myers", "dp", "edlib"])
 @given(a=SEQUENCES, b=SEQUENCES, c=SEQUENCES)
 @example(a="", b="A", c="AA")
@@ -81,3 +84,32 @@ def test_unrestricted_nw_triangle_inequality(request, fixture, align, a, b, c):
     bc = align(b, c, binary=binary)
     ac = align(a, c, binary=binary)
     assert ac <= ab + bc, f"{a=}, {b=}, {c=}, {ab=}, {bc=}, {ac=}"
+
+
+# CLI transport excludes NUL, but includes controls, flags, punctuation and case.
+ascii_text = st.text(alphabet=st.characters(min_codepoint=1, max_codepoint=127), max_size=96)
+
+
+@settings(max_examples=20, deadline=None, derandomize=True, database=None)
+@example(query="A" * 32, target="T" * 33)
+@example(query="ACGT" * 16, target="AGT" * 21)
+@given(query=ascii_text, target=ascii_text)
+def test_fast_differential(bend_binary, dp_binary, cpp_binary, query, target):
+    compare_distances(query, target, bend_binary, dp_binary, cpp_binary)
+
+
+@pytest.mark.alignment
+@settings(max_examples=100, deadline=None, derandomize=True, database=None)
+@given(query=ascii_text, target=ascii_text, third=ascii_text,
+       threads=st.sampled_from([1, 2, 4]))
+def test_distance_properties(bend_binary, dp_binary, cpp_binary, query, target, third, threads):
+    def distance(left, right):
+        return compare_distances(left, right, bend_binary, dp_binary, cpp_binary, threads=threads)
+
+    forward = distance(query, target)
+    assert abs(len(query) - len(target)) <= forward <= max(len(query), len(target))
+    assert distance(target, query) == forward
+    assert distance(query, query) == 0
+    assert distance(query, "") == len(query)
+    assert distance(query + "Z", target + "Z") == forward
+    assert forward <= distance(query, third) + distance(third, target)

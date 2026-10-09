@@ -24,6 +24,10 @@ def pytest_addoption(parser):
         "--alignment", action="store_true",
         help="Enable the extended differential global-distance tests",
     )
+    parser.addoption(
+        "--verdict", action="store_true",
+        help="Also verify proofs with the Lean-backed BendTT kernel",
+    )
 
 
 def pytest_collection_modifyitems(config, items):
@@ -31,6 +35,8 @@ def pytest_collection_modifyitems(config, items):
     for item in items:
         if "alignment" in item.keywords and not alignment:
             item.add_marker(pytest.mark.skip(reason="Enable distance tests with --alignment"))
+        if "kernel" in item.keywords and not config.getoption("--verdict"):
+            item.add_marker(pytest.mark.skip(reason="Enable kernel proofs with --verdict"))
 
 
 @pytest.fixture(scope="session")

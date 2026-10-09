@@ -3,6 +3,13 @@ import ./main.bend as Main
 import ./DistanceDP.bend as DP
 import ./Cli.bend as CLI
 
+# Benchmark contract: same ordered corpus pairs, unrestricted NW/unit costs,
+# supported ASCII, checksummed homogeneous batches, and pinned CPU affinity.
+# Correctness on multiple threads is not a speedup proof. Timers and RSS use
+# benchmark-only foreign effects; their measurements are runtime observations,
+# outside these laws. Keep the 256-entry table/eight-step lookup unchanged until
+# benchmarks/corpus.json and the phase/lookup probes have measured their costs.
+
 # NW boundary conditions: deleting or inserting a whole sequence costs its
 # length. These quantify over every string, rather than selected examples.
 law empty_query:
@@ -25,6 +32,13 @@ law mask_case_sensitive:
 
 law mask_full_word_high_bit:
   {Main.build_peq_word("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAC", 'C', 1) == 2147483648 : U32}
+
+# The measured table lookup follows low bits first and preserves case/padding.
+law table_lookup_ascii:
+  {Main.peq_get(Main.build_peq_table(8n, "aA", 0, 1), 65, True{}) == 4294967294 : U32}
+
+law table_lookup_missing:
+  {Main.peq_get(Main.build_peq_table(8n, "aA", 0, 1), 128, False{}) == 4294967292 : U32}
 
 # Reachable first-column states distinguish a negative carry from zero.
 law block_match_carry:

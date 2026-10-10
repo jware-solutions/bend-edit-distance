@@ -1,0 +1,634 @@
+# Contributing to bend-edlib
+
+This guide contains the setup, implementation, testing, proof, benchmark, CI, and release details for contributors.
+
+## Development setup and tests
+
+From PowerShell at the project root:
+
+```powershell
+python run_tests.py --setup  # Install native tools, pinned Bend/Lean, Edlib and Python dependencies
+python run_tests.py -v
+```
+
+Windows invocations automatically forward to the default WSL distribution.
+Inside WSL, use `python3 run_tests.py` with the same options. Start with an
+installed Debian/Ubuntu WSL distribution and Windows Python, or Debian/Ubuntu
+Linux with Python 3.10+. Setup invokes `scripts/setup.sh`: it installs native
+Clang, g++, Python venv support, Git, curl, certificates and zstd through apt
+(using sudo when needed), initializes submodules at their recorded commits,
+downloads the exact Bend and Lean releases, builds a fresh BendTT proof kernel,
+and creates `build/test-venv` with the pinned Python dependencies. Internet access
+and permission to install apt packages are required for full setup.
+
+The compiler is pinned to **Bend 2.0.36** in `.bend-version`, its proof toolchain
+to **Lean 4.34.0** in `.lean-version`, and pytest, Hypothesis and their transitive
+dependencies in `requirements-test.txt`. Linux x86_64 and aarch64 downloads are
+verified against the committed `scripts/tools.sha256` before extraction. When
+upgrading Bend, review CLI compatibility, Lean requirements and archive checksums
+together. Native compiler packages come from the selected distribution; their
+versions and the submodule revision are recorded in `build/environment.txt`.
+
+For a clean Linux checkout (submodules need not already be initialized):
+
+```bash
+git clone https://github.com/jware-solutions/bend-edlib.git
+cd bend-edlib
+bash scripts/setup.sh
+python3 run_tests.py --alignment --verdict -v
+```
+
+`bash scripts/setup.sh --native-only` omits Lean and the proof kernel for the
+fast and benchmark tiers. Add `--skip-system` only when the apt prerequisites
+are already installed. Setup replaces its tool installations and clears the
+test venv on every invocation. No preexisting Bend, Bun, Lean, elan, Edlib CMake
+build, or user proof-kernel cache is needed. The runner gives the project tools
+priority over system installations and selects the project kernel explicitly.
+
+Every run rebuilds the native binaries to include edits to both Bend entry
+points and their imports. The fixtures compile each executable only once per session. Build
+failures, process failures, invalid output and timeouts fail tests with command
+diagnostics. Build products and the Python environment stay under ignored
+`build/`; no existing Edlib CMake build is needed.
+
+## BendHub library package
+
+`lib.bend` is the public package entry point. It exports `distance` for the
+simple NW distance API, `default_config` and `align` for structured alignment
+results. Run `bend examples/library_usage.bend` to try the API from a separate
+Bend file using a local checkout. Consumers do not need the Python test setup;
+after publication, Bend resolves the package directly from the Hub import.
+
+To publish the first named release, review the imported source and root
+`LICENSE`, log in, and run from the repository root:
+
+```bash
+bend login
+bend lib.bend --publish bend-edlib-levenshtein@0.1.0.0
+```
+
+Update the package name and four-part version before a later release, then
+update the README import accordingly. BendHub packages are public and permanent
+under [its terms](https://bend-lang.com/bendai/terms#s18); do not publish until
+the source and license are ready.
+
+## Alignment protocol
+
+The two-argument `main.bend` CLI returns the global Levenshtein edit distance:
+
+```text
+build/bend-edlib --threads 1 -- ACGT ACG
+1
+```
+
+The default suite compares all three algorithms on known distances, normal and
+empty arguments, whitespace, literal shell characters, arguments resembling runtime flags, two CPU threads,
+invalid argument counts, Unicode and length-limit rejections, the C++ oracle,
+subprocess error handling, 32-bit word boundaries, 20 deterministic Hypothesis
+examples (plus explicit regressions), release-note generation, and
+`bend PROOF.bend`. `--alignment` adds the extended differential/property suite;
+`--verdict` also checks proofs with the Lean-backed kernel.
+
+`IO.args()` includes the program name in this compiler version. Keep the
+`Con{_, Con{query, Con{target, Nil{}}}}` pattern in `run`. The Python adapter places
+`--` before the sequences so strings such as `--threads` reach your program
+unchanged. The legacy CLI requires exactly two sequences. The configured CLI
+requires the fixed argument list described below; other counts exit 2.
+
+Both native Bend executables validate each sequence before computing a distance:
+
+- Characters must be **non-NUL ASCII (U+0001 through U+007F)**. Whitespace,
+  control characters, DEL and strings resembling runtime flags are allowed.
+  Non-ASCII characters are rejected even when both strings are identical or
+  the other string is empty. UTF-8 text is not interpreted as byte input.
+- Each sequence may contain **0 through 4,096 characters**, inclusive. This is
+  an application limit per argument, not a limit on the sum of their lengths
+  or on the edit distance. On supported inputs ASCII characters are one byte.
+- Unsupported characters or excessive lengths exit **2**, write a diagnostic
+  to **stderr**, and leave **stdout empty**. Invalid argument counts use the
+  same error protocol. For example, `build/bend-edlib -- Ā Ā` reports an ASCII
+  error instead of a distance.
+
+The 4,096-character cap bounds query-profile allocation and alignment work:
+Myers advances at most `4096 * 128` blocks, and the DP test executable computes
+at most `4096 * 4096` cells. It also keeps scores well inside `U32` and arguments
+below the tested WSL/Linux transport limits. This is a conservative supported
+size, not a universal latency guarantee. `Cli.bend` validates both inputs in
+parallel with bounded scans (at most 4,097 characters per sequence), before
+either algorithm or its empty-input shortcuts run. The Python test adapters
+also check lengths before launching a process. The pure distance functions
+do not perform this CLI validation; callers must respect the supported domain.
+
+## Implementation
+
+The Myers implementation in `main.bend` ports the distance path from the
+vendored `edlib.cpp`:
+`build_peq`/`build_peq_word` build equality masks, `calculate_block` advances a
+Myers bit-vector block, `get_block_cell_value` removes wildcard padding from the
+final score, and `myers_calc_edit_distance_nw` advances the global alignment.
+`distance` handles empty inputs and selects the shorter sequence as the query.
+
+Blocks use native `U32` words with 32 query positions, adapting Edlib's 64-bit
+words. Immutable byte-indexed query tables are built with balanced parallel
+calls; the two input lengths are also computed in parallel. Blocks within a
+column and consecutive columns remain sequential because their carries depend
+on the preceding calculation. The unlimited-distance implementation evaluates
+all blocks directly, without threshold-band retries or traceback storage.
+For lengths `m <= n`, it advances `n * ceil(m / 32)` blocks and stores only the
+current column and query profiles.
+
+`DistanceDP.bend` independently exports `distance(query, target) -> Nat` and
+imports only `Base`. It implements the two-row Levenshtein recurrence:
+
+```text
+D[0,j] = j; D[i,0] = i
+D[i,j] = min(D[i-1,j] + 1, D[i,j-1] + 1,
+             D[i-1,j-1] + (row[i-1] != column[j-1]))
+```
+
+The shorter sequence supplies the columns, so both rows have
+`min(m, n) + 1` cells. Each row consumes its predecessor; no distance matrix
+or traceback is retained. This takes `O(m*n)` time and `O(min(m,n))` score
+storage. Scores use `U32`, as in Myers. Input lengths are computed in parallel;
+cells and rows remain sequential because each depends on its predecessor.
+The scalar CLI continues to use Myers. Tests compile `tests/distance_dp.bend`
+as `build/bend-distance-dp`, which calls DP directly with the same CLI contract.
+
+`LAWS.bend` states the claims and input domains; `PROOF.bend` supplies their
+proofs. In addition to the empty-input, mask, DP recurrence and CLI laws, the
+incremental invariants cover:
+
+| Invariant | Quantified domain |
+| --- | --- |
+| Splitting rejoins to the original string; prefix length is `min(size, length)` | Every Bend `String` (including Unicode), every `Nat` size |
+| Initial block count; DP initial/updated row widths | Every `Nat` count, every `String`/previous row and `U32` accumulator; these are structural claims |
+| No-padding decoding preserves the score | Every pair of `U32` bit vectors and every `U32` score |
+| Outgoing carry is independent of stored score | Every `U32` mask, pair of scores and incoming `Carry`, including unreachable states |
+| Uniform-word carry propagation | All three valid incoming signs, every `U32` score, all-match/all-mismatch equality words, and vertical bit vectors `(all ones, 0)` or `(0, all ones)` |
+| CLI support, identity and Myers/DP equivalence | Exactly all seven strings of length 0..2 over `{'A', 'a'}`; equivalence covers all 49 ordered pairs |
+
+Carry claims cover these block families even when the score is not reachable;
+they certify the outgoing sign, not arbitrary block states or nonwrapping score
+arithmetic. The bounded alignment domain is encoded by `SmallAscii`, so it
+cannot accidentally include Unicode. Three-way differential tests check the
+broader supported distance behavior.
+
+## Limitations
+
+The supported contract is non-NUL ASCII alignment with unit edit costs,
+NW/SHW/HW modes, DISTANCE/LOC/PATH tasks, thresholds and additional equalities.
+The project implements part of Edlib's behavior.
+The following features and checks are still missing from this repository:
+
+- **Configured alignment performance:** modes, locations, paths and custom
+  equalities use a scalar recurrence with two score rows. PATH retains shared
+  operation prefixes and recomputes NW for the first matching interval.
+  Thresholds filter the final optimum; they do not prune the DP computation.
+  General optimality proofs and threshold-band acceleration remain future work.
+- **Input transport and size:** command-line arguments cannot carry embedded
+  NUL bytes, do not provide a protocol for all 256 byte values, and are subject
+  to operating-system argument-length limits. The native Bend CLI explicitly
+  rejects non-ASCII characters and sequences longer than 4,096 characters.
+  Each pair starts a new process; there is no persistent worker with explicit
+  byte lengths or support for larger inputs.
+- **Correctness coverage:** independent DP cross-checks Myers and C++ Edlib,
+  including the exhaustive small-input matrix, shrinking properties, direct
+  masks/block checks and upstream NW regressions described below. This is
+  finite test coverage; continuous fuzzing and general correctness proofs
+  remain future work. Extended alignment tests require `--alignment`;
+  known-distance, word-boundary, case, motif, unequal-length, upstream regressions
+  and small Hypothesis comparisons run by default. CI explicitly runs both tiers.
+- **Proof coverage:** the table above states the exact quantified domains.
+  Identity and Myers/DP equivalence are proved only for the seven-string ASCII
+  domain; carry propagation is proved only for the specified uniform-word
+  families. General identity over all Bend `String` values would be false for
+  Myers because the query table is byte indexed. General equivalence, correctness
+  of arbitrary reachable carries and optimality for arbitrary lengths remain
+  future work. The ordinary checker runs by default; the mandatory CI `proofs`
+  gate provisions Lean 4.34.0 and runs `--verdict` independently of the extended
+  differential suite. Kernel checking retains the verification limits below.
+- **Performance and batching:** the benchmark runner below records phase timings,
+  one-core latency, homogeneous batch throughput and whole-process peak RSS
+  against C++ Edlib. Measurements are host/workload observations, not a general
+  speedup claim. Myers evaluates every block without threshold bands,
+  early rejection or adaptive retries. Parallelism currently covers
+  preprocessing for one pair; balanced benchmark batches are benchmark-only.
+  There is no production CPU batch API, GPU entry point or
+  genuine-device test. Tests with multiple CPU threads check correctness only.
+- **Library and release readiness:** `lib.bend` provides a stable Bend import
+  surface for the current distance and configured-alignment APIs. Its first
+  BendHub name/version is prepared in the documentation but has not been
+  published. Semantic versioning and a broader platform compatibility matrix
+  remain to be established. CI, clean-checkout tool setup and per-push source
+  releases are automated as described below.
+
+There are also constraints in the pinned **Bend 2.0.36** and current WSL setup:
+
+1. **GPU execution falls back to the CPU under stock Bend on WSL2.** The runtime
+   requires concurrent managed-memory access that WSL2 GPUs do not provide.
+   Installing CUDA alone does not fix this. GPU validation and benchmarks need
+   a supported environment or changes to Bend's runtime. See the
+   [WSL2 CUDA issue](https://github.com/bendlang/bend/issues/1066).
+2. **Bend cannot directly build a replacement for Edlib's native C library.**
+   Its normal native output is a complete program with `main`, without a
+   supported way to export selected functions, a C header and runtime
+   setup/teardown. A reusable Bend module and CLI are possible; Edlib's C
+   calling interface needs additional compiler/runtime bridge work. See the
+   [native library target issue](https://github.com/bendlang/bend/issues/813).
+3. **Native 64-bit Myers words are unavailable.** Bend has no native `U64`, so
+   this implementation uses 32-bit blocks instead of Edlib's 64-bit blocks.
+   Longer inputs use multiple blocks; this does not limit sequences to 32
+   characters or prevent implementing the remaining Edlib features. Emulating
+   64-bit operations would require extra code. See
+   [Bend's version-pinned limits](https://github.com/bendlang/bend/blob/v2.0.36/WONTFIX.txt).
+4. **Native Windows execution is unsupported.** Run Bend and the compiled
+   executable inside WSL on Windows. A native Windows binary is not a supported
+   release target. See
+   [Bend's platform limits](https://github.com/bendlang/bend/blob/v2.0.36/WONTFIX.txt#L71-L80).
+5. **Parallel work must be balanced and respect memory ownership.** Bend's
+   scheduler splits and joins work without redistributing tasks between cores.
+   Ordinary arrays have one owner; experimental arrays shared through atomic
+   operations require `@unsafe`. Independent alignments can run in parallel,
+   but arbitrary recursion or a shared mutable alignment matrix will not
+   automatically scale safely. See the
+   [parallelism and array guide](https://github.com/bendlang/bend/blob/v2.0.36/guide/GUIDE.md#parallelism)
+   and [atomic-array limitation](https://github.com/bendlang/bend/blob/v2.0.36/README.md#limitations).
+6. **Proofs do not certify the whole compiled executable.** `--verdict` checks
+   translated terms through a proof kernel; the parser, translation and
+   native/GPU backends are outside that guarantee. Stronger alignment proofs
+   are possible, but runtime comparisons against Edlib are still needed. See
+   [Bend's verification limits](https://github.com/bendlang/bend/blob/v2.0.36/README.md#limitations)
+   and the [native-library verification scope](https://github.com/bendlang/bend/issues/813).
+
+Byte input including NUL and all 256 values remains a project gap. Typed
+missing-result values, modes, thresholds, equalities, locations, paths and
+CIGAR are supported within the existing ASCII/4,096-character domain.
+
+## Typed alignment API
+
+`main.edlib_align(query, target, config) -> EdlibTypes.AlignResult` accepts an
+`AlignConfig` containing mode, task, threshold, equality pairs and CIGAR format.
+`EdlibTypes.default_config()` selects NW, DISTANCE, unlimited threshold,
+ordinary equality and extended CIGAR. `main.distance(query, target) -> Nat`
+retains the scalar NW helper used by existing proofs and benchmarks.
+
+`EdlibTypes.bend` defines separate `Found{Nat}`/`NotFound{}` distance values,
+`Position{Nat}`/`BeforeStart{}` coordinates, status and operation constructors.
+Absent starts/path/CIGAR use `None{}`; a present empty path is `Some{Nil{}}`.
+The serializer converts `NotFound{}` and `BeforeStart{}` to Edlib's `-1`.
+
+The configured CLI and C++ oracle use the same fixed argument protocol:
+
+```bash
+build/bend-edlib --threads 1 -- --config HW PATH -1 '' EXTENDED AC TACGAC
+build/edlib-oracle --config HW PATH -1 '' EXTENDED AC TACGAC
+```
+
+```json
+{"status":0,"edit_distance":0,"end_locations":[2,5],"start_locations":[1,4],"alignment":[0,0],"cigar":"2="}
+```
+
+Modes are NW (global), SHW (prefix), HW (infix). DISTANCE returns all optimal
+end locations, LOC adds their corresponding starts, and PATH adds an alignment
+for the first interval. Operation codes are 0 match, 1 insertion into target
+(consumes query), 2 deletion from target (consumes target), 3 mismatch. Standard
+CIGAR merges matches/mismatches as `M`; extended CIGAR uses `=`/`X`.
+
+Threshold is `-1` or a nonnegative integer through 2,147,483,647. A distance
+above the threshold has OK status, `edit_distance: -1`, empty end locations
+and null starts/path/CIGAR. Equality-pair text concatenates two-character
+pairs (for example `aANACN` declares a=A, N=A, C=N); pairs are symmetric and
+do not imply transitive equality. The CLI allows up to 2,048 pairs of single
+non-NUL ASCII characters. Literal argv transport preserves whitespace and
+characters resembling flags, including within equality pairs.
+
+Python configuration and result types live in `alignment.py`:
+
+```python
+from alignment import AlignConfig, Mode, Task, MaxDistance, EqualityPair
+from tests.helpers import bend_align, cpp_edlib_align
+
+config = AlignConfig(mode=Mode.HW, task=Task.PATH, threshold=MaxDistance(1),
+                     equalities=(EqualityPair("a", "A"),))
+actual = bend_align("aC", "TaCG", config)
+expected = cpp_edlib_align("aC", "TaCG", config)
+assert actual == expected
+assert actual.require_distance() == 0
+assert actual.to_edlib()["end_locations"] == [2]
+```
+
+Adapters return `AlignResult`, with typed distance/coordinates and optional
+starts/operations/CIGAR. `to_edlib()` produces the wire dictionary;
+`require_distance()` fails when no distance was found. Explicit scalar wrappers
+are named `bend_distance`, `bend_dp_distance` and `cpp_edlib_distance`.
+The oracle also accepts two sequences alone and returns structured default
+DISTANCE results. The legacy Bend/independent DP CLIs continue printing a scalar.
+
+Compatibility follows the pinned vendored Edlib, including its empty-input
+early return: it ignores the threshold and leaves starts/path/CIGAR absent even
+for LOC/PATH. Its semiglobal search omits the before-zero end location when
+query length is a multiple of 64; configured Bend matches that behavior.
+Valid PATH results can choose different optimal operations from Edlib on large
+matrices (where Edlib uses Hirschberg); comparisons validate path cost and
+consumption as well as exact distances/locations. Small deterministic paths
+and CIGAR are compared exactly.
+
+The default suite covers all modes/tasks, thresholds, symmetric/nontransitive
+equalities, empty inputs, result sentinels, both CIGAR formats, malformed
+configuration/results and word boundaries with 1/2/4 threads. `--alignment`
+adds an exhaustive configured comparison for all 15 strings over `{A,C}` of
+length 0..3 (2,025 mode/task/pair combinations). Typed serialization and
+threshold laws are recorded in `LAWS.bend` and proved in `PROOF.bend`.
+
+## Test alignment
+
+Run the extended distance suite from PowerShell:
+
+```powershell
+python run_tests.py --alignment --verdict -v
+```
+
+Or invoke WSL directly:
+
+```powershell
+wsl --exec python3 run_tests.py --alignment --verdict -v
+```
+
+All three algorithms receive the same ordered pair in every differential comparison.
+The suite checks known examples, empty inputs, insertions/deletions/substitutions,
+32-bit and 64-bit block boundaries through 257 characters, every final-word
+padding size, large distances, 100 reproducible random DNA pairs, ASCII pairs up
+to 1,024 characters, and one, two and four Bend CPU threads. The completed
+correctness matrix also includes:
+
+- All **14,641 ordered pairs** of the 121 strings over `{A,C,G}` of lengths
+  zero through four, compared across all three native implementations.
+- Every single-word length **1-32**, with identity, disjoint and empty inputs,
+  substitutions/deletions/insertions at every position, and both input orders.
+- Hypothesis differential comparisons and identity, symmetry, length bounds
+  and triangle inequality for each implementation. These metric properties
+  apply only to **unrestricted NW with unit costs and ordinary equality**.
+  They must not be applied to prefix/infix distances, threshold sentinels or
+  arbitrary custom equalities. Strategies include DNA, mixed case, non-NUL
+  ASCII, motifs and lengths around word boundaries through 257.
+- A test-only native Bend probe importing production functions. Mask tests
+  check each real bit, wildcard padding and every byte-indexed table entry.
+  Transition tests compare positive/negative masks, bottom scores, all carry
+  signs, complete `advance_column` results and every decoded cell against
+  independent scalar DP columns, across single and multiple words.
+- Explicit case-sensitive, repetitive-motif and highly imbalanced regressions
+  up to the 4,096-character cap, and 17 cases migrated from pinned upstream
+  Edlib tests. Migration preserves declared C++ array lengths and zero-filled
+  tails via an injective ASCII relabeling; that migration includes only NW
+  distance cases. Configured modes/results have their own oracle comparisons.
+
+Most extended Hypothesis properties use 100 examples (40 for block traces), with replay,
+generation and shrinking enabled, no timing deadline, and persistent reduced
+failures in ignored `build/hypothesis/`. Re-run the same command to replay them.
+Checked-in examples in `tests/regressions/nw.json` run both as explicit
+distance regressions and Hypothesis `@example`s, even on a clean checkout.
+See [the regression corpus notes](tests/regressions/README.md) for provenance
+and how to preserve a newly discovered counterexample. The exhaustive matrix
+starts three native processes per pair, so the extended suite can take several minutes.
+
+Additional deterministic coverage runs 20 differential examples in the fast
+suite and 100 extended examples with one, two and four CPU threads. The extended
+checks cross-compare all three implementations for every derived pair, including
+empty inputs, reversed inputs and common suffixes.
+
+The scalar Bend/DP CLI contract is **NW/global Levenshtein distance**, unit costs,
+unlimited threshold (`k = -1`), and one nonnegative decimal integer on stdout.
+The C++ oracle emits JSON; `cpp_edlib_distance` extracts its default distance.
+Inputs are non-NUL ASCII strings of at most 4,096 characters each, so Edlib's
+byte semantics match Bend's characters. Direct native CLI tests cover Unicode
+rejection in either argument (including empty counterparts), every non-NUL
+ASCII character, and accepted/rejected length boundaries on one and two threads.
+The CLI bridge cannot transport NUL bytes and has operating-system argument
+length limits; the persistent binary worker from the proposal remains a later
+extension. Prefix/infix modes, thresholds and paths use the configured protocol
+and comparisons in `tests/test_configured_alignment.py`.
+
+Add cases to `tests/test_alignment.py`, or create your own tests using the
+session fixtures and adapters:
+
+```python
+import pytest
+from tests.helpers import bend_distance, bend_dp_distance, cpp_edlib_distance
+
+@pytest.mark.alignment
+def test_my_case(bend_binary, dp_binary, cpp_binary):
+    query, target = "ACGT", "AGT"
+    expected = cpp_edlib_distance(query, target, binary=cpp_binary)
+    assert bend_distance(query, target, binary=bend_binary) == expected
+    assert bend_dp_distance(query, target, binary=dp_binary) == expected
+```
+
+Normal pytest selectors work through the runner, for example
+`python run_tests.py --alignment -k word_boundaries -v` or
+`python run_tests.py --alignment -x`. To use pytest directly inside WSL after
+setup, prefer the runner so the downloaded tools and kernel are selected.
+For direct pytest, first export `PATH="$PWD/build/tools/bend/bin:$PATH"`
+and `BENDTT="$PWD/build/tools/kernel/bendtt"`, then run
+`build/test-venv/bin/python -m pytest tests/ -v` (add `--alignment --verdict`
+for the full suite). Run `build/tools/bend/bin/bend PROOF.bend` in WSL before committing, as required by
+`AGENTS.md`.
+
+Keep Lean's bundled Clang out of the native test `PATH`; setup exposes it only
+while building the kernel. The test runner needs only the downloaded Bend and
+the explicit `BENDTT` kernel path. Setup records the Bend/Lean pins and SHA-256
+hashes of the kernel source and executable in `build/tools/kernel/toolchain.json`.
+Requesting `--verdict` requires this executable and matching provenance; a
+missing, modified or stale project kernel fails with setup instructions. Both
+the runner and direct pytest select it explicitly, even if `BENDTT` previously
+pointed at a user cache. A negative-control test confirms that a rejecting
+kernel is actually invoked and makes verification fail.
+
+The legacy `tests.compare` helper still reports DP/Myers/Edlib CLI wall times
+after tests rebuild their executables:
+
+```powershell
+wsl --exec python3 -m tests.compare --repeats 5 --threads 1
+```
+
+Inside WSL, use `python3 -m tests.compare` with the same options. The report is
+CSV with one shared distance and median milliseconds for DP, Myers and C++
+Edlib. It validates every result, uses seed `20261008`, warms each binary once
+per pair, and rotates invocation order. These are **native CLI wall times**,
+including process and runtime startup; they do not isolate alignment time.
+The empty-input case makes the startup contribution visible. Timing differences
+are observations, not test pass/fail thresholds.
+
+## Reproducible performance benchmarks
+
+From PowerShell at the project root, after native tools and the Edlib submodule
+are available (use `python run_tests.py --setup` for a fresh environment):
+
+```powershell
+python run_benchmarks.py --repeats 5 --batch-size 16 --threads 1 4
+```
+
+Windows automatically forwards to WSL. Inside WSL/Linux, the same command is
+`python3 run_benchmarks.py ...`; only the Python standard library is needed.
+For a fresh Linux checkout, `bash scripts/setup.sh --native-only` provisions the
+tools first. The runner verifies `.bend-version` and rebuilds its own native
+executables every run in `build/benchmarks/`. It compiles Edlib with
+`g++ -std=c++14 -O2 -DNDEBUG` (override the compiler with `CXX`); Bend uses its
+normal pinned native backend. Build times are recorded separately from runtime.
+It does not require running the exhaustive correctness suite to build benchmarks.
+
+The checked-in [corpus](benchmarks/corpus.json) contains 16 named ordered pairs:
+empty inputs, the standard edit-distance example, 31/32/33 and 63/64/65 word
+boundaries, similar and independent DNA, repetitive motifs, non-NUL ASCII,
+4,096-character DNA, and a 3-versus-4,096 pair in both orders. Expected distances
+come from independent scalar DP. `python3 benchmarks/generate.py` regenerates
+the exact collection with xorshift32 seed `20261009`; an integrity test checks
+that regeneration matches. The runner hashes the corpus and validates every
+single-pair/batch checksum, including warmups, against its expected distance;
+lookup checksums are independently computed in Python. A disagreement, invalid
+output, nonzero exit or timeout fails the run and produces no successful report.
+
+Each workload runs once as a discarded warmup and then five times by default.
+Invocation order rotates across algorithms, modes and thread counts. Processes
+run one at a time to avoid competing benchmark workers. One-thread Bend and
+Edlib inherit affinity to the same single logical CPU. Multi-thread Bend inherits
+the first N selected logical CPUs; Edlib remains single threaded. `--threads`
+always includes 1. Choose cores deliberately on machines with SMT or hybrid CPUs;
+`lscpu -e=CPU,CORE,SOCKET` shows WSL/Linux topology and `--cpus` sets the ordered
+CPU list. The report records exact affinity, host topology, tool versions, source
+and binary hashes, Git commit/dirty status, compiler commands and build durations.
+No test or benchmark claims a speedup from correctness on multiple threads.
+
+Workloads measure the same pair repeatedly within one native process. These are
+**homogeneous batches**, not a persistent worker protocol or a mixed-query batch
+API. Batch sizes are powers of two, 2 through 512. Bend splits independent
+alignments into a balanced fork/join tree; columns/carries stay sequential. Edlib
+runs the same number of independent alignments in a sequential loop.
+
+| Workload | Timed work | Profile treatment |
+| --- | --- | --- |
+| `full`, batch size 1 | One-core native alignment latency, or the requested thread count | Each production `distance`/public `edlibAlign` call constructs/frees its own profile |
+| `full`, batch size B | Full alignment throughput, B / work wall seconds | Constructs a new profile per pair, as production does |
+| `prepared`, sizes 1 and B | Alignment with initialized blocks, column updates, score decoding and runtime/refcount work | Builds one profile before timing work and retains it until the separate release phase |
+| Bend `lookup`, size B | All target-symbol/block `peq_get` calls, with consumed mask checksums | Uses the unchanged 256-symbol trees, prepared before timing |
+| Bend `scan`, size B | The matching target/block traversal with the tree lookup omitted | A control workload; no alignment distance is computed |
+
+The prepared Edlib probe includes the unmodified vendored `edlib.cpp` in its
+translation unit, allowing access to `buildPeq` and `myersCalcEditDistanceNW`.
+It preserves the public NW distance algorithm's dynamic threshold retries from
+64 upward, with no traceback. Alphabet transformation and equality setup occur
+in the preparation phase. Bend chooses the shorter query internally; Edlib keeps
+the original order, as the test oracle does. Their 32/64-bit words, full/banded
+columns, alphabet representations and retry behavior differ. Prepared timings
+exclude public API result/location packaging, so compare them separately from
+the full public-call workload. They are benchmark entry points, not new APIs.
+
+Native `CLOCK_MONOTONIC` barriers record each phase directly, with evaluated
+values passed across them so profile construction cannot be optimized away or
+charged to the alignment phase. Production alignment/table/lookup functions
+remain unchanged. The measurements distinguish:
+
+| Metric | Boundary / units |
+| --- | --- |
+| Launcher and native startup | Parent launch to small RSS launcher; native fork/exec to first entry-point effect, respectively; their sum is startup |
+| Transport | `IO.args()` / materialization of argv strings after entry-point readiness; kernel argv copying is in startup |
+| Preparation | Mode/count parsing, validation, orientation/lengths; Edlib prepared mode also transforms its alphabet |
+| Profile construction | Direct Bend `build_peq` (256 symbols per 32-character word), or Edlib `buildPeq`; reported separately in prepared/lookup/scan modes |
+| Work / release | Workload above, then persistent-profile release; `full` includes per-call profile construction and freeing within work |
+| Native wall / end-to-end wall | Native fork to reaped worker; parent launch to reaped RSS launcher, respectively; E2E includes startup, transport, phases, output and teardown |
+| CPU time / peak RSS | Worker user + system CPU time; worker's lifetime maximum resident set in KiB, including runtime and profiles, from native `wait4` |
+| Latency / throughput | Work time / batch size in microseconds; B / work seconds and B / E2E seconds for full/prepared alignments |
+
+The small C launcher forks from its own native address space to avoid inheriting
+Python's memory high-water mark. Its overhead is included in E2E and separately
+recorded; its own RSS is excluded from worker RSS. RSS is not a phase allocation
+counter or reserved virtual memory. Timed phases include timer/IO scheduling
+overhead, with no subtraction from another process run. Empty cases expose the
+measurement floor; very small workloads and p95 values from five samples are
+especially sensitive to scheduling. Warmups warm executable/filesystem caches;
+each sample still starts a fresh process. CPU frequency, other host activity,
+virtualization and filesystem placement can change results.
+
+The lookup probe includes target/list traversal, reference counting and checksum
+arithmetic. The scan control records that traversal separately, but their
+difference is not an exact fraction of alignment time: allocation/cache behavior
+and Bend scheduling can differ. Use these direct measurements to investigate the
+current table and tree before changing their representation. Thread scaling is
+an observed per-workload ratio, never inferred from thread count alone.
+
+Reports default to `build/benchmarks/results/`: `results.json` retains every raw
+sample and median/min/max/nearest-rank-p95 statistics; `summary.csv` contains phase
+times, peak RSS, per-pair latency and both throughput rates; `REPORT.md` compares
+Bend work/E2E/RSS against Edlib. Existing result directories are protected from
+overwrite. Select a fresh path and/or subset for later runs, for example:
+
+```powershell
+python run_benchmarks.py --case dna-random-512 --case dna-random-4096 --repeats 10 --batch-size 32 --threads 1 2 4 --output build/benchmarks/recheck
+```
+
+Use `--warmups 2`, `--timeout 180` or `--cpus 0,2,4,6` as appropriate for the host.
+The checked-in [WSL observation](benchmarks/results/wsl-2026-10-09/REPORT.md)
+includes its raw JSON and CSV alongside [interpretation of table/lookup costs](benchmarks/results/wsl-2026-10-09/NOTES.md).
+It is one reproducible observation, not a portable performance guarantee.
+
+The CLI convention follows the installed `bend guide`; see also the official
+[Bend guide](https://github.com/bendlang/bend/blob/main/guide/GUIDE.md) and
+[native compilation documentation](https://bend2.dev/learn/compile-to-c/).
+
+## CI and releases
+
+`.github/workflows/ci.yml` runs on pull requests, pushes to `main`, manual
+dispatch and Mondays at 04:23 UTC. Each job provisions its own checkout without
+restoring tools, binaries or a venv from a cache:
+
+| Job | Coverage | Environment |
+| --- | --- | --- |
+| `fast` | CLI, known distances, all listed word boundaries, shrinking differential examples, regular proofs, release automation tests | Ubuntu 24.04 / system Python 3.12 |
+| `proofs` | Regular and kernel proofs, kernel provenance checks and rejection control | Ubuntu 24.04 / pinned Lean 4.34.0 and freshly built BendTT |
+| `extended` | Full suite with 14,641 exhaustive ordered pairs, shrinking properties, direct masks/block traces, regressions, 1/2/4 threads, regular proofs | Ubuntu 22.04 / Python 3.10 and Ubuntu 24.04 / Python 3.12 |
+| `benchmark` | Fresh native builds, fixed validated corpus, phase timing/latency/batch throughput/RSS, five repeats with 1 and up to 4 available Bend threads | Ubuntu 24.04; pushes, schedule and manual runs |
+
+Test reports, tool/package versions and benchmark CSVs are retained as workflow
+artifacts. Benchmark reports include separate work and end-to-end timings and
+carry no speed thresholds.
+The fast and proof gates run independently. Extended jobs depend on both gates
+and run independently in a matrix; benchmark work runs alongside them.
+Pull requests receive read-only tokens.
+
+After **every successful main-push CI run**, `.github/workflows/release.yml`
+publishes a tag and GitHub Release named `build-<CI-run-number>-<short-SHA>` at
+the exact tested commit. Failed CI produces no release; rerun the failed run
+after resolving transient failures. A rerun reuses the same tag/release. Main
+push runs are never canceled by a newer push. Only the release job receives
+`contents: write`; the repository's normal `GITHUB_TOKEN` is sufficient, with
+no personal access token or additional secret. Repository tag rules must allow
+the Actions token to create `build-*` tags.
+
+Release notes combine GitHub's generated PR/contributor notes, **every commit
+subject since the nearest published release on main's ancestry**, a comparison
+link and a changed-file summary. Direct commits and multi-commit pushes are
+included. The first release lists the full history. An overlapping newer run
+cannot become an older run's changelog base. These are source releases with
+GitHub's source archives, not packaged native library binaries. GitHub source
+archives omit submodule contents; clone the release tag and run setup to obtain
+the recorded Edlib revision.
+
+Preview the commit/file portion locally without creating tags or contacting
+GitHub:
+
+```bash
+GH_REPO=jware-solutions/bend-edlib python3 scripts/release.py --dry-run
+# Optional range: add --previous-tag build-123-01234567
+cat build/release-notes.md
+```
+
+## License
+
+bend-edlib is licensed under the **GNU General Public License v3.0 (GPL-3.0)**.
+You may use, modify and redistribute it under the terms in [LICENSE](LICENSE).
+Redistributed modified versions must remain under GPL-3.0, and distributed
+binaries must be accompanied by access to the corresponding source as the
+license requires. The software comes without warranty, to the extent permitted
+by applicable law.
+
+The vendored C++ Edlib dependency retains its
+[MIT license](vendor/edlib/LICENSE) and copyright notice.

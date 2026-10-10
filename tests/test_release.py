@@ -157,7 +157,13 @@ def test_version_tag_accepts_windows_line_endings(tmp_path, monkeypatch):
     assert release.version_tag() == "v0.12.34"
 
 
-@pytest.mark.parametrize("version", ["", "1.2", "01.2.3", "v1.2.3", "1.2.3\n4.5.6", "../1.2.3"])
+def test_version_tag_accepts_four_components(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "version.txt").write_text("0.1.0.2\n", encoding="utf-8")
+    assert release.version_tag() == "v0.1.0.2"
+
+
+@pytest.mark.parametrize("version", ["", "1.2", "01.2.3", "1.2.3.04", "v1.2.3", "1.2.3\n4.5.6", "../1.2.3"])
 def test_invalid_version_is_rejected(tmp_path, monkeypatch, version):
     monkeypatch.chdir(tmp_path)
     (tmp_path / "version.txt").write_text(version, encoding="utf-8")

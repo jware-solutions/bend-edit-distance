@@ -77,8 +77,8 @@ def commit_notes(repository: str, sha: str, previous: str | None) -> str:
 
 def version_tag() -> str:
     version = Path("version.txt").read_text(encoding="utf-8").strip()
-    if not re.fullmatch(r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)", version):
-        raise ValueError("version.txt must contain a version number in MAJOR.MINOR.PATCH format")
+    if not re.fullmatch(r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(\.(0|[1-9][0-9]*))?", version):
+        raise ValueError("version.txt must contain a version number in MAJOR.MINOR.PATCH[.BUILD] format")
     return f"v{version}"
 
 

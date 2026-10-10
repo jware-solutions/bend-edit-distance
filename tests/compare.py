@@ -15,7 +15,7 @@ import sys
 import time
 
 from tests.helpers import (
-    BEND_BINARY, CPP_BINARY, DP_BINARY, bend_align, bend_dp_align, cpp_edlib_align,
+    BEND_BINARY, CPP_BINARY, DP_BINARY, bend_distance, bend_dp_distance, cpp_edlib_distance,
 )
 
 
@@ -50,9 +50,9 @@ def main() -> int:
         parser.error("Build all three binaries first: python3 run_tests.py --alignment")
 
     algorithms = [
-        ("dp", lambda q, t: bend_dp_align(q, t, threads=args.threads)),
-        ("myers", lambda q, t: bend_align(q, t, threads=args.threads)),
-        ("cpp_edlib", cpp_edlib_align),
+        ("dp", lambda q, t: bend_dp_distance(q, t, threads=args.threads)),
+        ("myers", lambda q, t: bend_distance(q, t, threads=args.threads)),
+        ("cpp_edlib", cpp_edlib_distance),
     ]
     print(
         f"Median native CLI wall time in ms; includes subprocess and runtime startup; "

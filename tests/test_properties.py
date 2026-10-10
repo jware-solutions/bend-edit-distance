@@ -10,7 +10,7 @@ import json
 from hypothesis import example, given, settings, strategies as st
 import pytest
 
-from tests.helpers import ROOT, bend_align, bend_dp_align, compare_distances, cpp_edlib_align
+from tests.helpers import ROOT, bend_distance, bend_dp_distance, compare_distances, cpp_edlib_distance
 
 SAVED = json.loads((ROOT / "tests" / "regressions" / "nw.json").read_text())
 ASCII = "".join(chr(code) for code in range(1, 128))
@@ -55,7 +55,7 @@ def test_nw_differential(bend_binary, dp_binary, cpp_binary, query, target):
 
 
 IMPLEMENTATIONS = [
-    ("bend_binary", bend_align), ("dp_binary", bend_dp_align), ("cpp_binary", cpp_edlib_align),
+    ("bend_binary", bend_distance), ("dp_binary", bend_dp_distance), ("cpp_binary", cpp_edlib_distance),
 ]
 
 

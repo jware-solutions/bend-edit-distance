@@ -1,6 +1,6 @@
 import pytest
 
-from tests.helpers import MAX_SEQUENCE_LENGTH, cpp_edlib_align, execute
+from tests.helpers import MAX_SEQUENCE_LENGTH, cpp_edlib_distance, execute
 
 
 @pytest.fixture(params=["bend_binary", "dp_binary"])
@@ -74,7 +74,7 @@ def test_native_accepts_length_boundary(distance_binary, threads, reverse, lengt
 def test_native_accepts_all_non_nul_ascii(distance_binary, cpp_binary, threads):
     query = "".join(chr(code) for code in range(1, 128))
     target = query[::-1]
-    expected = cpp_edlib_align(query, target, binary=cpp_binary)
+    expected = cpp_edlib_distance(query, target, binary=cpp_binary)
     result = invoke(distance_binary, query, target, threads)
     assert result.returncode == 0, result.stderr
     assert result.stdout == f"{expected}\n"

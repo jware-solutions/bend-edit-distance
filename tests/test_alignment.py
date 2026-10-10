@@ -3,7 +3,7 @@ from itertools import product
 
 import pytest
 
-from tests.helpers import compare_distances, cpp_edlib_align
+from tests.helpers import compare_distances, cpp_edlib_distance
 
 SMALL_SEQUENCES = tuple(
     "".join(chars) for size in range(5) for chars in product("ACG", repeat=size)
@@ -21,7 +21,7 @@ KNOWN_DISTANCES = [
 
 @pytest.mark.parametrize("query,target,expected", KNOWN_DISTANCES)
 def test_cpp_oracle(cpp_binary, query, target, expected):
-    assert cpp_edlib_align(query, target, binary=cpp_binary) == expected
+    assert cpp_edlib_distance(query, target, binary=cpp_binary) == expected
 
 
 @pytest.mark.parametrize("query,target,expected", KNOWN_DISTANCES)

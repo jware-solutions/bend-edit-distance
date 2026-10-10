@@ -28,7 +28,7 @@ def prepare(q: String, t: String, depth: Nat, status: CLI.InputStatus) -> IO(Inp
 def full(+depth: Nat, +query: String, +target: String) -> Nat:
   match depth:
     case 0n:
-      M.edlib_align(query, target)
+      M.distance(query, target)
     case 1n+p:
       left right = full(p, query, target) full(p, query, target)
       Nat.add(left, right)

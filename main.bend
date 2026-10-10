@@ -1,9 +1,13 @@
 import Base
 import ./Cli.bend as CLI
+import ./EdlibTypes.bend as E
+import ./Alignment.bend as A
+import ./AlignmentCli.bend as AC
 
 # The NW/distance path from vendor/edlib/edlib/src/edlib.cpp. Bend's native
 # integer is U32, so a Myers word covers 32 query characters instead of 64.
-# The CLI contract is ASCII, unit costs, and unlimited distance (k = -1).
+# The scalar helper is NW, unit costs, unlimited distance (k = -1). The
+# configured API extends it with the typed modes/tasks in EdlibTypes.bend.
 
 type Peq is Data:
   Mask{bits: U32}
@@ -170,7 +174,7 @@ def align_shorter(query: String, target: String, query_length: Nat,
     case False{}:
       align_query(target, query, target_length)
 
-def edlib_align(query: String, target: String) -> Nat:
+def distance(query: String, target: String) -> Nat:
   match query target:
     case SNil{} _:
       String.length(target)
@@ -182,11 +186,28 @@ def edlib_align(query: String, target: String) -> Nat:
       +qn +tn = String.length(q) String.length(t)
       align_shorter(q, t, qn, tn, Nat.is_le(qn, tn))
 
+def edlib_align(query: String, target: String, config: E.AlignConfig) -> E.AlignResult:
+  match query target config:
+    case SNil{} _ _:
+      A.align("", target, config)
+    case SCon{h, t} SNil{} _:
+      A.align(SCon{h, t}, "", config)
+    case +q +t E.AlignConfig{E.NW{}, E.Distance{}, +threshold, Nil{}, _}:
+      +score = distance(q, t)
+      E.distance_result(score, E.end_coordinate(String.length(t)),
+        E.within_threshold(threshold, score))
+    case _ _ _:
+      A.align(query, target, config)
+
 def response(query: String, target: String) -> String:
-  Nat.show(edlib_align(query, target))
+  Nat.show(distance(query, target))
 
 def run(args: List<String>) -> IO(Unit):
-  CLI.run(~edlib_align, args)
+  match args:
+    case _ <> query <> target <> Nil{}:
+      CLI.run(~distance, ["bend-edlib", query, target])
+    case _:
+      AC.run(~edlib_align, args)
 
 def main() -> IO(Unit):
   do IO<Unit>:

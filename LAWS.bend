@@ -2,6 +2,9 @@ import Base
 import ./main.bend as Main
 import ./DistanceDP.bend as DP
 import ./Cli.bend as CLI
+import ./EdlibTypes.bend as E
+import ./Alignment.bend as A
+import ./lib.bend as L
 
 # A finite first domain for alignment proofs: precisely every string of length
 # 0..2 over {'A', 'a'}. This includes case differences and repeated symbols.
@@ -78,11 +81,11 @@ def initial_carry(sign: CarrySign, matches: Bool) -> Main.Carry:
 # length. These quantify over every string, rather than selected examples.
 law empty_query:
   for target: String
-  {Main.edlib_align("", target) == String.length(target) : Nat}
+  {Main.distance("", target) == String.length(target) : Nat}
 
 law empty_target:
   for query: String
-  {Main.edlib_align(query, "") == String.length(query) : Nat}
+  {Main.distance(query, "") == String.length(query) : Nat}
 
 # Query-profile padding must match every symbol, including a full empty word.
 law wildcard_padding:
@@ -161,12 +164,12 @@ law small_ascii_supported:
 
 law small_ascii_identity:
   for sequence: SmallAscii
-  {Main.edlib_align(small_ascii(sequence), small_ascii(sequence)) == 0n : Nat}
+  {Main.distance(small_ascii(sequence), small_ascii(sequence)) == 0n : Nat}
 
 law small_ascii_equivalence:
   for query: SmallAscii
   for target: SmallAscii
-  {Main.edlib_align(small_ascii(query), small_ascii(target)) ==
+  {Main.distance(small_ascii(query), small_ascii(target)) ==
     DP.distance(small_ascii(query), small_ascii(target)) : Nat}
 
 # Ordinary equality is case-sensitive; padding alone is a wildcard. Bit 31
@@ -322,3 +325,86 @@ law cli_length_limit:
 #   tests are not proofs of the general metric laws, and do not apply to HW,
 #   SHW, threshold sentinel results or arbitrary custom equality relations.
 # - CLI arguments cannot contain NUL; use a future binary worker for that.
+
+# Typed configuration/results: sentinel values never use unsigned wrapping.
+# The legacy two-argument CLI and distance() helper retain the scalar NW API.
+law typed_default_config:
+  {E.default_config() == E.AlignConfig{E.NW{}, E.Distance{}, E.Unlimited{}, Nil{}, E.Extended{}} : E.AlignConfig}
+
+law missing_distance_serialization:
+  {E.distance_show(E.NotFound{}) == "-1" : String}
+
+law found_distance_serialization:
+  for value: Nat
+  {E.distance_show(E.Found{value}) == Nat.show(value) : String}
+
+law before_zero_serialization:
+  {E.coordinate_show(E.BeforeStart{}) == "-1" : String}
+
+law position_serialization:
+  for index: Nat
+  {E.coordinate_show(E.Position{index}) == Nat.show(index) : String}
+
+law empty_end_coordinate:
+  {E.end_coordinate(0n) == E.BeforeStart{} : E.Coordinate}
+
+law nonempty_end_coordinate:
+  for index: Nat
+  {E.end_coordinate(1n+index) == E.Position{index} : E.Coordinate}
+
+law unlimited_threshold:
+  for value: Nat
+  {E.within_threshold(E.Unlimited{}, value) == True{} : Bool}
+
+law threshold_comparison:
+  for maximum: Nat
+  for value: Nat
+  {E.within_threshold(E.MaxDistance{maximum}, value) == Nat.is_le(value, maximum) : Bool}
+
+law threshold_not_found:
+  for value: Nat
+  for end: E.Coordinate
+  {E.distance_result(value, end, False{}) ==
+    E.AlignResult{E.Ok{}, E.NotFound{}, Nil{}, None{}, None{}, None{}} : E.AlignResult}
+
+# Even DISTANCE includes the end location, without starts/path/CIGAR.
+law distance_end_location:
+  for value: Nat
+  for end: E.Coordinate
+  {E.distance_result(value, end, True{}) ==
+    E.AlignResult{E.Ok{}, E.Found{value}, [end], None{}, None{}, None{}} : E.AlignResult}
+
+law equality_pair_reverse:
+  {A.equal([E.EqualityPair{'A', 'N'}], 'N', 'A') == True{} : Bool}
+
+law equality_pair_nontransitive:
+  {A.equal([E.EqualityPair{'a', 'A'}, E.EqualityPair{'A', 'N'}], 'a', 'N') == False{} : Bool}
+
+law standard_cigar_merges_match_mismatch:
+  {E.alignment_to_cigar([E.Match{}, E.Mismatch{}, E.Insert{}, E.Delete{}], E.Standard{}) == "2M1I1D" : String}
+
+law extended_cigar_operations:
+  {E.alignment_to_cigar([E.Match{}, E.Mismatch{}, E.Insert{}, E.Delete{}], E.Extended{}) == "1=1X1I1D" : String}
+
+# The public package module preserves the distance and configured APIs.
+law library_distance_matches_main:
+  for query: String
+  for target: String
+  {L.distance(query, target) == Main.distance(query, target) : Nat}
+
+law library_default_config:
+  {L.default_config() == E.default_config() : E.AlignConfig}
+
+law library_align_matches_main:
+  for query: String
+  for target: String
+  for config: E.AlignConfig
+  {L.align(query, target, config) == Main.edlib_align(query, target, config) : E.AlignResult}
+
+# Configured DP cells and columns retain their dependencies. Independent
+# input scans and Myers profile branches remain balanced parallel calls.
+# Equalities are symmetric and nontransitive. Threshold failure has OK status,
+# no locations and absent starts/path/CIGAR. PATH covers the first location.
+# Pinned Edlib skips threshold filtering and starts/path on empty inputs.
+# Generic configured DP is not a threshold-band optimization; it filters the
+# final optimum. These laws do not prove general alignment optimality.

@@ -3,6 +3,51 @@ import ./LAWS.bend as Laws
 import ./DistanceDP.bend as DP
 import ./main.bend as Main
 
+def Laws.typed_default_config():
+  {==}
+
+def Laws.missing_distance_serialization():
+  {==}
+
+def Laws.found_distance_serialization(value):
+  {==}
+
+def Laws.before_zero_serialization():
+  {==}
+
+def Laws.position_serialization(index):
+  {==}
+
+def Laws.empty_end_coordinate():
+  {==}
+
+def Laws.nonempty_end_coordinate(index):
+  {==}
+
+def Laws.unlimited_threshold(value):
+  {==}
+
+def Laws.threshold_comparison(maximum, value):
+  {==}
+
+def Laws.threshold_not_found(value, end):
+  {==}
+
+def Laws.distance_end_location(value, end):
+  {==}
+
+def Laws.equality_pair_reverse():
+  {==}
+
+def Laws.equality_pair_nontransitive():
+  {==}
+
+def Laws.standard_cigar_merges_match_mismatch():
+  {==}
+
+def Laws.extended_cigar_operations():
+  {==}
+
 def Laws.small_ascii_equivalence(query, target):
   match query target:
     case Laws.EmptyAscii{} Laws.EmptyAscii{}:
@@ -353,4 +398,13 @@ def Laws.cli_nul():
   {==}
 
 def Laws.cli_length_limit():
+  {==}
+
+def Laws.library_distance_matches_main(query, target):
+  {==}
+
+def Laws.library_default_config():
+  {==}
+
+def Laws.library_align_matches_main(query, target, config):
   {==}

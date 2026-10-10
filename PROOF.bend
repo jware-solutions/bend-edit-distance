@@ -1,6 +1,225 @@
 import Base
 import ./LAWS.bend as Laws
 import ./DistanceDP.bend as DP
+import ./main.bend as Main
+
+def Laws.small_ascii_equivalence(query, target):
+  match query target:
+    case Laws.EmptyAscii{} Laws.EmptyAscii{}:
+      {==}
+    case Laws.EmptyAscii{} Laws.UpperAscii{}:
+      {==}
+    case Laws.EmptyAscii{} Laws.LowerAscii{}:
+      {==}
+    case Laws.EmptyAscii{} Laws.UpperUpperAscii{}:
+      {==}
+    case Laws.EmptyAscii{} Laws.UpperLowerAscii{}:
+      {==}
+    case Laws.EmptyAscii{} Laws.LowerUpperAscii{}:
+      {==}
+    case Laws.EmptyAscii{} Laws.LowerLowerAscii{}:
+      {==}
+    case Laws.UpperAscii{} Laws.EmptyAscii{}:
+      {==}
+    case Laws.UpperAscii{} Laws.UpperAscii{}:
+      {==}
+    case Laws.UpperAscii{} Laws.LowerAscii{}:
+      {==}
+    case Laws.UpperAscii{} Laws.UpperUpperAscii{}:
+      {==}
+    case Laws.UpperAscii{} Laws.UpperLowerAscii{}:
+      {==}
+    case Laws.UpperAscii{} Laws.LowerUpperAscii{}:
+      {==}
+    case Laws.UpperAscii{} Laws.LowerLowerAscii{}:
+      {==}
+    case Laws.LowerAscii{} Laws.EmptyAscii{}:
+      {==}
+    case Laws.LowerAscii{} Laws.UpperAscii{}:
+      {==}
+    case Laws.LowerAscii{} Laws.LowerAscii{}:
+      {==}
+    case Laws.LowerAscii{} Laws.UpperUpperAscii{}:
+      {==}
+    case Laws.LowerAscii{} Laws.UpperLowerAscii{}:
+      {==}
+    case Laws.LowerAscii{} Laws.LowerUpperAscii{}:
+      {==}
+    case Laws.LowerAscii{} Laws.LowerLowerAscii{}:
+      {==}
+    case Laws.UpperUpperAscii{} Laws.EmptyAscii{}:
+      {==}
+    case Laws.UpperUpperAscii{} Laws.UpperAscii{}:
+      {==}
+    case Laws.UpperUpperAscii{} Laws.LowerAscii{}:
+      {==}
+    case Laws.UpperUpperAscii{} Laws.UpperUpperAscii{}:
+      {==}
+    case Laws.UpperUpperAscii{} Laws.UpperLowerAscii{}:
+      {==}
+    case Laws.UpperUpperAscii{} Laws.LowerUpperAscii{}:
+      {==}
+    case Laws.UpperUpperAscii{} Laws.LowerLowerAscii{}:
+      {==}
+    case Laws.UpperLowerAscii{} Laws.EmptyAscii{}:
+      {==}
+    case Laws.UpperLowerAscii{} Laws.UpperAscii{}:
+      {==}
+    case Laws.UpperLowerAscii{} Laws.LowerAscii{}:
+      {==}
+    case Laws.UpperLowerAscii{} Laws.UpperUpperAscii{}:
+      {==}
+    case Laws.UpperLowerAscii{} Laws.UpperLowerAscii{}:
+      {==}
+    case Laws.UpperLowerAscii{} Laws.LowerUpperAscii{}:
+      {==}
+    case Laws.UpperLowerAscii{} Laws.LowerLowerAscii{}:
+      {==}
+    case Laws.LowerUpperAscii{} Laws.EmptyAscii{}:
+      {==}
+    case Laws.LowerUpperAscii{} Laws.UpperAscii{}:
+      {==}
+    case Laws.LowerUpperAscii{} Laws.LowerAscii{}:
+      {==}
+    case Laws.LowerUpperAscii{} Laws.UpperUpperAscii{}:
+      {==}
+    case Laws.LowerUpperAscii{} Laws.UpperLowerAscii{}:
+      {==}
+    case Laws.LowerUpperAscii{} Laws.LowerUpperAscii{}:
+      {==}
+    case Laws.LowerUpperAscii{} Laws.LowerLowerAscii{}:
+      {==}
+    case Laws.LowerLowerAscii{} Laws.EmptyAscii{}:
+      {==}
+    case Laws.LowerLowerAscii{} Laws.UpperAscii{}:
+      {==}
+    case Laws.LowerLowerAscii{} Laws.LowerAscii{}:
+      {==}
+    case Laws.LowerLowerAscii{} Laws.UpperUpperAscii{}:
+      {==}
+    case Laws.LowerLowerAscii{} Laws.UpperLowerAscii{}:
+      {==}
+    case Laws.LowerLowerAscii{} Laws.LowerUpperAscii{}:
+      {==}
+    case Laws.LowerLowerAscii{} Laws.LowerLowerAscii{}:
+      {==}
+
+def split_rejoins_step(h: Char, parts: String & String) ->
+  {SCon{h, Laws.rejoin(parts)} == Laws.rejoin(Main.split_query.prepend(h, parts)) : String}:
+  match parts:
+    case (prefix, suffix):
+      {==}
+
+def Laws.split_rejoins(size, query):
+  match size query:
+    case 0n _:
+      {==}
+    case 1n+p SNil{}:
+      {==}
+    case Succ{+p} SCon{+h, +t}:
+      %split_rejoins_step(h, Main.split_query(p, t)) : {_ == SCon{h, t} : String}
+      %Laws.split_rejoins(p, t) : {SCon{h, Laws.rejoin(Main.split_query(p, t))} == SCon{h, _} : String}
+      {==}
+
+def split_prefix_step(h: Char, parts: String & String) ->
+  {1n+String.length(Pair.fst(String, String, parts)) ==
+    String.length(Pair.fst(String, String, Main.split_query.prepend(h, parts))) : Nat}:
+  match parts:
+    case (prefix, suffix):
+      {==}
+
+def Laws.split_prefix_length(size, query):
+  match size query:
+    case 0n _:
+      {==}
+    case 1n+p SNil{}:
+      {==}
+    case Succ{+p} SCon{+h, +t}:
+      %split_prefix_step(h, Main.split_query(p, t)) : {_ == 1n+Nat.min(p, String.length(t)) : Nat}
+      %Laws.split_prefix_length(p, t) :
+        {1n+String.length(Pair.fst(String, String, Main.split_query(p, t))) == 1n+_ : Nat}
+      {==}
+
+def Laws.initial_block_count(count, bottom):
+  match count:
+    case 0n:
+      {==}
+    case 1n+p:
+      %Laws.initial_block_count(p, U32.add(bottom, 32)) :
+        {1n+List.length(&1, Main.Block, Main.init_blocks(p, U32.add(bottom, 32))) == 1n+_ : Nat}
+      {==}
+
+def Laws.decode_no_padding(positive, negative, score):
+  {==}
+
+def Laws.carry_score_independent(positive, negative, eq, incoming, first_score, second_score):
+  match incoming:
+    case Main.Carry{hin_positive, hin_negative}:
+      {==}
+
+def Laws.initial_uniform_carry(score, incoming, matches):
+  match incoming matches:
+    case Laws.NegativeCarry{} False{}:
+      {==}
+    case Laws.NegativeCarry{} True{}:
+      {==}
+    case Laws.ZeroCarry{} False{}:
+      {==}
+    case Laws.ZeroCarry{} True{}:
+      {==}
+    case Laws.PositiveCarry{} False{}:
+      {==}
+    case Laws.PositiveCarry{} True{}:
+      {==}
+
+def Laws.finished_uniform_carry(score, incoming, matches):
+  match incoming matches:
+    case Laws.NegativeCarry{} False{}:
+      {==}
+    case Laws.NegativeCarry{} True{}:
+      {==}
+    case Laws.ZeroCarry{} False{}:
+      {==}
+    case Laws.ZeroCarry{} True{}:
+      {==}
+    case Laws.PositiveCarry{} False{}:
+      {==}
+    case Laws.PositiveCarry{} True{}:
+      {==}
+
+def Laws.small_ascii_supported(sequence):
+  match sequence:
+    case Laws.EmptyAscii{}:
+      {==}
+    case Laws.UpperAscii{}:
+      {==}
+    case Laws.LowerAscii{}:
+      {==}
+    case Laws.UpperUpperAscii{}:
+      {==}
+    case Laws.UpperLowerAscii{}:
+      {==}
+    case Laws.LowerUpperAscii{}:
+      {==}
+    case Laws.LowerLowerAscii{}:
+      {==}
+
+def Laws.small_ascii_identity(sequence):
+  match sequence:
+    case Laws.EmptyAscii{}:
+      {==}
+    case Laws.UpperAscii{}:
+      {==}
+    case Laws.LowerAscii{}:
+      {==}
+    case Laws.UpperUpperAscii{}:
+      {==}
+    case Laws.UpperLowerAscii{}:
+      {==}
+    case Laws.LowerUpperAscii{}:
+      {==}
+    case Laws.LowerLowerAscii{}:
+      {==}
 
 def Laws.empty_query(target):
   {==}
@@ -78,6 +297,18 @@ def Laws.dp_row_width(length, column):
 
 def Laws.dp_initial_row():
   {==}
+
+def Laws.dp_row_cells_width(columns, previous, diagonal, left, symbol):
+  match columns previous:
+    case SNil{} _:
+      {==}
+    case SCon{h, t} Nil{}:
+      {==}
+    case SCon{+h, t} +above <> rest:
+      %Laws.dp_row_cells_width(t, rest, above, DP.cell(above, left, diagonal, symbol, h), symbol) :
+        {1n+List.length(&1, U32, DP.row_cells(t, rest, above,
+          DP.cell(above, left, diagonal, symbol, h), symbol)) == 1n+_ : Nat}
+      {==}
 
 def Laws.dp_cell(above, left, diagonal, row_symbol, column_symbol):
   {==}

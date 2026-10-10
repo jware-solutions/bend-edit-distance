@@ -8,6 +8,8 @@ from pathlib import Path
 import subprocess
 import sys
 
+from scripts.proof_kernel import require_kernel
+
 ROOT = Path(__file__).resolve().parent
 TEST_PYTHON = ROOT / "build" / "test-venv" / "bin" / "python"
 
@@ -39,9 +41,8 @@ def main() -> int:
         str(tools / "bend" / "bin"), os.environ.get("PATH", ""),
     ])
     os.environ["BEND_NO_TELEMETRY"] = "1"
-    kernel = tools / "kernel" / "bendtt"
-    if kernel.is_file():
-        os.environ["BENDTT"] = str(kernel)
+    if "--verdict" in args:
+        os.environ["BENDTT"] = str(require_kernel(ROOT))
 
     # Prefer the project environment without requiring shell activation.
     if TEST_PYTHON.exists() and Path(sys.prefix) != TEST_PYTHON.parents[1]:
@@ -58,7 +59,7 @@ def main() -> int:
 if __name__ == "__main__":
     try:
         raise SystemExit(main())
-    except (OSError, subprocess.SubprocessError) as error:
+    except (OSError, RuntimeError, subprocess.SubprocessError) as error:
         print(f"Test runner failed: {error}", file=sys.stderr)
         raise SystemExit(2)
     except KeyboardInterrupt:

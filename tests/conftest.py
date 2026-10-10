@@ -7,6 +7,7 @@ import pytest
 from hypothesis import settings
 from hypothesis.database import DirectoryBasedExampleDatabase
 
+from scripts.proof_kernel import require_kernel
 from tests.helpers import BEND_BINARY, CPP_BINARY, DP_BINARY, ROOT, execute
 
 
@@ -51,6 +52,18 @@ def bend_tool():
             "Review CLI compatibility before changing .bend-version.", pytrace=False,
         )
     return "bend"
+
+
+@pytest.fixture(scope="session")
+def proof_kernel():
+    try:
+        kernel = require_kernel(ROOT)
+    except RuntimeError as error:
+        pytest.fail(str(error), pytrace=False)
+    # Direct pytest invocations use the same checked kernel as run_tests.py.
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setenv("BENDTT", str(kernel))
+        yield kernel
 
 
 @pytest.fixture(scope="session")

@@ -137,13 +137,24 @@ cells and rows remain sequential because each depends on its predecessor.
 The existing CLI continues to use Myers. Tests compile `tests/distance_dp.bend`
 as `build/bend-distance-dp`, which calls DP directly with the same CLI contract.
 
-`LAWS.bend` states quantified empty-input laws for both implementations,
-Myers wildcard padding, case-sensitive masks, high-bit masks, concrete block
-transitions and cell decoding, DP's recurrence and initial row width, and concrete
-row, distance and CLI-validation examples; `PROOF.bend` proves them. The CLI
-laws also record the length cap, empty inputs and exhausted scan capacity.
-These laws cover those
-properties; three-way differential tests check the broader distance behavior.
+`LAWS.bend` states the claims and input domains; `PROOF.bend` supplies their
+proofs. In addition to the empty-input, mask, DP recurrence and CLI laws, the
+incremental invariants cover:
+
+| Invariant | Quantified domain |
+| --- | --- |
+| Splitting rejoins to the original string; prefix length is `min(size, length)` | Every Bend `String` (including Unicode), every `Nat` size |
+| Initial block count; DP initial/updated row widths | Every `Nat` count, every `String`/previous row and `U32` accumulator; these are structural claims |
+| No-padding decoding preserves the score | Every pair of `U32` bit vectors and every `U32` score |
+| Outgoing carry is independent of stored score | Every `U32` mask, pair of scores and incoming `Carry`, including unreachable states |
+| Uniform-word carry propagation | All three valid incoming signs, every `U32` score, all-match/all-mismatch equality words, and vertical bit vectors `(all ones, 0)` or `(0, all ones)` |
+| CLI support, identity and Myers/DP equivalence | Exactly all seven strings of length 0..2 over `{'A', 'a'}`; equivalence covers all 49 ordered pairs |
+
+Carry claims cover these block families even when the score is not reachable;
+they certify the outgoing sign, not arbitrary block states or nonwrapping score
+arithmetic. The bounded alignment domain is encoded by `SmallAscii`, so it
+cannot accidentally include Unicode. Three-way differential tests check the
+broader supported distance behavior.
 
 ## Limitations
 
@@ -171,13 +182,15 @@ The following features and checks are still missing from this repository:
   remain future work. Extended alignment tests require `--alignment`;
   known-distance, word-boundary, case, motif, unequal-length, upstream regressions
   and small Hypothesis comparisons run by default. CI explicitly runs both tiers.
-- **Proof coverage:** the laws cover empty inputs, wildcard padding, DP's cell
-  recurrence and initial row width, concrete mask/block, row and distance examples, and
-  bounded CLI-validation cases.
-  They do not prove general identity, carry correctness, equivalence
-  with dynamic programming, or optimality for arbitrary inputs. The proof test
-  runs the regular checker by default; extended CI also provisions Lean 4.34.0
-  and requests kernel verification with `--verdict`.
+- **Proof coverage:** the table above states the exact quantified domains.
+  Identity and Myers/DP equivalence are proved only for the seven-string ASCII
+  domain; carry propagation is proved only for the specified uniform-word
+  families. General identity over all Bend `String` values would be false for
+  Myers because the query table is byte indexed. General equivalence, correctness
+  of arbitrary reachable carries and optimality for arbitrary lengths remain
+  future work. The ordinary checker runs by default; the mandatory CI `proofs`
+  gate provisions Lean 4.34.0 and runs `--verdict` independently of the extended
+  differential suite. Kernel checking retains the verification limits below.
 - **Performance and batching:** the benchmark runner below records phase timings,
   one-core latency, homogeneous batch throughput and whole-process peak RSS
   against C++ Edlib. Measurements are host/workload observations, not a general
@@ -327,7 +340,13 @@ for the full suite). Run `build/tools/bend/bin/bend PROOF.bend` in WSL before co
 
 Keep Lean's bundled Clang out of the native test `PATH`; setup exposes it only
 while building the kernel. The test runner needs only the downloaded Bend and
-the explicit `BENDTT` kernel path.
+the explicit `BENDTT` kernel path. Setup records the Bend/Lean pins and SHA-256
+hashes of the kernel source and executable in `build/tools/kernel/toolchain.json`.
+Requesting `--verdict` requires this executable and matching provenance; a
+missing, modified or stale project kernel fails with setup instructions. Both
+the runner and direct pytest select it explicitly, even if `BENDTT` previously
+pointed at a user cache. A negative-control test confirms that a rejecting
+kernel is actually invoked and makes verification fail.
 
 The legacy `tests.compare` helper still reports DP/Myers/Edlib CLI wall times
 after tests rebuild their executables:
@@ -469,14 +488,16 @@ restoring tools, binaries or a venv from a cache:
 | Job | Coverage | Environment |
 | --- | --- | --- |
 | `fast` | CLI, known distances, all listed word boundaries, shrinking differential examples, regular proofs, release automation tests | Ubuntu 24.04 / system Python 3.12 |
-| `extended` | Full suite with 14,641 exhaustive ordered pairs, shrinking properties, direct masks/block traces, regressions, 1/2/4 threads, regular and kernel proofs | Ubuntu 22.04 / Python 3.10 and Ubuntu 24.04 / Python 3.12 |
+| `proofs` | Regular and kernel proofs, kernel provenance checks and rejection control | Ubuntu 24.04 / pinned Lean 4.34.0 and freshly built BendTT |
+| `extended` | Full suite with 14,641 exhaustive ordered pairs, shrinking properties, direct masks/block traces, regressions, 1/2/4 threads, regular proofs | Ubuntu 22.04 / Python 3.10 and Ubuntu 24.04 / Python 3.12 |
 | `benchmark` | Fresh native builds, fixed validated corpus, phase timing/latency/batch throughput/RSS, five repeats with 1 and up to 4 available Bend threads | Ubuntu 24.04; pushes, schedule and manual runs |
 
 Test reports, tool/package versions and benchmark CSVs are retained as workflow
 artifacts. Benchmark reports include separate work and end-to-end timings and
 carry no speed thresholds.
-Extended jobs depend on the fast gate and run independently in a matrix;
-benchmark work runs alongside them. Pull requests receive read-only tokens.
+The fast and proof gates run independently. Extended jobs depend on both gates
+and run independently in a matrix; benchmark work runs alongside them.
+Pull requests receive read-only tokens.
 
 After **every successful main-push CI run**, `.github/workflows/release.yml`
 publishes a tag and GitHub Release named `build-<CI-run-number>-<short-SHA>` at

@@ -3,6 +3,70 @@ import ./main.bend as Main
 import ./DistanceDP.bend as DP
 import ./Cli.bend as CLI
 
+# A finite first domain for alignment proofs: precisely every string of length
+# 0..2 over {'A', 'a'}. This includes case differences and repeated symbols.
+# It is a subset of the CLI's non-NUL ASCII domain, not all Bend Strings.
+type SmallAscii is Data:
+  EmptyAscii{}
+  UpperAscii{}
+  LowerAscii{}
+  UpperUpperAscii{}
+  UpperLowerAscii{}
+  LowerUpperAscii{}
+  LowerLowerAscii{}
+
+def small_ascii(sequence: SmallAscii) -> String:
+  match sequence:
+    case EmptyAscii{}:
+      ""
+    case UpperAscii{}:
+      "A"
+    case LowerAscii{}:
+      "a"
+    case UpperUpperAscii{}:
+      "AA"
+    case UpperLowerAscii{}:
+      "Aa"
+    case LowerUpperAscii{}:
+      "aA"
+    case LowerLowerAscii{}:
+      "aa"
+
+# Exactly the three valid horizontal differences, with neither sign ambiguous.
+type CarrySign is Data:
+  NegativeCarry{}
+  ZeroCarry{}
+  PositiveCarry{}
+
+def carry(sign: CarrySign) -> Main.Carry:
+  match sign:
+    case NegativeCarry{}:
+      Main.Carry{0, 1}
+    case ZeroCarry{}:
+      Main.Carry{0, 0}
+    case PositiveCarry{}:
+      Main.Carry{1, 0}
+
+def uniform_eq(matches: Bool) -> U32:
+  match matches:
+    case False{}:
+      0
+    case True{}:
+      4294967295
+
+def initial_carry(sign: CarrySign, matches: Bool) -> Main.Carry:
+  match sign matches:
+    case NegativeCarry{} _:
+      Main.Carry{0, 1}
+    case ZeroCarry{} False{}:
+      Main.Carry{0, 0}
+    case PositiveCarry{} False{}:
+      Main.Carry{0, 0}
+    case ZeroCarry{} True{}:
+      Main.Carry{0, 1}
+    case PositiveCarry{} True{}:
+      Main.Carry{0, 1}
+
 # Benchmark contract: same ordered corpus pairs, unrestricted NW/unit costs,
 # supported ASCII, checksummed homogeneous batches, and pinned CPU affinity.
 # Correctness on multiple threads is not a speedup proof. Timers and RSS use
@@ -24,6 +88,86 @@ law empty_target:
 law wildcard_padding:
   for symbol: Char
   {Main.build_peq_word("", symbol, 1) == 4294967295 : U32}
+
+# Structural invariants quantify over all Bend Strings (including Unicode)
+# and unbounded Nat sizes. They make no alphabet or distance claim.
+def rejoin(parts: String & String) -> String:
+  (prefix, suffix) = parts
+  String.append(prefix, suffix)
+
+law split_rejoins:
+  for size: Nat
+  for query: String
+  {rejoin(Main.split_query(size, query)) == query : String}
+
+law split_prefix_length:
+  for size: Nat
+  for query: String
+  {String.length(Pair.fst(String, String, Main.split_query(size, query))) ==
+    Nat.min(size, String.length(query)) : Nat}
+
+law initial_block_count:
+  for count: Nat
+  for bottom: U32
+  {List.length(&1, Main.Block, Main.init_blocks(count, bottom)) == count : Nat}
+
+# With no padding, decoding preserves every U32 score, even for unreachable
+# bit-vector states. This does not assert nonwrapping arithmetic or optimality.
+law decode_no_padding:
+  for positive: U32
+  for negative: U32
+  for score: U32
+  {Main.get_block_cell_value(0n, positive, negative, score) == score : U32}
+
+# Outgoing carries depend only on the equality/vertical masks and incoming
+# carry. Every U32 score is allowed, including wraparound values. This states
+# independence of score storage, not validity of arbitrary input masks/carries.
+law carry_score_independent:
+  for positive: U32
+  for negative: U32
+  for eq: U32
+  for incoming: Main.Carry
+  for first_score: U32
+  for second_score: U32
+  {Pair.snd(Main.Block, Main.Carry,
+    Main.calculate_block(Main.Block{positive, negative, first_score}, eq, incoming)) ==
+    Pair.snd(Main.Block, Main.Carry,
+      Main.calculate_block(Main.Block{positive, negative, second_score}, eq, incoming)) : Main.Carry}
+
+# Carry propagation families: every U32 score, all three incoming signs, and
+# a uniform equality word (all 32 positions match, or all mismatch). The first
+# family has vertical differences +1 throughout; the second has -1 throughout.
+# A negative incoming carry must propagate through an initial mismatching word.
+# These do not assert correctness of arbitrary/reachable block states.
+law initial_uniform_carry:
+  for score: U32
+  for incoming: CarrySign
+  for matches: Bool
+  {Pair.snd(Main.Block, Main.Carry,
+    Main.calculate_block(Main.Block{4294967295, 0, score},
+      uniform_eq(matches), carry(incoming))) == initial_carry(incoming, matches) : Main.Carry}
+
+law finished_uniform_carry:
+  for score: U32
+  for incoming: CarrySign
+  for matches: Bool
+  {Pair.snd(Main.Block, Main.Carry,
+    Main.calculate_block(Main.Block{0, 4294967295, score},
+      uniform_eq(matches), carry(incoming))) == Main.Carry{1, 0} : Main.Carry}
+
+law small_ascii_supported:
+  for sequence: SmallAscii
+  {CLI.scan(small_ascii(sequence), 2n) == CLI.Supported{} : CLI.InputStatus}
+
+law small_ascii_identity:
+  for sequence: SmallAscii
+  {Main.edlib_align(small_ascii(sequence), small_ascii(sequence)) == 0n : Nat}
+
+law small_ascii_equivalence:
+  for query: SmallAscii
+  for target: SmallAscii
+  {Main.edlib_align(small_ascii(query), small_ascii(target)) ==
+    DP.distance(small_ascii(query), small_ascii(target)) : Nat}
 
 # Ordinary equality is case-sensitive; padding alone is a wildcard. Bit 31
 # remains a real query position when the word is full (no wildcard high bits).
@@ -90,6 +234,18 @@ law dp_row_width:
   for length: Nat
   for column: U32
   {List.length(&1, U32, DP.initial_row(length, column)) == 1n+length : Nat}
+
+# For every String, previous row and U32 accumulator/symbol, a row step
+# produces one cell per available column/predecessor. Only shape is claimed;
+# arithmetic is still modulo 2^32 for unbounded callers.
+law dp_row_cells_width:
+  for columns: String
+  for previous: List<U32>
+  for diagonal: U32
+  for left: U32
+  for +symbol: Char
+  {List.length(&1, U32, DP.row_cells(columns, previous, diagonal, left, symbol)) ==
+    Nat.min(String.length(columns), List.length(&1, U32, previous)) : Nat}
 
 law dp_initial_row:
   {DP.initial_row(3n, 0) == [0, 1, 2, 3] : List<U32>}

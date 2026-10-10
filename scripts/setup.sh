@@ -83,6 +83,7 @@ if (( proofs )); then
     lean -c bendtt.c bendtt.lean
     leanc -O3 -DNDEBUG bendtt.c -o bendtt
   )
+  python3 scripts/proof_kernel.py --record
   # Lean bundles a Clang intended for leanc; it lacks the system C headers
   # Bend needs. Expose it only while building the proof kernel.
   export PATH="$native_path"
@@ -103,6 +104,7 @@ build/test-venv/bin/python -m pip check
   "${git_command[@]}" submodule status --recursive
   if (( proofs )); then "$tools/lean/bin/lean" --version; fi
 } > build/environment.txt
+if (( proofs )); then cat "$tools/kernel/toolchain.json" >> build/environment.txt; fi
 if (( proofs )); then
   echo 'Setup complete. Run: python3 run_tests.py --alignment --verdict'
 else

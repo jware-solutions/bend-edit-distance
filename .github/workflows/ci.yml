@@ -40,8 +40,29 @@ jobs:
             build/environment.txt
           if-no-files-found: error
 
+  proofs:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Provision pinned Lean 4.34.0 and build the BendTT kernel
+        run: bash scripts/setup.sh
+      - name: Regular checker and mandatory kernel verification
+        run: python3 run_tests.py tests/test_proofs.py tests/test_proof_kernel.py --verdict -v --junitxml=build/proofs.xml
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: proof-results
+          path: |
+            build/proofs.xml
+            build/environment.txt
+            build/tools/kernel/toolchain.json
+          if-no-files-found: error
+
   extended:
-    needs: fast
+    needs: [fast, proofs]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 40
     strategy:
@@ -52,10 +73,10 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
-      - name: Provision complete environment, including pinned Lean and a fresh kernel
-        run: bash scripts/setup.sh
-      - name: Exhaustive, property, multithreaded and regular/kernel proof tests
-        run: python3 run_tests.py --alignment --verdict -v --junitxml=build/extended.xml
+      - name: Provision native tools and the pinned test environment
+        run: bash scripts/setup.sh --native-only
+      - name: Exhaustive, property, multithreaded and regular proof tests
+        run: python3 run_tests.py --alignment -v --junitxml=build/extended.xml
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with:

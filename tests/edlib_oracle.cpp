@@ -20,13 +20,17 @@ bool ascii(const std::string& value, std::size_t maximum) {
 }
 
 bool threshold(const char* text, int& value) {
-    if (std::strcmp(text, "-1") == 0) { value = -1; return true; }
+    const bool negative = *text == '-';
+    if (negative) ++text;
     if (!*text) return false;
-    value = 0;
+    const uint64_t limit = negative ? uint64_t(INT_MAX) + 1 : INT_MAX;
+    uint64_t magnitude = 0;
     for (const char* p = text; *p; ++p) {
-        if (*p < '0' || *p > '9' || value > (INT_MAX - (*p - '0')) / 10) return false;
-        value = value * 10 + (*p - '0');
+        if (*p < '0' || *p > '9' || magnitude > (limit - (*p - '0')) / 10) return false;
+        magnitude = magnitude * 10 + (*p - '0');
     }
+    value = negative ? (magnitude == uint64_t(INT_MAX) + 1 ? INT_MIN : -int(magnitude))
+                     : int(magnitude);
     return true;
 }
 
@@ -84,7 +88,7 @@ int worker() {
                 pairs.push_back({static_cast<char>(request.pairs[2 * i]),
                                  static_cast<char>(request.pairs[2 * i + 1])});
             auto config = edlibNewAlignConfig(
-                request.threshold == BE_NULL ? -1 : static_cast<int>(request.threshold),
+                request.threshold > INT_MAX ? -1 : static_cast<int>(request.threshold),
                 static_cast<EdlibAlignMode>(request.mode), static_cast<EdlibAlignTask>(request.task),
                 pairs.empty() ? nullptr : pairs.data(), static_cast<int>(pairs.size()));
             auto result = edlibAlign(

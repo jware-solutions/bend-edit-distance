@@ -135,10 +135,22 @@ Blocks use native `U32` words with 32 query positions, adapting Edlib's 64-bit
 words. Immutable byte-indexed query tables are built with balanced parallel
 calls; the two input lengths are also computed in parallel. Blocks within a
 column and consecutive columns remain sequential because their carries depend
-on the preceding calculation. The unlimited-distance implementation evaluates
-all blocks directly, without threshold-band retries or traceback storage.
-For lengths `m <= n`, it advances `n * ceil(m / 32)` blocks and stores only the
-current column and query profiles.
+on the preceding calculation. Ordinary NW/DISTANCE uses a block-level Ukkonen
+band: finite `k` rejects impossible length differences before profile creation,
+initializes only active blocks, expands by at most one block per column, prunes
+both ends and stops if the band collapses. Conservative block bounds are ported
+from pinned Edlib with 32-bit constants and nonnegative `Nat` inequalities.
+Wildcard padding is added back when tightening `k` and removed from the final
+score. Unlike Edlib, there is no periodic per-cell strong reduction.
+
+Unlimited NW starts at `min(n, max(32, n-m))`, doubles the threshold after a
+failed attempt and caps it at `n`, an upper bound on unit-cost NW distance.
+Retries reuse the immutable profiles and initialize fresh block states. Only
+the active column and query profiles are retained, without traceback storage.
+`tests/myers_probe.bend` observes production block calls, consumed columns and
+attempts; tests verify pruning of both ends, immediate length rejection, early
+band collapse, adaptive retries, every padding size and threshold boundaries
+against independent scalar Bend DP and pinned C++ Edlib, including raw bytes.
 
 `DistanceDP.bend` independently exports `distance(query, target) -> Nat` and
 imports only `Base`. It implements the two-row Levenshtein recurrence:
@@ -187,7 +199,7 @@ The following features and checks are still missing from this repository:
   equalities use a scalar recurrence with two score rows. PATH retains shared
   operation prefixes and recomputes NW for the first matching interval.
   Thresholds filter the final optimum; they do not prune the DP computation.
-  General optimality proofs and threshold-band acceleration remain future work.
+  General optimality proofs and acceleration for these scalar paths remain future work.
 - **Large alignment cost:** persistent workers remove text/argv limits, but
   configured scalar alignment can still require quadratic work and substantial
   memory. Protocol frames use Edlib's signed length range. The legacy text CLI
@@ -211,8 +223,8 @@ The following features and checks are still missing from this repository:
 - **Performance and batching:** the benchmark runner below records phase timings,
   one-core latency, homogeneous batch throughput and whole-process peak RSS
   against C++ Edlib. Measurements are host/workload observations, not a general
-  speedup claim. Myers evaluates every block without threshold bands,
-  early rejection or adaptive retries. Parallelism currently covers
+  speedup claim. Ordinary NW/DISTANCE uses threshold bands,
+  early rejection and adaptive retries. Parallelism currently covers
   preprocessing for one pair; balanced benchmark batches are benchmark-only.
   There is no production CPU batch API, GPU entry point or
   genuine-device test. Tests with multiple CPU threads check correctness only.
@@ -296,7 +308,9 @@ for the first interval. Operation codes are 0 match, 1 insertion into target
 (consumes query), 2 deletion from target (consumes target), 3 mismatch. Standard
 CIGAR merges matches/mismatches as `M`; extended CIGAR uses `=`/`X`.
 
-Threshold is `-1` or a nonnegative integer through 2,147,483,647. A distance
+Threshold accepts Edlib's signed 32-bit range; every negative value means
+unlimited and every nonnegative value is an inclusive maximum. `k=0` accepts
+only exact matches on nonempty inputs. A distance
 above the threshold has OK status, `edit_distance: -1`, empty end locations
 and null starts/path/CIGAR. Equality-pair text concatenates two-character
 pairs (for example `aANACN` declares a=A, N=A, C=N); pairs are symmetric and
@@ -307,6 +321,10 @@ characters resembling flags, including within equality pairs.
 Python configuration and result types live in `alignment.py`; the persistent
 binary codec and process owner live in `transport.py`. The adapters reuse one
 worker per executable/thread configuration and close them at session teardown:
+
+Use `threshold_from_edlib(k)` to convert an integer to the typed `Unlimited()`
+or `MaxDistance(k)` representation. Unlimited serializes canonically as `-1`;
+the native CLI and wire decoder also accept every other negative `i32` value.
 
 ```python
 from alignment import AlignConfig, Mode, Task, MaxDistance, EqualityPair
@@ -335,7 +353,9 @@ worker ownership, byte equality pairs and lifecycle behavior.
 
 Compatibility follows the pinned vendored Edlib, including its empty-input
 early return: it ignores the threshold and leaves starts/path/CIGAR absent even
-for LOC/PATH. Its semiglobal search omits the before-zero end location when
+for LOC/PATH. `tests/regressions/upstream_empty.json` records all nine combinations
+of empty query/target and mode, with distance and end coordinates independent
+of the live oracle. Its semiglobal search omits the before-zero end location when
 query length is a multiple of 64; configured Bend matches that behavior.
 Valid PATH results can choose different optimal operations from Edlib on large
 matrices (where Edlib uses Hirschberg); comparisons validate path cost and
@@ -521,7 +541,7 @@ runs the same number of independent alignments in a sequential loop.
 | --- | --- | --- |
 | `full`, batch size 1 | One-core native alignment latency, or the requested thread count | Each production `distance`/public `edlibAlign` call constructs/frees its own profile |
 | `full`, batch size B | Full alignment throughput, B / work wall seconds | Constructs a new profile per pair, as production does |
-| `prepared`, sizes 1 and B | Alignment with initialized blocks, column updates, score decoding and runtime/refcount work | Builds one profile before timing work and retains it until the separate release phase |
+| `prepared`, sizes 1 and B | Active-block initialization, banded columns, adaptive retries, decoding and runtime/refcount work | Builds one profile before timing work and retains it until the separate release phase |
 | Bend `lookup`, size B | All target-symbol/block `peq_get` calls, with consumed mask checksums | Uses the unchanged 256-symbol trees, prepared before timing |
 | Bend `scan`, size B | The matching target/block traversal with the tree lookup omitted | A control workload; no alignment distance is computed |
 
@@ -530,8 +550,8 @@ translation unit, allowing access to `buildPeq` and `myersCalcEditDistanceNW`.
 It preserves the public NW distance algorithm's dynamic threshold retries from
 64 upward, with no traceback. Alphabet transformation and equality setup occur
 in the preparation phase. Bend chooses the shorter query internally; Edlib keeps
-the original order, as the test oracle does. Their 32/64-bit words, full/banded
-columns, alphabet representations and retry behavior differ. Prepared timings
+the original order, as the test oracle does. Their 32/64-bit words, band widths,
+alphabet representations and starting thresholds differ. Prepared timings
 exclude public API result/location packaging, so compare them separately from
 the full public-call workload. They are benchmark entry points, not new APIs.
 
@@ -563,8 +583,9 @@ virtualization and filesystem placement can change results.
 
 The lookup probe includes target/list traversal, reference counting and checksum
 arithmetic. The scan control records that traversal separately, but their
-difference is not an exact fraction of alignment time: allocation/cache behavior
-and Bend scheduling can differ. Use these direct measurements to investigate the
+difference is not an exact fraction of alignment time: the controls traverse
+every profile while alignment visits the active band, and allocation/cache
+behavior and Bend scheduling can differ. Use these measurements to investigate the
 current table and tree before changing their representation. Thread scaling is
 an observed per-workload ratio, never inferred from thread count alone.
 
@@ -581,7 +602,8 @@ python run_benchmarks.py --case dna-random-512 --case dna-random-4096 --repeats 
 Use `--warmups 2`, `--timeout 180` or `--cpus 0,2,4,6` as appropriate for the host.
 The checked-in [WSL observation](benchmarks/results/wsl-2026-10-09/REPORT.md)
 includes its raw JSON and CSV alongside [interpretation of table/lookup costs](benchmarks/results/wsl-2026-10-09/NOTES.md).
-It is one reproducible observation, not a portable performance guarantee.
+It predates threshold banding and is one reproducible observation, not a
+measurement of the current banded implementation or a portable performance guarantee.
 
 The CLI convention follows the installed `bend guide`; see also the official
 [Bend guide](https://github.com/bendlang/bend/blob/main/guide/GUIDE.md) and

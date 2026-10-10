@@ -40,10 +40,21 @@ def bounded_threshold(value: Nat, valid: Bool) -> Maybe<&2, E.Threshold>:
     case False{}:
       None{}
 
+def negative_threshold(magnitude: Nat, valid: Bool) -> Maybe<&2, E.Threshold>:
+  match magnitude valid:
+    case _ False{}:
+      None{}
+    case 0n True{}:
+      Some{E.MaxDistance{0n}}
+    case _ True{}:
+      Some{E.Unlimited{}}
+
 def read_threshold(value: String) -> Maybe<&2, E.Threshold>:
   match value:
-    case "-1":
-      Some{E.Unlimited{}}
+    case SCon{'-', digits}:
+      do Maybe<&2, E.Threshold>:
+        +magnitude : Nat <- Nat.read(digits)
+        negative_threshold(magnitude, Nat.is_le(magnitude, 2147483648n))
     case _:
       do Maybe<&2, E.Threshold>:
         +maximum : Nat <- Nat.read(value)

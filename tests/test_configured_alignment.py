@@ -126,7 +126,7 @@ def test_empty_inputs_preserve_pinned_edlib_behavior(bend_binary, cpp_binary):
 
 
 @pytest.mark.parametrize("field,value", [
-    ("mode", "bad"), ("task", "bad"), ("threshold", "-2"),
+    ("mode", "bad"), ("task", "bad"), ("threshold", "-2147483649"),
     ("threshold", "2147483648"), ("threshold", "x"),
     ("equalities", "A"), ("equalities", "Aé"), ("equalities", "AA" * 2049),
     ("cigar_format", "bad"),

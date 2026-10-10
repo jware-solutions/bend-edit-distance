@@ -68,6 +68,13 @@ class MaxDistance:
 Threshold = Unlimited | MaxDistance
 
 
+def threshold_from_edlib(value: int) -> Threshold:
+    """Normalize Edlib's signed k: every negative value means unlimited."""
+    if type(value) is not int or not -(2**31) <= value <= 2**31 - 1:
+        raise ValueError("Threshold must be an Edlib i32 integer")
+    return Unlimited() if value < 0 else MaxDistance(value)
+
+
 @dataclass(frozen=True)
 class EqualityPair:
     first: int | bytes | str

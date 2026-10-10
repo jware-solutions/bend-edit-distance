@@ -31,9 +31,15 @@ word. No production behavior is changed by this migration. Expected distances
 were calculated independently by scalar DP and checked against both Bend
 implementations and the native Edlib oracle.
 
-Excluded upstream tests exercise HW/SHW, custom equalities, full byte alphabets,
-Unicode, locations, alignment paths or CIGAR. Those results are outside the
-current Bend contract; their mode-specific expectations cannot be reused for NW.
+The NW corpus excludes HW/SHW, custom equalities, full byte alphabets,
+locations, paths and CIGAR; their mode-specific expectations cannot be reused
+for NW. Separate configured and byte tests cover those supported features.
+
+`upstream_empty.json` records the pinned `edlibAlign` empty-input early return
+for all modes and both input orders. These fixtures deliberately ignore `k`
+and task: distances may exceed the requested maximum, and LOC/PATH leave
+starts, alignment and CIGAR absent. `test_thresholds.py` replays them against
+both implementations across tasks and finite/unlimited thresholds.
 
 The upstream cases are derived from Edlib, Copyright (c) 2014 Martin Šošić,
 under the [MIT license](../../vendor/edlib/LICENSE), retained with the vendored source.

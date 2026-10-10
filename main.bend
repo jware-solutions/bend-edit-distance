@@ -147,32 +147,319 @@ def last_block_score(blocks: List<Block>, +padding: Nat) -> Nat:
     case _ <> rest:
       last_block_score(rest, padding)
 
-# Unlimited NW evaluates every block once per target character. It needs
-# only the current column; Ukkonen threshold bands and traceback storage
-# are unnecessary for the distance-only, k = -1 interface.
-def myers_calc_edit_distance_nw(target: String, +profiles: List<&2, Peq>,
-                               blocks: List<Block>, +padding: Nat) -> Nat:
-  match target:
-    case SNil{}:
-      last_block_score(blocks, padding)
-    case SCon{h, t}:
-      myers_calc_edit_distance_nw(t, profiles,
-        advance_column(blocks, profiles, Char.to_u32(h), Carry{1, 0}), padding)
+# An active entry owns its current block and shares its immutable profile.
+# Dropped leading entries are never visited again. Trailing profiles remain
+# available for expansion; retries share the full profile but reset all blocks.
+type BandEntry is Data:
+  BandEntry{profile: Peq, block: Block}
 
-def align_query(+query: String, target: String, +length: Nat) -> Nat:
-  +count = ceil_div(length, 32n)
-  profiles = build_peq(count, query)
-  blocks = init_blocks(count, 32)
-  myers_calc_edit_distance_nw(target, profiles, blocks,
-    Nat.sub(Nat.mul(count, 32n), length))
+type Band is Type:
+  Band{first: Nat, entries: List<&2, BandEntry>, rest: List<&2, Peq>}
+
+type UpdatedBand is Type:
+  UpdatedBand{entries: List<&2, BandEntry>, score: U32, carry: Carry, bottom: Nat}
+
+type BandStep is Type:
+  BandStep{band: Band, maximum: Nat, work: Nat}
+
+# Work counts actual calculate_block calls, consumed columns and fresh attempts.
+# The probe uses these production counters to verify pruning and retry behavior.
+type Search is Data:
+  Search{distance: E.EditDistance, blocks: Nat, columns: Nat, attempts: Nat}
+
+def init_band_entries.step(parts: List<&2, BandEntry> & List<&2, Peq>,
+                           profile: Peq, bottom: U32) -> List<&2, BandEntry> & List<&2, Peq>:
+  match parts:
+    case (entries, rest):
+      (BandEntry{profile, Block{4294967295, 0, bottom}} <> entries, rest)
+
+def init_band_entries(fuel: Nat, profiles: List<&2, Peq>,
+                      +bottom: U32) -> List<&2, BandEntry> & List<&2, Peq>:
+  match fuel profiles:
+    case 0n _:
+      (Nil{}, profiles)
+    case _ Nil{}:
+      (Nil{}, Nil{})
+    case 1n+p profile <> tail:
+      init_band_entries.step(init_band_entries(p, tail, U32.add(bottom, 32)), profile, bottom)
+
+def init_band.step(parts: List<&2, BandEntry> & List<&2, Peq>) -> Band:
+  match parts:
+    case (entries, rest):
+      Band{0n, entries, rest}
+
+def init_band(profiles: List<&2, Peq>, +length: Nat, +target_length: Nat,
+              maximum: Nat) -> Band:
+  # Called only after k >= target_length - length, with length <= target_length.
+  count = Nat.min(ceil_div(length, 32n),
+    ceil_div(1n+Nat.div(Nat.sub(maximum, Nat.sub(target_length, length)), 2n), 32n))
+  init_band.step(init_band_entries(count, profiles, 32))
+
+def advance_band.join(entry: BandEntry, updated: UpdatedBand) -> UpdatedBand:
+  match updated:
+    case UpdatedBand{entries, score, carry, bottom}:
+      UpdatedBand{entry <> entries, score, carry, bottom}
+
+def advance_band.last(result: Block & Carry, profile: Peq, bottom: Nat) -> UpdatedBand:
+  match result:
+    case (Block{+pv, +mv, +score}, carry):
+      UpdatedBand{[BandEntry{profile, Block{pv, mv, score}}], score, carry, bottom}
+
+def advance_band.next(result: Block & Carry, profile: Peq,
+                      tail: Carry -> UpdatedBand) -> UpdatedBand:
+  match result:
+    case (next, carry):
+      advance_band.join(BandEntry{profile, next}, tail(carry))
+
+def advance_band(entries: List<&2, BandEntry>, +symbol: U32,
+                 hin: Carry, +bottom: Nat) -> UpdatedBand:
+  match entries:
+    case Nil{}:
+      UpdatedBand{Nil{}, 0, Carry{1, 0}, bottom}
+    case BandEntry{+profile, block} <> Nil{}:
+      advance_band.last(calculate_block(block,
+        peq_get(profile, symbol, U32.is_ne(U32.and(symbol, 1), 0)), hin), profile, bottom)
+    case BandEntry{+profile, block} <> tail:
+      advance_band.next(calculate_block(block,
+        peq_get(profile, symbol, U32.is_ne(U32.and(symbol, 1), 0)), hin), profile,
+        carry => advance_band(tail, symbol, carry, Nat.add(bottom, 32n)))
+
+# Edlib's conservative Ukkonen block bounds, rearranged so every term is
+# nonnegative Nat arithmetic. Rows/columns here count consumed characters.
+# The 62/63 constants adapt 2*WORD_SIZE-2/-1 from the pinned 64-bit code.
+def band_keep_last(+score: Nat, bottom: Nat, +maximum: Nat,
+                   length: Nat, target_length: Nat, column: Nat) -> Bool:
+  Bool.and(Nat.is_lt(score, Nat.add(maximum, 32n)),
+    Nat.is_le(Nat.add(Nat.add(bottom, score), target_length),
+      Nat.add(Nat.add(Nat.add(maximum, length), column), 63n)))
+
+def band_keep_first(+score: Nat, bottom: Nat, +maximum: Nat,
+                    length: Nat, target_length: Nat, column: Nat) -> Bool:
+  Bool.and(Nat.is_lt(score, Nat.add(maximum, 32n)),
+    Nat.is_ge(Nat.add(Nat.add(bottom, maximum), target_length),
+      Nat.add(Nat.add(score, length), column)))
+
+def trim_last.choose(entry: BandEntry, entries: List<&2, BandEntry>, rest: List<&2, Peq>,
+                     keep: Bool) -> List<&2, BandEntry> & List<&2, Peq>:
+  match entry entries keep:
+    case BandEntry{profile, _} Nil{} False{}:
+      (Nil{}, profile <> rest)
+    case _ _ _:
+      (entry <> entries, rest)
+
+def trim_last.join(entry: BandEntry, tail: List<&2, BandEntry> & List<&2, Peq>,
+                   keep: Bool) -> List<&2, BandEntry> & List<&2, Peq>:
+  match tail:
+    case (entries, rest):
+      trim_last.choose(entry, entries, rest, keep)
+
+def trim_last(entries: List<&2, BandEntry>, rest: List<&2, Peq>, +bottom: Nat,
+              +maximum: Nat, +length: Nat, +target_length: Nat,
+              +column: Nat) -> List<&2, BandEntry> & List<&2, Peq>:
+  match entries:
+    case Nil{}:
+      (Nil{}, rest)
+    case BandEntry{profile, Block{pv, mv, +score}} <> tail:
+      trim_last.join(BandEntry{profile, Block{pv, mv, score}},
+        trim_last(tail, rest, Nat.add(bottom, 32n), maximum, length, target_length, column),
+        band_keep_last(U32.to_nat(score), bottom, maximum, length, target_length, column))
+
+def trim_first.step(entry: BandEntry, tail: List<&2, BandEntry>, rest: List<&2, Peq>,
+                    first: Nat, keep: Bool, next: Unit -> Band) -> Band:
+  match keep:
+    case True{}:
+      Band{first, entry <> tail, rest}
+    case False{}:
+      next(Unit{})
+
+def trim_first(entries: List<&2, BandEntry>, +rest: List<&2, Peq>, +first: Nat,
+               +maximum: Nat, +length: Nat, +target_length: Nat,
+               +column: Nat) -> Band:
+  match entries:
+    case Nil{}:
+      Band{first, Nil{}, rest}
+    case BandEntry{profile, Block{pv, mv, +score}} <> +tail:
+      trim_first.step(BandEntry{profile, Block{pv, mv, score}}, tail, rest,
+        first,
+        band_keep_first(U32.to_nat(score), Nat.mul(1n+first, 32n),
+          maximum, length, target_length, column),
+        _ => trim_first(tail, rest, 1n+first, maximum, length, target_length, column))
+
+def reduce_band.step(parts: List<&2, BandEntry> & List<&2, Peq>, first: Nat,
+                     +maximum: Nat, length: Nat, target_length: Nat,
+                     column: Nat, work: Nat) -> BandStep:
+  match parts:
+    case (entries, rest):
+      BandStep{trim_first(entries, rest, first, maximum, length, target_length, column), maximum, work}
+
+def reduce_band(entries: List<&2, BandEntry>, rest: List<&2, Peq>, +first: Nat,
+                +maximum: Nat, +length: Nat, +target_length: Nat,
+                +column: Nat, work: Nat) -> BandStep:
+  reduce_band.step(trim_last(entries, rest, Nat.mul(1n+first, 32n),
+    maximum, length, target_length, column), first, maximum, length, target_length, column, work)
+
+def expand_band.step(result: Block & Carry, entries: List<&2, BandEntry>, profile: Peq,
+                     rest: List<&2, Peq>, first: Nat, maximum: Nat, length: Nat,
+                     target_length: Nat, column: Nat, work: Nat) -> BandStep:
+  match result:
+    case (block, _):
+      reduce_band(List.append(&2, BandEntry, entries, [BandEntry{profile, block}]),
+        rest, first, maximum, length, target_length, column, 1n+work)
+
+def expand_band(entries: List<&2, BandEntry>, rest: List<&2, Peq>, +score: U32,
+                carry: Carry, +symbol: U32, first: Nat, +maximum: Nat,
+                length: Nat, target_length: Nat, column: Nat,
+                work: Nat, expand: Bool) -> BandStep:
+  match rest carry expand:
+    case +profile <> tail Carry{+positive, +negative} True{}:
+      previous = U32.add(U32.sub(U32.add(score, negative), positive), 32)
+      expand_band.step(calculate_block(Block{4294967295, 0, previous},
+        peq_get(profile, symbol, U32.is_ne(U32.and(symbol, 1), 0)), Carry{positive, negative}),
+        entries, profile, tail, first, maximum, length, target_length, column, work)
+    case _ _ _:
+      reduce_band(entries, rest, first, maximum, length, target_length, column, work)
+
+def band_step.updated(updated: UpdatedBand, rest: List<&2, Peq>, +first: Nat,
+                      symbol: U32, +length: Nat, +target_length: Nat,
+                      +column: Nat, maximum: Nat, padding: Nat) -> BandStep:
+  match updated:
+    case UpdatedBand{entries, +score, carry, +bottom}:
+      # Completing the suffix by edits bounds the optimum. Padding can lower
+      # the stored bottom score, so add it back before tightening k.
+      +k = Nat.min(maximum, Nat.add(U32.to_nat(score),
+        Nat.add(Nat.max(Nat.sub(target_length, column), Nat.sub(length, bottom)),
+          Bool.pick(Nat, Nat.is_ge(bottom, length), padding, 0n))))
+      work = Nat.sub(Nat.div(bottom, 32n), first)
+      expand_band(entries, rest, score, carry, symbol, first, k, length, target_length,
+        column, work, Nat.is_le(Nat.add(Nat.add(bottom, U32.to_nat(score)), target_length),
+          Nat.add(Nat.add(Nat.add(k, length), column), 62n)))
+
+def band_step(band: Band, +symbol: U32, length: Nat, target_length: Nat,
+              column: Nat, maximum: Nat, padding: Nat) -> BandStep:
+  match band:
+    case Band{+first, entries, rest}:
+      band_step.updated(advance_band(entries, symbol, Carry{1, 0}, Nat.mul(1n+first, 32n)),
+        rest, first, symbol, length, target_length, column, maximum, padding)
+
+def band_last_score(entries: List<&2, BandEntry>, +padding: Nat) -> Nat:
+  match entries:
+    case Nil{}:
+      0n
+    case BandEntry{_, Block{pv, mv, score}} <> Nil{}:
+      U32.to_nat(get_block_cell_value(padding, pv, mv, score))
+    case _ <> tail:
+      band_last_score(tail, padding)
+
+def band_finish(band: Band, maximum: Nat, padding: Nat,
+                blocks: Nat, columns: Nat) -> Search:
+  match band:
+    case Band{_, Nil{}, _}:
+      Search{E.NotFound{}, blocks, columns, 1n}
+    case Band{_, entries, Nil{}}:
+      +score = band_last_score(entries, padding)
+      Search{Bool.pick(E.EditDistance, Nat.is_le(score, maximum), E.Found{score}, E.NotFound{}),
+        blocks, columns, 1n}
+    case _:
+      Search{E.NotFound{}, blocks, columns, 1n}
+
+def myers_calc_edit_distance_nw.step(step: BandStep, next: Band -> Nat -> Nat -> Search) -> Search:
+  match step:
+    case BandStep{band, maximum, work}:
+      next(band, maximum, work)
+
+def myers_calc_edit_distance_nw(target: String, band: Band, +length: Nat, +target_length: Nat,
+                                maximum: Nat, +padding: Nat, +column: Nat, blocks: Nat) -> Search:
+  match target band:
+    case _ Band{_, Nil{}, _}:
+      Search{E.NotFound{}, blocks, column, 1n}
+    case SNil{} _:
+      band_finish(band, maximum, padding, blocks, column)
+    case SCon{h, t} _:
+      myers_calc_edit_distance_nw.step(band_step(band, Char.to_u32(h), length, target_length,
+        1n+column, maximum, padding), next => k => work =>
+          myers_calc_edit_distance_nw(t, next, length, target_length, k, padding, 1n+column, Nat.add(blocks, work)))
+
+def band_attempt(target: String, profiles: List<&2, Peq>, +length: Nat,
+                 +target_length: Nat, +maximum: Nat, padding: Nat) -> Search:
+  myers_calc_edit_distance_nw(target, init_band(profiles, length, target_length, maximum),
+    length, target_length, maximum, padding, 0n, 0n)
+
+def adaptive_search.step(distance: E.EditDistance, blocks: Nat, columns: Nat,
+                         attempts: Nat, retry: Unit -> Search) -> Search:
+  match distance:
+    case E.Found{value}:
+      Search{E.Found{value}, blocks, columns, attempts}
+    case E.NotFound{}:
+      retry(Unit{})
+
+def adaptive_search.result(search: Search, blocks: Nat, columns: Nat, +attempts: Nat,
+                           retry: Nat -> Nat -> Search) -> Search:
+  match search:
+    case Search{distance, work, consumed, _}:
+      +next_blocks = Nat.add(blocks, work)
+      +next_columns = Nat.add(columns, consumed)
+      adaptive_search.step(distance, next_blocks, next_columns, 1n+attempts,
+        _ => retry(next_blocks, next_columns))
+
+def adaptive_search(fuel: Nat, +target: String, +profiles: List<&2, Peq>,
+                    +length: Nat, +target_length: Nat, +maximum: Nat,
+                    +padding: Nat, +blocks: Nat, +columns: Nat,
+                    +attempts: Nat) -> Search:
+  match fuel:
+    case 0n:
+      Search{E.NotFound{}, blocks, columns, attempts}
+    case 1n+p:
+      adaptive_search.result(band_attempt(target, profiles, length, target_length, maximum, padding),
+        blocks, columns, attempts, bs => cs =>
+          adaptive_search(p, target, profiles, length, target_length,
+            Nat.min(target_length, Nat.mul(maximum, 2n)), padding, bs, cs, 1n+attempts))
+
+def search_profiles(target: String, profiles: List<&2, Peq>, +length: Nat,
+                    +target_length: Nat, threshold: E.Threshold) -> Search:
+  match threshold:
+    case E.MaxDistance{maximum}:
+      band_attempt(target, profiles, length, target_length, Nat.min(maximum, target_length),
+        Nat.sub(Nat.mul(ceil_div(length, 32n), 32n), length))
+    case E.Unlimited{}:
+      adaptive_search(1n+target_length, target, profiles, length, target_length,
+        Nat.min(target_length, Nat.max(32n, Nat.sub(target_length, length))),
+        Nat.sub(Nat.mul(ceil_div(length, 32n), 32n), length), 0n, 0n, 0n)
+
+def search_query(+query: String, target: String, +length: Nat, target_length: Nat,
+                 threshold: E.Threshold, rejected: Bool) -> Search:
+  match rejected:
+    case True{}:
+      Search{E.NotFound{}, 0n, 0n, 0n}
+    case False{}:
+      search_profiles(target, build_peq(ceil_div(length, 32n), query), length, target_length, threshold)
+
+def search_shorter(query: String, target: String, +query_length: Nat,
+                   +target_length: Nat, +threshold: E.Threshold,
+                   query_is_shorter: Bool) -> Search:
+  match query_is_shorter:
+    case True{}:
+      search_query(query, target, query_length, target_length, threshold,
+        Bool.not(E.within_threshold(threshold, Nat.sub(target_length, query_length))))
+    case False{}:
+      search_query(target, query, target_length, query_length, threshold,
+        Bool.not(E.within_threshold(threshold, Nat.sub(query_length, target_length))))
+
+def search_distance(search: Search) -> E.EditDistance:
+  match search:
+    case Search{distance, _, _, _}:
+      distance
+
+def found_value(distance: E.EditDistance) -> Nat:
+  match distance:
+    case E.Found{value}:
+      value
+    case E.NotFound{}:
+      0n
 
 def align_shorter(query: String, target: String, query_length: Nat,
                   target_length: Nat, query_is_shorter: Bool) -> Nat:
-  match query_is_shorter:
-    case True{}:
-      align_query(query, target, query_length)
-    case False{}:
-      align_query(target, query, target_length)
+  found_value(search_distance(search_shorter(query, target, query_length,
+    target_length, E.Unlimited{}, query_is_shorter)))
 
 def distance(query: String, target: String) -> Nat:
   match query target:
@@ -186,16 +473,23 @@ def distance(query: String, target: String) -> Nat:
       +qn +tn = String.length(q) String.length(t)
       align_shorter(q, t, qn, tn, Nat.is_le(qn, tn))
 
+def threshold_result(distance: E.EditDistance, end: E.Coordinate) -> E.AlignResult:
+  match distance:
+    case E.NotFound{}:
+      E.not_found()
+    case E.Found{score}:
+      E.distance_result(score, end, True{})
+
 def edlib_align(query: String, target: String, config: E.AlignConfig) -> E.AlignResult:
   match query target config:
     case SNil{} _ _:
       A.align("", target, config)
     case SCon{h, t} SNil{} _:
       A.align(SCon{h, t}, "", config)
-    case +q +t E.AlignConfig{E.NW{}, E.Distance{}, +threshold, Nil{}, _}:
-      +score = distance(q, t)
-      E.distance_result(score, E.end_coordinate(String.length(t)),
-        E.within_threshold(threshold, score))
+    case +q +t E.AlignConfig{E.NW{}, E.Distance{}, threshold, Nil{}, _}:
+      +qn +tn = String.length(q) String.length(t)
+      threshold_result(search_distance(search_shorter(q, t, qn, tn, threshold,
+        Nat.is_le(qn, tn))), E.end_coordinate(tn))
     case _ _ _:
       A.align(query, target, config)
 

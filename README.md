@@ -28,7 +28,7 @@ build/bend-edit-distance --threads 1 -- ACGT ACG
 
 The command prints the global edit distance (`1` for this example).
 
-For JSON results, specify mode, task, threshold (`-1` for unlimited),
+For JSON results, specify mode, task, threshold (any negative value for unlimited),
 concatenated equality pairs and CIGAR format:
 
 ```bash
@@ -37,6 +37,8 @@ build/bend-edit-distance --threads 1 -- --config HW PATH -1 '' EXTENDED AC TACGA
 
 DISTANCE includes end locations; LOC adds starts; PATH adds operation codes and
 CIGAR. Missing distance and the coordinate before zero serialize as `-1`.
+Nonnegative thresholds are inclusive, including `k = 0`. Pinned Edlib's
+empty-input early return ignores `k` and leaves starts/path/CIGAR absent.
 The text CLI accepts non-NUL ASCII sequences up to 4,096 characters.
 The [persistent byte workers](TRANSPORT.md) accept NUL and all 256 byte values,
 use explicit sequence lengths, and process many requests in one executable.

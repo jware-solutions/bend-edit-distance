@@ -1,0 +1,109 @@
+"""Differential thresholds and observable work in the production Myers band."""
+
+import itertools
+import random
+
+import pytest
+from hypothesis import example, given, settings, strategies as st
+
+from alignment import AlignConfig, MaxDistance, Unlimited
+from tests.helpers import bend_align, bend_dp_distance, cpp_edlib_align, execute
+
+
+def search(binary, query, target, maximum, *, threads=1):
+    result = execute([binary, "--threads", str(threads), "--", "search", str(maximum), query, target])
+    assert result.stderr == ""
+    return tuple(map(int, result.stdout.strip().split(",")))
+
+
+def assert_thresholds(query, target, bend_binary, dp_binary, cpp_binary, *, threads=1):
+    # Scalar Bend DP does not import Myers, and supplies the optimum even for
+    # finite k. Compare full oracle results, including absence of locations.
+    distance = bend_dp_distance(query, target, binary=dp_binary, threads=threads)
+    maxima = {0, max(0, distance - 1), distance, distance + 1, 31, 32, 33, 63, 64, 65,
+              2**31 - 1}
+    for threshold in [Unlimited(), *(MaxDistance(k) for k in sorted(maxima))]:
+        config = AlignConfig(threshold=threshold)
+        actual = bend_align(query, target, config, binary=bend_binary, threads=threads)
+        expected = cpp_edlib_align(query, target, config, binary=cpp_binary)
+        assert actual == expected, (query, target, config, actual, expected)
+        maximum = threshold.to_edlib()
+        assert actual.edit_distance == (distance if maximum < 0 or distance <= maximum else -1)
+    return distance
+
+
+@pytest.mark.parametrize("length", [1, 31, 32, 33, 63, 64, 65, 95, 96, 97, 127, 128, 129, 257])
+def test_banded_word_boundaries(bend_binary, dp_binary, cpp_binary, length):
+    query = (b"ACgt\0\xff" * 43)[:length]
+    cases = [query, query[:-1] + b"N", b"N" + query, query[:1], b"N" * length,
+             query[1:] + query[:1]]
+    for target in cases:
+        assert_thresholds(query, target, bend_binary, dp_binary, cpp_binary)
+        assert_thresholds(target, query, bend_binary, dp_binary, cpp_binary)
+
+
+def test_banded_exhaustive_small_inputs(bend_binary, dp_binary, cpp_binary):
+    sequences = [bytes(chars) for n in range(1, 4) for chars in itertools.product(b"AC", repeat=n)]
+    for query, target in itertools.product(sequences, repeat=2):
+        assert_thresholds(query, target, bend_binary, dp_binary, cpp_binary)
+
+
+@pytest.mark.parametrize("threads", [1, 2, 4])
+def test_band_prunes_both_ends(myers_probe, threads):
+    # With k=0 the active window advances down the diagonal. Evaluating only
+    # a prefix (without dropping leading blocks) cannot meet this work bound.
+    query = "ACGT" * 256
+    distance, blocks, columns, attempts = search(myers_probe, query, query, 0, threads=threads)
+    full = len(query) * ((len(query) + 31) // 32)
+    assert (distance, columns, attempts) == (0, len(query), 1)
+    assert len(query) <= blocks <= 2 * len(query)
+    assert blocks < full // 8
+
+
+def test_length_rejection_does_no_myers_work(myers_probe):
+    for query, target in [("A" * 65, "A"), ("A", "A" * 65)]:
+        assert search(myers_probe, query, target, 63) == (-1, 0, 0, 0)
+        distance, _, columns, attempts = search(myers_probe, query, target, 64)
+        assert (distance, columns, attempts) == (64, 65, 1)
+
+
+def test_collapsed_band_rejects_before_target_end(myers_probe):
+    distance, blocks, columns, attempts = search(myers_probe, "A" * 1024, "T" * 1024, 0)
+    assert distance == -1 and attempts == 1
+    assert 0 < columns < 1024
+    assert 0 < blocks < 1024
+
+
+@pytest.mark.parametrize("length,attempts", [(31, 1), (32, 1), (33, 2), (64, 2),
+                                            (65, 3), (128, 3), (129, 4), (257, 5)])
+def test_adaptive_retries_reset_blocks(myers_probe, bend_binary, dp_binary, cpp_binary, length, attempts):
+    query, target = "A" * length, "T" * length
+    distance, blocks, columns, actual_attempts = search(myers_probe, query, target, -1)
+    assert distance == length and actual_attempts == attempts
+    assert length <= columns <= length * attempts and blocks >= columns
+    assert_thresholds(query, target, bend_binary, dp_binary, cpp_binary)
+
+
+def test_unlimited_uses_narrow_initial_band(myers_probe):
+    query = "ACGT" * 256
+    distance, blocks, columns, attempts = search(myers_probe, query, query, -1)
+    assert (distance, columns, attempts) == (0, len(query), 1)
+    assert blocks < len(query) * 4
+
+
+@pytest.mark.parametrize("threads", [1, 2, 4])
+def test_seeded_indels_and_every_padding(bend_binary, dp_binary, cpp_binary, threads):
+    rng = random.Random(20261010)
+    for padding in range(32):
+        query = bytes(rng.choices(range(256), k=160 - padding))
+        # Deletions/insertions move across blocks, with a changed final score.
+        target = query[9:67] + bytes(range(5)) + query[71:] + b"\0\xff"
+        assert_thresholds(query, target, bend_binary, dp_binary, cpp_binary, threads=threads)
+
+
+@settings(max_examples=80, deadline=None)
+@given(query=st.binary(min_size=1, max_size=260), target=st.binary(min_size=1, max_size=260))
+@example(query=b"A" * 32 + b"C", target=b"A" * 33)
+@example(query=b"A" * 129, target=b"T" * 129)
+def test_banded_differential_with_shrinking(bend_binary, dp_binary, cpp_binary, query, target):
+    assert_thresholds(query, target, bend_binary, dp_binary, cpp_binary)

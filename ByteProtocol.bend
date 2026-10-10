@@ -33,12 +33,15 @@ def task(value: U32) -> E.Task:
     case _:
       E.Path{}
 
-def threshold(value: U32) -> E.Threshold:
-  match value:
-    case 4294967295:
+def threshold_signed(value: U32, negative: Bool) -> E.Threshold:
+  match negative:
+    case True{}:
       E.Unlimited{}
-    case _:
+    case False{}:
       E.MaxDistance{U32.to_nat(value)}
+
+def threshold(+value: U32) -> E.Threshold:
+  threshold_signed(value, U32.is_ge(value, 2147483648))
 
 def format(value: U32) -> E.CigarFormat:
   match value:

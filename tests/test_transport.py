@@ -150,7 +150,6 @@ def test_bad_frames_fail_without_partial_response(command, bad):
 
 @pytest.mark.parametrize("offset,patch", [
     (8, b"\xff"), (9, b"\xff"), (10, b"\xff"), (11, b"\x01"),
-    (12, struct.pack("<i", -2)),
 ])
 def test_bad_configuration_fields_recover(command, offset, patch):
     valid = encode_request(b"\0", b"\xff", AlignConfig())

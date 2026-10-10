@@ -27,7 +27,7 @@ The fixed payload header is 24 bytes:
 | 5 | u8 | Task: DISTANCE=0, LOC=1, PATH=2 |
 | 6 | u8 | CIGAR format: STANDARD=0, EXTENDED=1 |
 | 7 | u8 | Reserved; must be zero |
-| 8 | i32 | Threshold: -1 for unlimited, otherwise nonnegative |
+| 8 | i32 | Threshold: any negative value for unlimited, otherwise an inclusive maximum |
 | 12 | u32 | Query length in bytes |
 | 16 | u32 | Target length in bytes |
 | 20 | u32 | Equality pair count |
@@ -57,7 +57,7 @@ order. Coordinate -1 means before position zero. Operation bytes are match=0,
 insertion=1, deletion=2, mismatch=3. CIGAR has no terminator. Present empty
 arrays/strings use length zero and remain distinct from absent fields.
 
-Invalid mode/task/format/reserved/threshold fields produce a normalized ERROR
+Invalid mode/task/format/reserved fields produce a normalized ERROR
 response: distance -1, zero ends, and absent starts/operations/CIGAR. The worker
 continues at the next frame. Missing distance due to a threshold uses the same
 absent result fields with OK status. Edlib's empty-input behavior is preserved.

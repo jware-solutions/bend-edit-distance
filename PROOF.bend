@@ -2,6 +2,7 @@ import Base
 import ./LAWS.bend as Laws
 import ./DistanceDP.bend as DP
 import ./main.bend as Main
+import ./EdlibTypes.bend as E
 
 def Laws.transport_byte_values():
   {==}
@@ -41,6 +42,69 @@ def Laws.unlimited_threshold(value):
 
 def Laws.threshold_comparison(maximum, value):
   {==}
+
+def Laws.threshold_zero_match():
+  {==}
+
+def Laws.threshold_inclusive():
+  {==}
+
+def Laws.threshold_exceeded():
+  {==}
+
+def Laws.threshold_length_rejection():
+  {==}
+
+def Laws.negative_cli_threshold():
+  {==}
+
+def Laws.negative_wire_threshold():
+  {==}
+
+def Laws.empty_nw_threshold_task(target, task, threshold):
+  match target task:
+    case SNil{} E.Distance{}:
+      {==}
+    case SNil{} E.Locations{}:
+      {==}
+    case SNil{} E.Path{}:
+      {==}
+    case SCon{h, t} E.Distance{}:
+      {==}
+    case SCon{h, t} E.Locations{}:
+      {==}
+    case SCon{h, t} E.Path{}:
+      {==}
+
+def Laws.empty_shw_threshold_task(target, task, threshold):
+  match target task:
+    case SNil{} E.Distance{}:
+      {==}
+    case SNil{} E.Locations{}:
+      {==}
+    case SNil{} E.Path{}:
+      {==}
+    case SCon{h, t} E.Distance{}:
+      {==}
+    case SCon{h, t} E.Locations{}:
+      {==}
+    case SCon{h, t} E.Path{}:
+      {==}
+
+def Laws.empty_hw_threshold_task(target, task, threshold):
+  match target task:
+    case SNil{} E.Distance{}:
+      {==}
+    case SNil{} E.Locations{}:
+      {==}
+    case SNil{} E.Path{}:
+      {==}
+    case SCon{h, t} E.Distance{}:
+      {==}
+    case SCon{h, t} E.Locations{}:
+      {==}
+    case SCon{h, t} E.Path{}:
+      {==}
 
 def Laws.threshold_not_found(value, end):
   {==}

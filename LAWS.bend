@@ -6,6 +6,7 @@ import ./EdlibTypes.bend as E
 import ./Alignment.bend as A
 import ./lib.bend as L
 import ./ByteProtocol.bend as BT
+import ./AlignmentCli.bend as AC
 
 # Byte transport maps each input byte to one Char with the same numeric value;
 # it never decodes UTF-8, stops at NUL, or applies the ASCII CLI size limit.
@@ -379,6 +380,55 @@ law threshold_comparison:
   for maximum: Nat
   for value: Nat
   {E.within_threshold(E.MaxDistance{maximum}, value) == Nat.is_le(value, maximum) : Bool}
+
+# Observable finite-k boundaries on nonempty ordinary NW inputs. The band
+# uses 32-bit words; broader correctness is checked against independent DP
+# and pinned Edlib, not claimed by these concrete or structural laws.
+law threshold_zero_match:
+  {Main.edlib_align("A", "A", E.AlignConfig{E.NW{}, E.Distance{}, E.MaxDistance{0n}, Nil{}, E.Extended{}}) ==
+    E.distance_result(0n, E.Position{0n}, True{}) : E.AlignResult}
+
+law threshold_inclusive:
+  {Main.edlib_align("A", "T", E.AlignConfig{E.NW{}, E.Distance{}, E.MaxDistance{1n}, Nil{}, E.Extended{}}) ==
+    E.distance_result(1n, E.Position{0n}, True{}) : E.AlignResult}
+
+law threshold_exceeded:
+  {Main.edlib_align("A", "T", E.AlignConfig{E.NW{}, E.Distance{}, E.MaxDistance{0n}, Nil{}, E.Extended{}}) ==
+    E.not_found() : E.AlignResult}
+
+law threshold_length_rejection:
+  {Main.search_shorter("A", "AAAA", 1n, 4n, E.MaxDistance{2n}, True{}) ==
+    Main.Search{E.NotFound{}, 0n, 0n, 0n} : Main.Search}
+
+law negative_cli_threshold:
+  # Parsing the entire i32 range is exercised natively; reducing a billion-
+  # constructor Nat in the proof checker is unnecessary for normalization.
+  {AC.negative_threshold(2n, True{}) == Some{E.Unlimited{}} : Maybe<&2, E.Threshold>}
+
+law negative_wire_threshold:
+  {BT.threshold(2147483648) == E.Unlimited{} : E.Threshold}
+
+# The pinned upstream returns before processing k or task on empty inputs.
+law empty_nw_threshold_task:
+  for target: String
+  for task: E.Task
+  for threshold: E.Threshold
+  {Main.edlib_align("", target, E.AlignConfig{E.NW{}, task, threshold, Nil{}, E.Extended{}}) ==
+    E.distance_result(String.length(target), E.end_coordinate(String.length(target)), True{}) : E.AlignResult}
+
+law empty_shw_threshold_task:
+  for target: String
+  for task: E.Task
+  for threshold: E.Threshold
+  {Main.edlib_align("", target, E.AlignConfig{E.SHW{}, task, threshold, Nil{}, E.Extended{}}) ==
+    E.distance_result(0n, E.BeforeStart{}, True{}) : E.AlignResult}
+
+law empty_hw_threshold_task:
+  for target: String
+  for task: E.Task
+  for threshold: E.Threshold
+  {Main.edlib_align("", target, E.AlignConfig{E.HW{}, task, threshold, Nil{}, E.Extended{}}) ==
+    E.distance_result(0n, E.BeforeStart{}, True{}) : E.AlignResult}
 
 law threshold_not_found:
   for value: Nat

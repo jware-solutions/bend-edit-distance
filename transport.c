@@ -74,8 +74,8 @@ static int be_read_request(BeRequest *r) {
     r->query = r->data;
     r->target = r->query + r->query_length;
     r->pairs = r->target + r->target_length;
-    return r->mode <= 2 && r->task <= 2 && r->format <= 1 && !header[7] &&
-           (r->threshold <= INT_MAX || r->threshold == BE_NULL) ? 1 : 2;
+    // Every i32 k is valid: all negative values request adaptive search.
+    return r->mode <= 2 && r->task <= 2 && r->format <= 1 && !header[7] ? 1 : 2;
 }
 
 static void be_write_frame(const unsigned char *data, uint64_t size) {

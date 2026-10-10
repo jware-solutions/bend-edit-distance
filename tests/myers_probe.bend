@@ -1,5 +1,7 @@
 import Base
 import ../main.bend as M
+import ../EdlibTypes.bend as E
+import ../AlignmentCli.bend as AC
 
 # Test-only observability. All masks, transitions and decoded cells come from
 # production defs; Python compares them with a scalar DP column, not a second
@@ -107,6 +109,21 @@ def trace_start(initial: Snapshot, +profiles: List<&2, M.Peq>,
     case Snapshot{blocks, text}:
       text ++ trace(target, profiles, M.init_blocks(count, 32), blocks, 1)
 
+def search_show(search: M.Search) -> String:
+  match search:
+    case M.Search{distance, blocks, columns, attempts}:
+      E.distance_show(distance) ++ "," ++ Nat.show(blocks) ++ "," ++
+        Nat.show(columns) ++ "," ++ Nat.show(attempts)
+
+def search_run(+query: String, +target: String,
+                threshold: Maybe<&2, E.Threshold>) -> IO(Unit):
+  match threshold:
+    case None{}:
+      IO.die(Unit, 2, "Invalid k")
+    case Some{maximum}:
+      +qn +tn = String.length(query) String.length(target)
+      IO.print(search_show(M.search_shorter(query, target, qn, tn, maximum, Nat.is_le(qn, tn))))
+
 def run(args: List<String>) -> IO(Unit):
   match args:
     case _ <> "masks" <> +query <> Nil{}:
@@ -116,8 +133,10 @@ def run(args: List<String>) -> IO(Unit):
       +count = M.ceil_div(String.length(query), 32n)
       profiles = M.build_peq(count, query)
       IO.print(trace_start(dump(M.init_blocks(count, 32), 0, 0), profiles, target, count))
+    case _ <> "search" <> k <> query <> target <> Nil{}:
+      search_run(query, target, AC.read_threshold(k))
     case _:
-      IO.die(Unit, 2, "Expected masks QUERY or trace QUERY TARGET")
+      IO.die(Unit, 2, "Expected masks QUERY, trace QUERY TARGET or search K QUERY TARGET")
 
 def main() -> IO(Unit):
   do IO<Unit>:

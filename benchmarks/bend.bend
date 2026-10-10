@@ -1,17 +1,18 @@
 import Base
 import ../main.bend as M
 import ../Cli.bend as CLI
+import ../EdlibTypes.bend as E
 import ./timer.bend as T
 
 type Inputs is Data:
-  Inputs{query: String, target: String, length: Nat, depth: Nat}
+  Inputs{query: String, target: String, length: Nat, target_length: Nat, depth: Nat}
 
 def orient(q: String, t: String, qn: Nat, tn: Nat, shorter: Bool, depth: Nat) -> Inputs:
   match shorter:
     case True{}:
-      Inputs{q, t, qn, depth}
+      Inputs{q, t, qn, tn, depth}
     case False{}:
-      Inputs{t, q, tn, depth}
+      Inputs{t, q, tn, qn, depth}
 
 def prepare(q: String, t: String, depth: Nat, status: CLI.InputStatus) -> IO(Inputs):
   match status:
@@ -34,19 +35,19 @@ def full(+depth: Nat, +query: String, +target: String) -> Nat:
       Nat.add(left, right)
 
 def aligned(+depth: Nat, +target: String, +profiles: List<&2, M.Peq>,
-            +length: Nat, +count: Nat) -> Nat:
+            +length: Nat, +target_length: Nat, +count: Nat) -> Nat:
   match depth count:
     case 0n 0n:
-      String.length(target)
+      target_length
     case 0n _:
-      M.myers_calc_edit_distance_nw(target, profiles, M.init_blocks(count, 32),
-        Nat.sub(Nat.mul(count, 32n), length))
+      M.found_value(M.search_distance(M.search_profiles(target, profiles, length,
+        target_length, E.Unlimited{})))
     case 1n+p _:
-      left right = aligned(p, target, profiles, length, count) aligned(p, target, profiles, length, count)
+      left right = aligned(p, target, profiles, length, target_length, count) aligned(p, target, profiles, length, target_length, count)
       Nat.add(left, right)
 
-# Traverse the same target and block list as alignment, without block updates.
-# The scan control omits only peq_get; neither result is an alignment time.
+# Traverse the full profile (not the active band), without block updates.
+# The scan control omits only peq_get; neither control is an alignment time.
 def lookup_word(profile: M.Peq, +code: U32, tree: Bool) -> U32:
   match tree:
     case True{}:
@@ -77,11 +78,11 @@ def lookups(+depth: Nat, +target: String, +profiles: List<&2, M.Peq>, +tree: Boo
       U32.add(left, right)
 
 def prepared_run(mode: String, depth: Nat, target: String,
-                 +profiles: List<&2, M.Peq>, length: Nat, count: Nat) -> IO(Unit):
+                 +profiles: List<&2, M.Peq>, length: Nat, target_length: Nat, count: Nat) -> IO(Unit):
   match mode:
     case "prepared":
       do IO<Unit>:
-        sum : Nat <- T.mark(Nat, 3, aligned(depth, target, profiles, length, count))
+        sum : Nat <- T.mark(Nat, 3, aligned(depth, target, profiles, length, target_length, count))
         T.release(List<&2, M.Peq>, profiles)
         T.finish(sum)
     case "lookup":
@@ -99,15 +100,15 @@ def prepared_run(mode: String, depth: Nat, target: String,
 
 def prepared(mode: String, inputs: Inputs) -> IO(Unit):
   match inputs:
-    case Inputs{query, +target, +length, depth}:
+    case Inputs{query, +target, +length, target_length, depth}:
       +count = M.ceil_div(length, 32n)
       do IO<Unit>:
         profiles : List<&2, M.Peq> <- T.mark(List<&2, M.Peq>, 2, M.build_peq(count, query))
-        prepared_run(mode, depth, target, profiles, length, count)
+        prepared_run(mode, depth, target, profiles, length, target_length, count)
 
 def compute(mode: String, +inputs: Inputs) -> IO(Unit):
   match mode inputs:
-    case "full" Inputs{query, target, _, depth}:
+    case "full" Inputs{query, target, _, _, depth}:
       do IO<Unit>:
         sum : Nat <- T.mark(Nat, 3, full(depth, query, target))
         T.finish(sum)

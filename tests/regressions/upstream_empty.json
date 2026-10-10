@@ -1,0 +1,16 @@
+{
+  "revision": "0ddc23ea06abd95ab6227442acb4c27bd7607b68",
+  "source": "edlib/src/edlib.cpp::edlibAlign empty-input early return",
+  "contract": "These results ignore k, task, equalities and CIGAR format. Starts, alignment and CIGAR are absent even for LOC/PATH.",
+  "cases": [
+    {"id": "nw-both-empty", "mode": "NW", "query": "", "target": "", "distance": 0, "end": -1},
+    {"id": "nw-query-empty", "mode": "NW", "query": "", "target": "AC", "distance": 2, "end": 1},
+    {"id": "nw-target-empty", "mode": "NW", "query": "AC", "target": "", "distance": 2, "end": -1},
+    {"id": "shw-both-empty", "mode": "SHW", "query": "", "target": "", "distance": 0, "end": -1},
+    {"id": "shw-query-empty", "mode": "SHW", "query": "", "target": "AC", "distance": 0, "end": -1},
+    {"id": "shw-target-empty", "mode": "SHW", "query": "AC", "target": "", "distance": 2, "end": -1},
+    {"id": "hw-both-empty", "mode": "HW", "query": "", "target": "", "distance": 0, "end": -1},
+    {"id": "hw-query-empty", "mode": "HW", "query": "", "target": "AC", "distance": 0, "end": -1},
+    {"id": "hw-target-empty", "mode": "HW", "query": "AC", "target": "", "distance": 2, "end": -1}
+  ]
+}

@@ -71,7 +71,8 @@ To publish a new version of the library to BendHub, follow these steps:
    bend lib.bend --publish bend-edlib@<version>
    ```
 
-4. Verify the package is available on BendHub and that the version is correct.
+4. Verify that the version is the same as the one in `version.txt` file.
+5. Ensure the package is available on BendHub and that the version is correct.
 
 ## Alignment protocol
 

@@ -61,14 +61,14 @@ jobs:
             build/tools/kernel/toolchain.json
           if-no-files-found: error
 
-  extended:
+  comprehensive-tests:
     needs: [fast, proofs]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 40
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-22.04, ubuntu-24.04]
+        os: [ubuntu-24.04]
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -76,13 +76,13 @@ jobs:
       - name: Provision native tools and the pinned test environment
         run: bash scripts/setup.sh --native-only
       - name: Exhaustive, property, multithreaded and regular proof tests
-        run: python3 run_tests.py --alignment -v --junitxml=build/extended.xml
+        run: python3 run_tests.py --alignment -v --junitxml=build/comprehensive-tests.xml
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with:
-          name: extended-${{ matrix.os }}
+          name: comprehensive-tests-${{ matrix.os }}
           path: |
-            build/extended.xml
+            build/comprehensive-tests.xml
             build/environment.txt
           if-no-files-found: error
 

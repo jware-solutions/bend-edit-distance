@@ -45,8 +45,8 @@ test venv on every invocation. No preexisting Bend, Bun, Lean, elan, Edlib CMake
 build, or user proof-kernel cache is needed. The runner gives the project tools
 priority over system installations and selects the project kernel explicitly.
 
-Every run rebuilds the native binaries to include edits to both Bend entry
-points and their imports. The fixtures compile each executable only once per session. Build
+Every run rebuilds the native binaries to include edits to `worker.bend`, the
+DP entry point and their imports. The fixtures compile each executable only once per session. Build
 failures, process failures, invalid output and timeouts fail tests with command
 diagnostics. Build products and the Python environment stay under ignored
 `build/`; no existing Edlib CMake build is needed.
@@ -58,6 +58,20 @@ simple NW distance API, `default_config` and `align` for structured alignment
 results. Run `bend examples/library_usage.bend` to try the API from a separate
 Bend file using a local checkout. Consumers do not need the Python test setup;
 after publication, Bend resolves the package directly from the Hub import.
+
+### Publishing
+
+To publish a new version of the library to BendHub, follow these steps:
+
+1. Ensure all tests pass and the library is ready for release.
+2. Update the version in `lib.bend` and any relevant documentation.
+3. Use the Bend CLI to publish the package:
+
+   ```bash
+   bend lib.bend --publish bend-edlib@<version>
+   ```
+
+4. Verify the package is available on BendHub and that the version is correct.
 
 ## Alignment protocol
 
@@ -77,12 +91,13 @@ examples (plus explicit regressions), release-note generation, and
 `--verdict` also checks proofs with the Lean-backed kernel.
 
 `IO.args()` includes the program name in this compiler version. Keep the
-`Con{_, Con{query, Con{target, Nil{}}}}` pattern in `run`. The Python adapter places
-`--` before the sequences so strings such as `--threads` reach your program
-unchanged. The legacy CLI requires exactly two sequences. The configured CLI
+`Con{_, Con{query, Con{target, Nil{}}}}` pattern in `run`. Text CLI invocations place
+`--` before the sequences so strings such as `--threads` reach the program
+unchanged. Python alignment adapters use the binary worker. The legacy CLI
+requires exactly two sequences. The configured CLI
 requires the fixed argument list described below; other counts exit 2.
 
-Both native Bend executables validate each sequence before computing a distance:
+The text CLIs in both native Bend executables validate each sequence before computing a distance:
 
 - Characters must be **non-NUL ASCII (U+0001 through U+007F)**. Whitespace,
   control characters, DEL and strings resembling runtime flags are allowed.
@@ -102,9 +117,9 @@ at most `4096 * 4096` cells. It also keeps scores well inside `U32` and argument
 below the tested WSL/Linux transport limits. This is a conservative supported
 size, not a universal latency guarantee. `Cli.bend` validates both inputs in
 parallel with bounded scans (at most 4,097 characters per sequence), before
-either algorithm or its empty-input shortcuts run. The Python test adapters
-also check lengths before launching a process. The pure distance functions
-do not perform this CLI validation; callers must respect the supported domain.
+either algorithm or its empty-input shortcuts run. Workers use explicit byte
+lengths and bypass this CLI validation. The pure Myers distance function requires
+byte-valued characters; its table indexes the low eight bits of each character.
 
 ## Implementation
 
@@ -162,7 +177,7 @@ broader supported distance behavior.
 
 ## Limitations
 
-The supported contract is non-NUL ASCII alignment with unit edit costs,
+The supported contract is byte alignment (including NUL) with unit edit costs,
 NW/SHW/HW modes, DISTANCE/LOC/PATH tasks, thresholds and additional equalities.
 The project implements part of Edlib's behavior.
 The following features and checks are still missing from this repository:
@@ -172,12 +187,10 @@ The following features and checks are still missing from this repository:
   operation prefixes and recomputes NW for the first matching interval.
   Thresholds filter the final optimum; they do not prune the DP computation.
   General optimality proofs and threshold-band acceleration remain future work.
-- **Input transport and size:** command-line arguments cannot carry embedded
-  NUL bytes, do not provide a protocol for all 256 byte values, and are subject
-  to operating-system argument-length limits. The native Bend CLI explicitly
-  rejects non-ASCII characters and sequences longer than 4,096 characters.
-  Each pair starts a new process; there is no persistent worker with explicit
-  byte lengths or support for larger inputs.
+- **Large alignment cost:** persistent workers remove text/argv limits, but
+  configured scalar alignment can still require quadratic work and substantial
+  memory. Protocol frames use Edlib's signed length range. The legacy text CLI
+  retains its conservative ASCII/4,096-character limit.
 - **Correctness coverage:** independent DP cross-checks Myers and C++ Edlib,
   including the exhaustive small-input matrix, shrinking properties, direct
   masks/block checks and upstream NW regressions described below. This is
@@ -384,7 +397,9 @@ Checked-in examples in `tests/regressions/nw.json` run both as explicit
 distance regressions and Hypothesis `@example`s, even on a clean checkout.
 See [the regression corpus notes](tests/regressions/README.md) for provenance
 and how to preserve a newly discovered counterexample. The exhaustive matrix
-starts three native processes per pair, so the extended suite can take several minutes.
+reuses three persistent workers, avoiding per-pair process startup. Additional
+byte tests cover all 256 values, NUL equality pairs, fragmented frames, invalid
+configuration recovery, worker teardown and sequences beyond the argv limit.
 
 Additional deterministic coverage runs 20 differential examples in the fast
 suite and 100 extended examples with one, two and four CPU threads. The extended
@@ -393,14 +408,15 @@ empty inputs, reversed inputs and common suffixes.
 
 The scalar Bend/DP CLI contract is **NW/global Levenshtein distance**, unit costs,
 unlimited threshold (`k = -1`), and one nonnegative decimal integer on stdout.
-The C++ oracle emits JSON; `cpp_edlib_distance` extracts its default distance.
+The C++ text oracle emits JSON. Python scalar helpers extract the distance from
+structured binary responses and reuse workers for all three implementations.
 Inputs are non-NUL ASCII strings of at most 4,096 characters each, so Edlib's
 byte semantics match Bend's characters. Direct native CLI tests cover Unicode
 rejection in either argument (including empty counterparts), every non-NUL
 ASCII character, and accepted/rejected length boundaries on one and two threads.
 The CLI bridge cannot transport NUL bytes and has operating-system argument
-length limits; the persistent binary worker from the proposal remains a later
-extension. Prefix/infix modes, thresholds and paths use the configured protocol
+length limits; [persistent workers](TRANSPORT.md) provide the byte API.
+Prefix/infix modes, thresholds and paths use the configured protocol
 and comparisons in `tests/test_configured_alignment.py`.
 
 Add cases to `tests/test_alignment.py`, or create your own tests using the
@@ -438,7 +454,7 @@ the runner and direct pytest select it explicitly, even if `BENDTT` previously
 pointed at a user cache. A negative-control test confirms that a rejecting
 kernel is actually invoked and makes verification fail.
 
-The legacy `tests.compare` helper still reports DP/Myers/Edlib CLI wall times
+The `tests.compare` helper reports DP/Myers/Edlib persistent-worker request times
 after tests rebuild their executables:
 
 ```powershell
@@ -448,10 +464,11 @@ wsl --exec python3 -m tests.compare --repeats 5 --threads 1
 Inside WSL, use `python3 -m tests.compare` with the same options. The report is
 CSV with one shared distance and median milliseconds for DP, Myers and C++
 Edlib. It validates every result, uses seed `20261008`, warms each binary once
-per pair, and rotates invocation order. These are **native CLI wall times**,
-including process and runtime startup; they do not isolate alignment time.
-The empty-input case makes the startup contribution visible. Timing differences
-are observations, not test pass/fail thresholds.
+per pair, and rotates invocation order. These are **warmed request wall times**,
+including binary transport, alignment and response decoding, excluding process
+and runtime startup. The corpus includes all byte values. Timing differences
+are observations, not test pass/fail thresholds. The phase benchmarks below
+retain their separate startup/argv instrumentation.
 
 ## Reproducible performance benchmarks
 

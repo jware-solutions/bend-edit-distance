@@ -219,8 +219,8 @@ The following features and checks are still missing from this repository:
 - **Library and release readiness:** `lib.bend` provides a stable Bend import
   surface for the current distance and configured-alignment APIs. Its first
   BendHub name/version is prepared in the documentation but has not been
-  published. Semantic versioning and a broader platform compatibility matrix
-  remain to be established. CI, clean-checkout tool setup and per-push source
+  published. A broader platform compatibility matrix remains to be established.
+  CI, clean-checkout tool setup and versioned source
   releases are automated as described below.
 
 There are also constraints in the pinned **Bend 2.0.36** and current WSL setup:
@@ -607,14 +607,10 @@ The fast and proof gates run independently. Extended jobs depend on both gates
 and run independently in a matrix; benchmark work runs alongside them.
 Pull requests receive read-only tokens.
 
-After **every successful main-push CI run**, `.github/workflows/release.yml`
-publishes a tag and GitHub Release named `build-<CI-run-number>-<short-SHA>` at
-the exact tested commit. Failed CI produces no release; rerun the failed run
-after resolving transient failures. A rerun reuses the same tag/release. Main
-push runs are never canceled by a newer push. Only the release job receives
+After **every successful main-push CI run**, the `release` job calls `.github/workflows/release.yml` to publish the version in `version.txt` at the exact tested commit. An unpublished tag pointing to a different commit fails rather than being moved. Failed CI produces no release;  rerun the failed run after resolving transient failures. Main push runs are never canceled by a newer push. Only the release job receives
 `contents: write`; the repository's normal `GITHUB_TOKEN` is sufficient, with
 no personal access token or additional secret. Repository tag rules must allow
-the Actions token to create `build-*` tags.
+the Actions token to create `v*` tags.
 
 Release notes combine GitHub's generated PR/contributor notes, **every commit
 subject since the nearest published release on main's ancestry**, a comparison
@@ -630,7 +626,7 @@ GitHub:
 
 ```bash
 GH_REPO=jware-solutions/bend-edlib python3 scripts/release.py --dry-run
-# Optional range: add --previous-tag build-123-01234567
+# Optional range: add --previous-tag v0.1.0
 cat build/release-notes.md
 ```
 

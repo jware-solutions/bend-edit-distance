@@ -11,7 +11,7 @@ on:
 permissions:
   contents: read
 
-# Superseded PRs may stop. Every main push keeps its own run and release.
+# Superseded PRs may stop. Every main push keeps its own validation run.
 concurrency:
   group: ci-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -112,3 +112,10 @@ jobs:
             build/benchmarks/results/
             build/environment.txt
           if-no-files-found: error
+
+  release:
+    needs: [fast, proofs, comprehensive-tests, benchmark]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    permissions:
+      contents: write
+    uses: ./.github/workflows/release.yml

@@ -1,4 +1,4 @@
-"""Publish one rerun-safe release per successful main push, using only stdlib."""
+"""Publish the version in version.txt after successful main-push CI, using stdlib."""
 
 from __future__ import annotations
 
@@ -75,27 +75,33 @@ def commit_notes(repository: str, sha: str, previous: str | None) -> str:
     return "\n".join(lines)
 
 
-def publish(repository: str, sha: str, run_number: str) -> str:
-    if not re.fullmatch(r"[0-9a-f]{40}", sha) or not run_number.isdecimal():
-        raise ValueError("Expected a full commit SHA and numeric CI run number")
+def version_tag() -> str:
+    version = Path("version.txt").read_text(encoding="utf-8").strip()
+    if not re.fullmatch(r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)", version):
+        raise ValueError("version.txt must contain a version number in MAJOR.MINOR.PATCH format")
+    return f"v{version}"
+
+
+def publish(repository: str, sha: str) -> str:
+    tag = version_tag()
+    if not re.fullmatch(r"[0-9a-f]{40}", sha):
+        raise ValueError("Expected a full commit SHA")
     if git("rev-parse", "HEAD") != sha:
         raise RuntimeError("The checkout must be at the commit that passed CI")
-    tag = f"build-{run_number}-{sha[:8]}"
-    tagged = subprocess.run(["git", "show-ref", "--verify", "--quiet", f"refs/tags/{tag}"])
-    if tagged.returncode not in (0, 1):
-        tagged.check_returncode()
-    if tagged.returncode == 0 and git("rev-parse", f"refs/tags/{tag}^{{commit}}") != sha:
-        raise RuntimeError(f"Existing tag {tag} points to a different commit")
     try:
         existing = api(repository, f"releases/tags/{tag}")
     except urllib.error.HTTPError as error:
         if error.code != 404:
             raise
     else:
-        # Re-running CI/release must not create a second release or move its tag.
-        if tagged.returncode != 0:
-            raise RuntimeError(f"Existing release {tag} has no fetched tag")
+        # Reruns and later pushes with the same version keep the original release.
         return existing["html_url"]
+
+    tagged = subprocess.run(["git", "show-ref", "--verify", "--quiet", f"refs/tags/{tag}"])
+    if tagged.returncode not in (0, 1):
+        tagged.check_returncode()
+    if tagged.returncode == 0 and git("rev-parse", f"refs/tags/{tag}^{{commit}}") != sha:
+        raise RuntimeError(f"Existing tag {tag} points to a different commit")
 
     previous = previous_release(repository, sha)
     payload = {"tag_name": tag, "target_commitish": sha}
@@ -103,14 +109,25 @@ def publish(repository: str, sha: str, run_number: str) -> str:
         payload["previous_tag_name"] = previous
     generated = api(repository, "releases/generate-notes", payload)
     body = generated["body"] + "\n\n" + commit_notes(repository, sha, previous)
-    release = api(repository, "releases", {
-        "tag_name": tag,
-        "target_commitish": sha,
-        "name": tag,
-        "body": body,
-        "draft": False,
-        "prerelease": False,
-    })
+    try:
+        release = api(repository, "releases", {
+            "tag_name": tag,
+            "target_commitish": sha,
+            "name": tag,
+            "body": body,
+            "draft": False,
+            "prerelease": False,
+        })
+    except urllib.error.HTTPError as error:
+        if error.code != 422:
+            raise
+        # Another successful push with this version may have published first.
+        try:
+            release = api(repository, f"releases/tags/{tag}")
+        except urllib.error.HTTPError as lookup_error:
+            if lookup_error.code == 404:
+                raise error from lookup_error
+            raise
     return release["html_url"]
 
 
@@ -127,7 +144,7 @@ def main() -> None:
         path.write_text(commit_notes(repository, sha, args.previous_tag), encoding="utf-8")
         print(path)
     else:
-        print(publish(repository, sha, os.environ["RELEASE_RUN_NUMBER"]))
+        print(publish(repository, sha))
 
 
 if __name__ == "__main__":

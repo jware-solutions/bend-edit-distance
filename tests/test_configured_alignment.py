@@ -219,8 +219,9 @@ def test_rejects_malformed_structured_results(patch):
 
 @pytest.mark.parametrize("construct,args", [
     (MaxDistance, (-1,)), (MaxDistance, (True,)), (MaxDistance, (2**31,)),
-    (Position, (-1,)), (DistanceFound, (-1,)), (EqualityPair, ("N", "é")),
-    (EqualityPair, ("AA", "A")), (EqualityPair, ("\0", "A")),
+    (Position, (-1,)), (DistanceFound, (-1,)), (EqualityPair, ("N", "Ā")),
+    (EqualityPair, ("AA", "A")), (EqualityPair, (-1, 0)),
+    (EqualityPair, (256, 0)), (EqualityPair, (True, 0)), (EqualityPair, (b"", 0)),
 ])
 def test_invalid_typed_values(construct, args):
     with pytest.raises(ValueError):

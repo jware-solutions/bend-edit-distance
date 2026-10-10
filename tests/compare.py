@@ -1,7 +1,8 @@
-"""Reproducible three-way distance and native CLI timing comparison in WSL.
+"""Reproducible three-way distance and persistent-worker timing comparison in WSL.
 
 First build the binaries with python3 run_tests.py --alignment, then run
-python3 -m tests.compare --repeats 5. Timings include process/runtime startup.
+python3 -m tests.compare --repeats 5. Timings exclude warmed worker startup and
+include byte transport, alignment and response decoding.
 """
 
 from __future__ import annotations
@@ -33,6 +34,7 @@ def cases():
     yield "ascii-1024", "".join(rng.choices(alphabet, k=1024)), "".join(
         rng.choices(alphabet, k=1024)
     )
+    yield "bytes-1024", rng.randbytes(1024), rng.randbytes(1024)
     yield "unequal", "ACG", "ACGT" * 1024
     yield "unequal-reversed", "ACGT" * 1024, "ACG"
 
@@ -55,7 +57,7 @@ def main() -> int:
         ("cpp_edlib", cpp_edlib_distance),
     ]
     print(
-        f"Median native CLI wall time in ms; includes subprocess and runtime startup; "
+        f"Median persistent-worker request time in ms; excludes startup; "
         f"repeats={args.repeats}, Bend threads={args.threads}, seed=20261008.",
         file=sys.stderr,
     )
@@ -63,7 +65,7 @@ def main() -> int:
     writer.writerow(["case", "query_length", "target_length", "distance",
                      "dp_ms", "myers_ms", "cpp_edlib_ms"])
     for name, query, target in cases():
-        # Validate the same ordered inputs and warm each executable once.
+        # Validate the same ordered inputs and warm each persistent worker.
         distances = {algorithm: align(query, target) for algorithm, align in algorithms}
         if len(set(distances.values())) != 1:
             raise RuntimeError(f"Distance mismatch for {name}: {distances}")

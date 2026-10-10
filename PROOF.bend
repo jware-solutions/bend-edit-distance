@@ -3,6 +3,18 @@ import ./LAWS.bend as Laws
 import ./DistanceDP.bend as DP
 import ./main.bend as Main
 
+def Laws.transport_byte_values():
+  {==}
+
+def Laws.transport_u32_order():
+  {==}
+
+def Laws.transport_absent_starts():
+  {==}
+
+def Laws.transport_empty_starts():
+  {==}
+
 def Laws.typed_default_config():
   {==}
 

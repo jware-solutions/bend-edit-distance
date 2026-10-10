@@ -1,6 +1,6 @@
 """Typed configuration and results shared by the Bend and Edlib adapters.
 
-The CLI wire format uses Edlib's integer sentinels. Public values distinguish
+The wire formats use Edlib's integer sentinels. Public values distinguish
 an unfound distance, a coordinate before zero, and an unrequested result.
 """
 
@@ -70,13 +70,25 @@ Threshold = Unlimited | MaxDistance
 
 @dataclass(frozen=True)
 class EqualityPair:
-    first: str
-    second: str
+    first: int | bytes | str
+    second: int | bytes | str
 
     def __post_init__(self) -> None:
         for value in (self.first, self.second):
-            if not isinstance(value, str) or len(value) != 1 or not 1 <= ord(value) <= 127:
-                raise ValueError("Equality pairs require single non-NUL ASCII characters")
+            _byte(value)
+
+    def to_bytes(self) -> bytes:
+        return bytes((_byte(self.first), _byte(self.second)))
+
+
+def _byte(value: int | bytes | str) -> int:
+    if type(value) is int and 0 <= value <= 255:
+        return value
+    if isinstance(value, bytes) and len(value) == 1:
+        return value[0]
+    if isinstance(value, str) and len(value) == 1 and ord(value) <= 255:
+        return ord(value)
+    raise ValueError("Equality pairs require single byte values (0..255)")
 
 
 @dataclass(frozen=True)
@@ -99,13 +111,15 @@ class AlignConfig:
             isinstance(p, EqualityPair) for p in self.equalities
         ):
             raise TypeError("Equalities must be a tuple of EqualityPair values")
-        if len(self.equalities) > 2048:
-            raise ValueError("CLI supports at most 2048 equality pairs")
 
     def argv(self) -> list[str]:
+        """Optional legacy ASCII CLI; alignment workers use byte fields."""
+        pairs = b"".join(p.to_bytes() for p in self.equalities)
+        if len(pairs) > 4096 or b"\0" in pairs or not pairs.isascii():
+            raise ValueError("Text CLI supports at most 2048 non-NUL ASCII equality pairs")
         return [
             "--config", self.mode.value, self.task.value, str(self.threshold.to_edlib()),
-            "".join(p.first + p.second for p in self.equalities), self.cigar_format.value,
+            pairs.decode("ascii"), self.cigar_format.value,
         ]
 
 
@@ -192,9 +206,8 @@ class AlignResult:
         return self.distance.value
 
     @classmethod
-    def from_json(cls, output: str) -> AlignResult:
+    def from_edlib(cls, value: object) -> AlignResult:
         try:
-            value = json.loads(output)
             keys = {
                 "status", "edit_distance", "end_locations", "start_locations", "alignment", "cigar",
             }
@@ -226,4 +239,12 @@ class AlignResult:
                 raise ValueError("Expected end locations for a found distance")
             return cls(status, distance, ends, starts, alignment, cigar)
         except (ValueError, TypeError, KeyError) as error:
+            raise ValueError(f"Expected structured alignment result, got {value!r}: {error}") from error
+
+    @classmethod
+    def from_json(cls, output: str) -> AlignResult:
+        """Text convenience layer outside the binary alignment transport."""
+        try:
+            return cls.from_edlib(json.loads(output))
+        except (ValueError, TypeError) as error:
             raise ValueError(f"Expected structured alignment result, got {output!r}: {error}") from error

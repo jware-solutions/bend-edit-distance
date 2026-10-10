@@ -9,10 +9,18 @@ from hypothesis.database import DirectoryBasedExampleDatabase
 
 from scripts.proof_kernel import require_kernel
 from tests.helpers import BEND_BINARY, CPP_BINARY, DP_BINARY, ROOT, execute
+from transport import close_workers
 
 
-# Keep replay, generation and shrinking enabled. Native process startup is not
-# a correctness deadline; reduced failures survive between runs in build/.
+@pytest.fixture(scope="session", autouse=True)
+def worker_lifetime():
+    close_workers()
+    yield
+    close_workers()
+
+
+# Keep replay, generation and shrinking enabled. Alignment cost is not a
+# correctness deadline; reduced failures survive between runs in build/.
 settings.register_profile(
     "alignment", max_examples=100, deadline=None, print_blob=True,
     database=DirectoryBasedExampleDatabase(ROOT / "build" / "hypothesis"),
@@ -70,7 +78,7 @@ def proof_kernel():
 def bend_binary(bend_tool):
     BEND_BINARY.parent.mkdir(parents=True, exist_ok=True)
     # Rebuild once every run, so changes to imported .bend files are never stale.
-    execute([bend_tool, ROOT / "main.bend", "-o", BEND_BINARY], timeout=180)
+    execute([bend_tool, ROOT / "worker.bend", "-o", BEND_BINARY], timeout=180)
     return BEND_BINARY
 
 

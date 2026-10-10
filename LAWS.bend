@@ -5,6 +5,25 @@ import ./Cli.bend as CLI
 import ./EdlibTypes.bend as E
 import ./Alignment.bend as A
 import ./lib.bend as L
+import ./ByteProtocol.bend as BT
+
+# Byte transport maps each input byte to one Char with the same numeric value;
+# it never decodes UTF-8, stops at NUL, or applies the ASCII CLI size limit.
+# Frames and requests remain ordered, and EOF is accepted only between frames.
+# Native framing/IO is outside the proof kernel; exercise it in test_transport.py.
+law transport_byte_values:
+  {BT.byte_string([0, 128, 255]) ==
+    SCon{Chr{0}, SCon{Chr{128}, SCon{Chr{255}, ""}}} : String}
+
+law transport_u32_order:
+  {BT.u32_bytes(305419896) == [120, 86, 52, 18] : List<U32>}
+
+# A missing optional field uses UINT32_MAX; a present empty field uses zero.
+law transport_absent_starts:
+  {BT.starts(None{}) == (4294967295, Nil{}) : U32 & List<U32>}
+
+law transport_empty_starts:
+  {BT.starts(Some{Nil{}}) == (0, Nil{}) : U32 & List<U32>}
 
 # A finite first domain for alignment proofs: precisely every string of length
 # 0..2 over {'A', 'a'}. This includes case differences and repeated symbols.

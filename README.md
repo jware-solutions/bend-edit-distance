@@ -22,7 +22,7 @@ From the repository root in Linux or WSL, compile and run the CLI:
 
 ```bash
 mkdir -p build
-bend main.bend -o build/bend-edlib
+bend worker.bend -o build/bend-edlib
 build/bend-edlib --threads 1 -- ACGT ACG
 ```
 
@@ -37,9 +37,11 @@ build/bend-edlib --threads 1 -- --config HW PATH -1 '' EXTENDED AC TACGAC
 
 DISTANCE includes end locations; LOC adds starts; PATH adds operation codes and
 CIGAR. Missing distance and the coordinate before zero serialize as `-1`.
-Inputs and equality pairs use non-NUL ASCII; each sequence is limited to 4,096
-characters. See the [typed API](CONTRIBUTING.md#typed-alignment-api) for the
-Python adapters and the complete result contract.
+The text CLI accepts non-NUL ASCII sequences up to 4,096 characters.
+The [persistent byte workers](TRANSPORT.md) accept NUL and all 256 byte values,
+use explicit sequence lengths, and process many requests in one executable.
+Python adapters reuse these workers throughout a pytest session. See the
+[typed API](CONTRIBUTING.md#typed-alignment-api) for the complete result contract.
 
 ### From another Bend file
 
@@ -47,7 +49,7 @@ Import its library module from any Bend file:
 
 ```bend
 import Base
-import bend-edlib-levenshtein@0.1.0.0/lib.bend as Edlib
+import bend-edlib@0.1.0.0/lib.bend as Edlib
 
 def main() -> Nat:
   Edlib.distance("kitten", "sitting")

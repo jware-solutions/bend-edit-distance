@@ -59,19 +59,6 @@ results. Run `bend examples/library_usage.bend` to try the API from a separate
 Bend file using a local checkout. Consumers do not need the Python test setup;
 after publication, Bend resolves the package directly from the Hub import.
 
-To publish the first named release, review the imported source and root
-`LICENSE`, log in, and run from the repository root:
-
-```bash
-bend login
-bend lib.bend --publish bend-edlib-levenshtein@0.1.0.0
-```
-
-Update the package name and four-part version before a later release, then
-update the README import accordingly. BendHub packages are public and permanent
-under [its terms](https://bend-lang.com/bendai/terms#s18); do not publish until
-the source and license are ready.
-
 ## Alignment protocol
 
 The two-argument `main.bend` CLI returns the global Levenshtein edit distance:
@@ -260,9 +247,10 @@ There are also constraints in the pinned **Bend 2.0.36** and current WSL setup:
    [Bend's verification limits](https://github.com/bendlang/bend/blob/v2.0.36/README.md#limitations)
    and the [native-library verification scope](https://github.com/bendlang/bend/issues/813).
 
-Byte input including NUL and all 256 values remains a project gap. Typed
-missing-result values, modes, thresholds, equalities, locations, paths and
-CIGAR are supported within the existing ASCII/4,096-character domain.
+Persistent [byte workers](TRANSPORT.md) support NUL and all 256 byte values,
+including equality pairs. Typed missing-result values, modes, thresholds,
+equalities, locations, paths and CIGAR use the same result contract. The legacy
+text CLIs retain the ASCII/4,096-character domain.
 
 ## Typed alignment API
 
@@ -277,7 +265,7 @@ retains the scalar NW helper used by existing proofs and benchmarks.
 Absent starts/path/CIGAR use `None{}`; a present empty path is `Some{Nil{}}`.
 The serializer converts `NotFound{}` and `BeforeStart{}` to Edlib's `-1`.
 
-The configured CLI and C++ oracle use the same fixed argument protocol:
+The configured text CLI and C++ oracle retain the same convenience argument protocol:
 
 ```bash
 build/bend-edlib --threads 1 -- --config HW PATH -1 '' EXTENDED AC TACGAC
@@ -302,7 +290,9 @@ do not imply transitive equality. The CLI allows up to 2,048 pairs of single
 non-NUL ASCII characters. Literal argv transport preserves whitespace and
 characters resembling flags, including within equality pairs.
 
-Python configuration and result types live in `alignment.py`:
+Python configuration and result types live in `alignment.py`; the persistent
+binary codec and process owner live in `transport.py`. The adapters reuse one
+worker per executable/thread configuration and close them at session teardown:
 
 ```python
 from alignment import AlignConfig, Mode, Task, MaxDistance, EqualityPair
@@ -310,8 +300,8 @@ from tests.helpers import bend_align, cpp_edlib_align
 
 config = AlignConfig(mode=Mode.HW, task=Task.PATH, threshold=MaxDistance(1),
                      equalities=(EqualityPair("a", "A"),))
-actual = bend_align("aC", "TaCG", config)
-expected = cpp_edlib_align("aC", "TaCG", config)
+actual = bend_align(b"aC", b"TaCG", config)
+expected = cpp_edlib_align(b"aC", b"TaCG", config)
 assert actual == expected
 assert actual.require_distance() == 0
 assert actual.to_edlib()["end_locations"] == [2]
@@ -323,6 +313,11 @@ starts/operations/CIGAR. `to_edlib()` produces the wire dictionary;
 are named `bend_distance`, `bend_dp_distance` and `cpp_edlib_distance`.
 The oracle also accepts two sequences alone and returns structured default
 DISTANCE results. The legacy Bend/independent DP CLIs continue printing a scalar.
+Worker inputs are bytes; ASCII strings remain a convenience conversion. Encode
+other text explicitly. Worker lengths are limited by the signed frame length
+range and practical memory/work costs, rather than argv or the CLI size cap.
+See [TRANSPORT.md](TRANSPORT.md) for field layouts, error recovery, explicit
+worker ownership, byte equality pairs and lifecycle behavior.
 
 Compatibility follows the pinned vendored Edlib, including its empty-input
 early return: it ignores the threshold and leaves starts/path/CIGAR absent even

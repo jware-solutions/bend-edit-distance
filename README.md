@@ -1,4 +1,4 @@
-# bend-edlib
+# bend-edit-distance
 
 A Bend implementation of Edlib's edit-distance and alignment features.
 
@@ -22,8 +22,8 @@ From the repository root in Linux or WSL, compile and run the CLI:
 
 ```bash
 mkdir -p build
-bend worker.bend -o build/bend-edlib
-build/bend-edlib --threads 1 -- ACGT ACG
+bend worker.bend -o build/bend-edit-distance
+build/bend-edit-distance --threads 1 -- ACGT ACG
 ```
 
 The command prints the global edit distance (`1` for this example).
@@ -32,7 +32,7 @@ For JSON results, specify mode, task, threshold (`-1` for unlimited),
 concatenated equality pairs and CIGAR format:
 
 ```bash
-build/bend-edlib --threads 1 -- --config HW PATH -1 '' EXTENDED AC TACGAC
+build/bend-edit-distance --threads 1 -- --config HW PATH -1 '' EXTENDED AC TACGAC
 ```
 
 DISTANCE includes end locations; LOC adds starts; PATH adds operation codes and
@@ -49,7 +49,7 @@ Import its library module from any Bend file:
 
 ```bend
 import Base
-import bend-edlib@0.1.0.0/lib.bend as Edlib
+import bend-edit-distance@0.1.0.0/lib.bend as Edlib
 
 def main() -> Nat:
   Edlib.distance("kitten", "sitting")

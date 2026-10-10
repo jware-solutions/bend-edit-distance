@@ -205,7 +205,7 @@ def response(query: String, target: String) -> String:
 def run(args: List<String>) -> IO(Unit):
   match args:
     case _ <> query <> target <> Nil{}:
-      CLI.run(~distance, ["bend-edlib", query, target])
+      CLI.run(~distance, ["bend-edit-distance", query, target])
     case _:
       AC.run(~edlib_align, args)
 

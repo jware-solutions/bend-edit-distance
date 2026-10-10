@@ -1,7 +1,7 @@
 # Persistent byte transport (version 1)
 
-Compile `worker.bend` (`bend worker.bend -o build/bend-edlib`), then run
-`build/bend-edlib --threads 1 -- --worker`.
+Compile `worker.bend` (`bend worker.bend -o build/bend-edit-distance`), then run
+`build/bend-edit-distance --threads 1 -- --worker`.
 The C++ oracle accepts `build/edlib-oracle --worker`. Both read binary requests
 from stdin and flush one binary response to stdout per request, in order, until
 EOF. Stderr contains diagnostics only. The independent DP test executable
@@ -79,7 +79,7 @@ from alignment import AlignConfig, EqualityPair, Task
 from transport import AlignmentWorker
 
 config = AlignConfig(task=Task.PATH, equalities=(EqualityPair(0, 255),))
-with AlignmentWorker(["build/bend-edlib", "--threads", "1", "--", "--worker"]) as worker:
+with AlignmentWorker(["build/bend-edit-distance", "--threads", "1", "--", "--worker"]) as worker:
     for query in (b"A\0C", bytes(range(256))):
         result = worker.align(query, query, config)
         assert result.require_distance() == 0

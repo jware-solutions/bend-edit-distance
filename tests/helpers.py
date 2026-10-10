@@ -11,7 +11,7 @@ from alignment import AlignConfig, AlignResult
 from transport import cached_worker, sequence_bytes
 
 ROOT = Path(__file__).resolve().parents[1]
-BEND_BINARY = ROOT / "build" / "bend-edlib"
+BEND_BINARY = ROOT / "build" / "bend-edit-distance"
 DP_BINARY = ROOT / "build" / "bend-distance-dp"
 CPP_BINARY = ROOT / "build" / "edlib-oracle"
 MAX_SEQUENCE_LENGTH = 4096

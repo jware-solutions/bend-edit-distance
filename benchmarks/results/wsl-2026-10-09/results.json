@@ -69,18 +69,18 @@
           "clang",
           "-std=c11",
           "-O2",
-          "/mnt/c/Users/genar/.codex/worktrees/dc89/bend-edlib/benchmarks/launch.c",
+          "/mnt/c/Users/genar/.codex/worktrees/dc89/bend-edit-distance/benchmarks/launch.c",
           "-o",
-          "/mnt/c/Users/genar/.codex/worktrees/dc89/bend-edlib/build/benchmarks/launch"
+          "/mnt/c/Users/genar/.codex/worktrees/dc89/bend-edit-distance/build/benchmarks/launch"
         ],
         "wall_ns": 108955941
       },
       {
         "argv": [
           "bend",
-          "/mnt/c/Users/genar/.codex/worktrees/dc89/bend-edlib/benchmarks/bend.bend",
+          "/mnt/c/Users/genar/.codex/worktrees/dc89/bend-edit-distance/benchmarks/bend.bend",
           "-o",
-          "/mnt/c/Users/genar/.codex/worktrees/dc89/bend-edlib/build/benchmarks/bend"
+          "/mnt/c/Users/genar/.codex/worktrees/dc89/bend-edit-distance/build/benchmarks/bend"
         ],
         "wall_ns": 3073454623
       },
@@ -91,10 +91,10 @@
           "-O2",
           "-DNDEBUG",
           "-I",
-          "/mnt/c/Users/genar/.codex/worktrees/dc89/bend-edlib/vendor/edlib/edlib/include",
-          "/mnt/c/Users/genar/.codex/worktrees/dc89/bend-edlib/benchmarks/edlib.cpp",
+          "/mnt/c/Users/genar/.codex/worktrees/dc89/bend-edit-distance/vendor/edlib/edlib/include",
+          "/mnt/c/Users/genar/.codex/worktrees/dc89/bend-edit-distance/benchmarks/edlib.cpp",
           "-o",
-          "/mnt/c/Users/genar/.codex/worktrees/dc89/bend-edlib/build/benchmarks/edlib"
+          "/mnt/c/Users/genar/.codex/worktrees/dc89/bend-edit-distance/build/benchmarks/edlib"
         ],
         "wall_ns": 1501135153
       }

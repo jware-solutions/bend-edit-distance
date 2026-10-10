@@ -1,4 +1,4 @@
-# Contributing to bend-edlib
+# Contributing to bend-edit-distance
 
 This guide contains the setup, implementation, testing, proof, benchmark, CI, and release details for contributors.
 
@@ -32,8 +32,8 @@ versions and the submodule revision are recorded in `build/environment.txt`.
 For a clean Linux checkout (submodules need not already be initialized):
 
 ```bash
-git clone https://github.com/jware-solutions/bend-edlib.git
-cd bend-edlib
+git clone https://github.com/jware-solutions/bend-edit-distance.git
+cd bend-edit-distance
 bash scripts/setup.sh
 python3 run_tests.py --alignment --verdict -v
 ```
@@ -68,7 +68,7 @@ To publish a new version of the library to BendHub, follow these steps:
 3. Use the Bend CLI to publish the package:
 
    ```bash
-   bend lib.bend --publish bend-edlib@<version>
+   bend lib.bend --publish bend-edit-distance@<version>
    ```
 
 4. Verify that the version is the same as the one in `version.txt` file.
@@ -79,7 +79,7 @@ To publish a new version of the library to BendHub, follow these steps:
 The two-argument `main.bend` CLI returns the global Levenshtein edit distance:
 
 ```text
-build/bend-edlib --threads 1 -- ACGT ACG
+build/bend-edit-distance --threads 1 -- ACGT ACG
 1
 ```
 
@@ -109,7 +109,7 @@ The text CLIs in both native Bend executables validate each sequence before comp
   or on the edit distance. On supported inputs ASCII characters are one byte.
 - Unsupported characters or excessive lengths exit **2**, write a diagnostic
   to **stderr**, and leave **stdout empty**. Invalid argument counts use the
-  same error protocol. For example, `build/bend-edlib -- Ā Ā` reports an ASCII
+  same error protocol. For example, `build/bend-edit-distance -- Ā Ā` reports an ASCII
   error instead of a distance.
 
 The 4,096-character cap bounds query-profile allocation and alignment work:
@@ -282,7 +282,7 @@ The serializer converts `NotFound{}` and `BeforeStart{}` to Edlib's `-1`.
 The configured text CLI and C++ oracle retain the same convenience argument protocol:
 
 ```bash
-build/bend-edlib --threads 1 -- --config HW PATH -1 '' EXTENDED AC TACGAC
+build/bend-edit-distance --threads 1 -- --config HW PATH -1 '' EXTENDED AC TACGAC
 build/edlib-oracle --config HW PATH -1 '' EXTENDED AC TACGAC
 ```
 
@@ -625,14 +625,14 @@ Preview the commit/file portion locally without creating tags or contacting
 GitHub:
 
 ```bash
-GH_REPO=jware-solutions/bend-edlib python3 scripts/release.py --dry-run
+GH_REPO=jware-solutions/bend-edit-distance python3 scripts/release.py --dry-run
 # Optional range: add --previous-tag v0.1.0
 cat build/release-notes.md
 ```
 
 ## License
 
-bend-edlib is licensed under the **GNU General Public License v3.0 (GPL-3.0)**.
+bend-edit-distance is licensed under the **GNU General Public License v3.0 (GPL-3.0)**.
 You may use, modify and redistribute it under the terms in [LICENSE](LICENSE).
 Redistributed modified versions must remain under GPL-3.0, and distributed
 binaries must be accompanied by access to the corresponding source as the

@@ -1,1 +1,1 @@
-"""Python tests and subprocess adapters for bend-edlib."""
+"""Python tests and subprocess adapters for bend-edit-distance."""

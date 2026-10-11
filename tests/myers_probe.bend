@@ -92,22 +92,31 @@ def trace_step(steps: Snapshot, columns: Snapshot,
       text ++ report ++ tail(blocks, next)
 
 def trace(target: String, +profiles: List<&2, M.Peq>,
-          blocks: List<M.Block>, columns: List<M.Block>, +column: U32) -> String:
+          blocks: List<M.Block>, columns: List<M.Block>, +column: U32, +mode: E.Mode) -> String:
   match target:
     case SNil{}:
       ""
     case SCon{h, t}:
       +code = Char.to_u32(h)
       trace_step(
-        calculated(blocks, profiles, code, M.Carry{1, 0}, column, 0),
-        dump(M.advance_column(columns, profiles, code, M.Carry{1, 0}), column, 0),
-        bs => cs => trace(t, profiles, bs, cs, U32.add(column, 1)))
+        calculated(blocks, profiles, code, M.semiglobal_carry(mode), column, 0),
+        dump(M.advance_column(columns, profiles, code, M.semiglobal_carry(mode)), column, 0),
+        bs => cs => trace(t, profiles, bs, cs, U32.add(column, 1), mode))
 
 def trace_start(initial: Snapshot, +profiles: List<&2, M.Peq>,
-                target: String, count: Nat) -> String:
+                target: String, count: Nat, mode: E.Mode) -> String:
   match initial:
     case Snapshot{blocks, text}:
-      text ++ trace(target, profiles, M.init_blocks(count, 32), blocks, 1)
+      text ++ trace(target, profiles, M.init_blocks(count, 32), blocks, 1, mode)
+
+def trace_mode(+query: String, target: String, mode: Maybe<&2, E.Mode>) -> IO(Unit):
+  match mode:
+    case None{}:
+      IO.die(Unit, 2, "Invalid mode")
+    case Some{value}:
+      +count = M.ceil_div(String.length(query), 32n)
+      profiles = M.build_peq(count, query)
+      IO.print(trace_start(dump(M.init_blocks(count, 32), 0, 0), profiles, target, count, value))
 
 def search_show(search: M.Search) -> String:
   match search:
@@ -130,13 +139,13 @@ def run(args: List<String>) -> IO(Unit):
       count = Nat.max(1n, M.ceil_div(String.length(query), 32n))
       IO.print(masks_words(M.build_peq(count, query), query, 0))
     case _ <> "trace" <> +query <> target <> Nil{}:
-      +count = M.ceil_div(String.length(query), 32n)
-      profiles = M.build_peq(count, query)
-      IO.print(trace_start(dump(M.init_blocks(count, 32), 0, 0), profiles, target, count))
+      trace_mode(query, target, Some{E.NW{}})
+    case _ <> "trace-mode" <> mode <> query <> target <> Nil{}:
+      trace_mode(query, target, AC.read_mode(mode))
     case _ <> "search" <> k <> query <> target <> Nil{}:
       search_run(query, target, AC.read_threshold(k))
     case _:
-      IO.die(Unit, 2, "Expected masks QUERY, trace QUERY TARGET or search K QUERY TARGET")
+      IO.die(Unit, 2, "Expected masks QUERY, trace QUERY TARGET, trace-mode MODE QUERY TARGET or search K QUERY TARGET")
 
 def main() -> IO(Unit):
   do IO<Unit>:

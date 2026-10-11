@@ -130,6 +130,8 @@ vendored `edlib.cpp`:
 Myers bit-vector block, `get_block_cell_value` removes wildcard padding from the
 final score, and `myers_calc_edit_distance_nw` advances the global alignment.
 `distance` handles empty inputs and selects the shorter sequence as the query.
+That swap is confined to NW: SHW (prefix) and HW (infix) retain the original
+query as the bit-vector axis, even when it is longer than the target.
 
 Blocks use native `U32` words with 32 query positions, adapting Edlib's 64-bit
 words. Immutable byte-indexed query tables are built with balanced parallel
@@ -152,8 +154,29 @@ attempts; tests verify pruning of both ends, immediate length rejection, early
 band collapse, adaptive retries, every padding size and threshold boundaries
 against independent scalar Bend DP and pinned C++ Edlib, including raw bytes.
 
+Ordinary SHW/HW DISTANCE uses `myers_calc_edit_distance_semiglobal`. Both
+initialize query scores to `i`; the first horizontal carry is +1 for SHW and
+zero for HW. A separate band initializes at most `ceil((k+1)/32)` blocks and
+expands by at most one block per target column. It prunes trailing blocks using
+their vertical score bound, without NW's remaining-target constraints. HW
+retains block zero and scans the entire target so later matches survive bad
+prefixes. SHW may stop when its band collapses. Unlimited searches start at
+query length, an upper bound obtained by deleting the query. Finite thresholds
+are capped at that bound before band setup; every optimal end is collected,
+including ties after the threshold tightens to zero. Padding is decoded at
+each target column. The pinned Edlib column-zero convention still uses its
+64-bit query lengths, independently of Bend's 32-bit padding.
+
+`tests/test_semiglobal.py` compares directional distance and all end locations
+against independent Bend DP and pinned Edlib for both input orders, empty
+inputs, free target ends, repeated matches, thresholds and every padding size.
+At `k = INT_MAX`, pinned Edlib's semiglobal initialization overflows `k+1`;
+Bend retains inclusive threshold semantics and checks that case against DP.
+
 `DistanceDP.bend` independently exports `distance(query, target) -> Nat` and
-imports only `Base`. It implements the two-row Levenshtein recurrence:
+ordinary DISTANCE `align(query, target, config)` for all three modes. It imports
+only `Base` and the result types, with no Myers or configured-DP dependency.
+It implements the two-row Levenshtein recurrence:
 
 ```text
 D[0,j] = j; D[i,0] = i
@@ -161,10 +184,13 @@ D[i,j] = min(D[i-1,j] + 1, D[i,j-1] + 1,
              D[i-1,j-1] + (row[i-1] != column[j-1]))
 ```
 
-The shorter sequence supplies the columns, so both rows have
-`min(m, n) + 1` cells. Each row consumes its predecessor; no distance matrix
-or traceback is retained. This takes `O(m*n)` time and `O(min(m,n))` score
-storage. Scores use `U32`, as in Myers. Input lengths are computed in parallel;
+For NW, the shorter sequence supplies the columns, so both rows have
+`min(m, n) + 1` cells. Directional modes keep target columns and use `n+1`
+cells: SHW keeps `D[0,j]=j`, HW uses `D[0,j]=0`, and both minimize `D[m,j]`
+to free the target suffix. Each row consumes its predecessor; no distance matrix
+or traceback is retained. This takes `O(m*n)` time, with `O(min(m,n))` score
+storage for NW and `O(n)` for SHW/HW. Scores use `U32`, as in Myers. Input
+lengths are computed in parallel;
 cells and rows remain sequential because each depends on its predecessor.
 The scalar CLI continues to use Myers. Tests compile `tests/distance_dp.bend`
 as `build/bend-distance-dp`, which calls DP directly with the same CLI contract.
@@ -195,7 +221,7 @@ NW/SHW/HW modes, DISTANCE/LOC/PATH tasks, thresholds and additional equalities.
 The project implements part of Edlib's behavior.
 The following features and checks are still missing from this repository:
 
-- **Configured alignment performance:** modes, locations, paths and custom
+- **Configured alignment performance:** locations, paths and custom
   equalities use a scalar recurrence with two score rows. PATH retains shared
   operation prefixes and recomputes NW for the first matching interval.
   Thresholds filter the final optimum; they do not prune the DP computation.

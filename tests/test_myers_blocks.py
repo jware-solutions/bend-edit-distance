@@ -39,14 +39,14 @@ def test_equality_masks_and_lookup(myers_probe, query):
         assert direct == lookup == expected, (query, block, code, direct, lookup, expected)
 
 
-def scalar_columns(query, target):
-    """Full scalar NW columns, with explicit all-matching padded query cells."""
+def scalar_columns(query, target, mode="NW"):
+    """Scalar columns with explicit top boundaries and wildcard padding."""
     size = ((len(query) + WORD - 1) // WORD) * WORD
     padded = list(query) + [None] * (size - len(query))
     previous = list(range(size + 1))
     yield previous
     for column, symbol in enumerate(target, 1):
-        current = [column]
+        current = [0 if mode == "HW" else column]
         for row, query_symbol in enumerate(padded, 1):
             cost = int(query_symbol is not None and query_symbol != symbol)
             current.append(min(previous[row] + 1, current[-1] + 1,
@@ -55,9 +55,9 @@ def scalar_columns(query, target):
         previous = current
 
 
-def assert_trace(binary, query, target, *, threads=1):
-    rows = probe_rows(binary, "trace", query, target, threads=threads)
-    columns = list(scalar_columns(query, target))
+def assert_trace(binary, query, target, *, threads=1, mode="NW"):
+    rows = probe_rows(binary, "trace-mode", mode, query, target, threads=threads)
+    columns = list(scalar_columns(query, target, mode))
     count = (len(query) + WORD - 1) // WORD
     assert len(rows) == count * (1 + 2 * len(target))
     seen = set()
@@ -108,6 +108,13 @@ def test_multiblock_transitions(myers_probe, length, threads):
 
 def test_all_carry_signs_reach_later_blocks(myers_probe):
     assert assert_trace(myers_probe, "A" * 65, "T" * 20 + "A" * 100 + "T" * 40) == {-1, 0, 1}
+
+
+@pytest.mark.parametrize("mode", ["SHW", "HW"])
+@pytest.mark.parametrize("length", [1, 31, 32, 33, 63, 64, 65, 95, 96, 97, 129])
+def test_directional_columns_and_padding(myers_probe, mode, length):
+    query = ("ACgt" * 33)[:length]
+    assert_trace(myers_probe, query, "T" * 35 + query + "N" * 4 + query, mode=mode)
 
 
 @settings(max_examples=40)

@@ -1,7 +1,9 @@
 import Base
+import ./EdlibTypes.bend as E
 
-# Independent NW/global Levenshtein distance with unit edit costs.
-# Keep only the previous and current rows, each min(m, n) + 1 cells.
+# Independent Levenshtein distance with unit edit costs.
+# Keep only the previous and current rows. NW uses min(m,n)+1 cells;
+# directional modes retain target columns and use n+1 cells.
 # The CLI caps each input at 4096 characters before calling either algorithm.
 
 def initial_row(length: Nat, +column: U32) -> List<U32>:
@@ -76,3 +78,91 @@ def distance(query: String, target: String) -> Nat:
       +t = {SCon{th, tt} : String}
       +qn +tn = String.length(q) String.length(t)
       distance_shorter(q, t, qn, tn, Nat.is_le(qn, tn))
+
+# Directional DP keeps query rows and target columns in their original order.
+# D[i,0] = i in every mode. SHW has D[0,j] = j and a free target suffix;
+# HW has D[0,j] = 0 and both target ends free. Both minimize D[m,j].
+def initial_semiglobal_row(length: Nat, +column: U32, +mode: E.Mode) -> List<U32>:
+  match length mode:
+    case 0n E.HW{}:
+      [0]
+    case 0n _:
+      [column]
+    case 1n+p E.HW{}:
+      0 <> initial_semiglobal_row(p, U32.add(column, 1), mode)
+    case 1n+p _:
+      column <> initial_semiglobal_row(p, U32.add(column, 1), mode)
+
+def final_row(query: String, +target: String, previous: List<U32>,
+              +index: U32) -> List<U32>:
+  match query:
+    case SNil{}:
+      previous
+    case SCon{h, t}:
+      final_row(t, target, next_row(previous, target, h, index), U32.add(index, 1))
+
+type Best is Data:
+  Best{score: U32, ends: List<&2, E.Coordinate>}
+
+def collect_best(best: Best, score: U32, end: E.Coordinate, comparison: Cmp) -> Best:
+  match best comparison:
+    case _ LT{}:
+      Best{score, [end]}
+    case Best{old, ends} EQ{}:
+      Best{old, end <> ends}
+    case _ GT{}:
+      best
+
+def collect(cells: List<U32>, +index: Nat, +best: Best) -> Best:
+  match cells:
+    case Nil{}:
+      best
+    case +score <> tail:
+      Best{old, _} = best
+      collect(tail, 1n+index, collect_best(best, score, E.Position{index}, U32.cmp(score, old)))
+
+def semiglobal_endpoints(cells: List<U32>, include_before: Bool) -> Best:
+  match cells include_before:
+    case Nil{} _:
+      Best{0, Nil{}}
+    case score <> tail True{}:
+      collect(tail, 0n, Best{score, [E.BeforeStart{}]})
+    case _ <> tail False{}:
+      collect(tail, 0n, Best{4294967295, Nil{}})
+
+def semiglobal(+query: String, +target: String, mode: E.Mode) -> Best:
+  # Pinned Edlib omits column zero when its final 64-bit word has no padding.
+  qn tn = String.length(query) String.length(target)
+  semiglobal_endpoints(final_row(query, target,
+    initial_semiglobal_row(tn, 0, mode), 1), Nat.is_ne(Nat.mod(qn, 64n), 0n))
+
+def semiglobal_result.accept(score: U32, ends: List<&2, E.Coordinate>, accepted: Bool) -> E.AlignResult:
+  match accepted:
+    case True{}:
+      E.AlignResult{E.Ok{}, E.Found{U32.to_nat(score)}, List.reverse(&2, E.Coordinate, ends), None{}, None{}, None{}}
+    case False{}:
+      E.not_found()
+
+def semiglobal_result(best: Best, +threshold: E.Threshold) -> E.AlignResult:
+  match best:
+    case Best{+score, ends}:
+      semiglobal_result.accept(score, ends, E.within_threshold(threshold, U32.to_nat(score)))
+
+# The independent worker supports ordinary DISTANCE in every mode, including
+# Edlib's empty-input early return before threshold filtering.
+def align(query: String, target: String, config: E.AlignConfig) -> E.AlignResult:
+  match query target config:
+    case SNil{} +t E.AlignConfig{E.NW{}, E.Distance{}, _, Nil{}, _}:
+      +length = String.length(t)
+      E.distance_result(length, E.end_coordinate(length), True{})
+    case SNil{} _ E.AlignConfig{_, E.Distance{}, _, Nil{}, _}:
+      E.distance_result(0n, E.BeforeStart{}, True{})
+    case SCon{_, qt} SNil{} E.AlignConfig{_, E.Distance{}, _, Nil{}, _}:
+      E.distance_result(1n+String.length(qt), E.BeforeStart{}, True{})
+    case +q +t E.AlignConfig{E.NW{}, E.Distance{}, +threshold, Nil{}, _}:
+      +score = distance(q, t)
+      E.distance_result(score, E.end_coordinate(String.length(t)), E.within_threshold(threshold, score))
+    case +q +t E.AlignConfig{mode, E.Distance{}, threshold, Nil{}, _}:
+      semiglobal_result(semiglobal(q, t, mode), threshold)
+    case _ _ _:
+      E.AlignResult{E.Error{}, E.NotFound{}, Nil{}, None{}, None{}, None{}}

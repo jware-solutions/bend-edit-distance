@@ -39,6 +39,10 @@ DISTANCE includes end locations; LOC adds starts; PATH adds operation codes and
 CIGAR. Missing distance and the coordinate before zero serialize as `-1`.
 Nonnegative thresholds are inclusive, including `k = 0`. Pinned Edlib's
 empty-input early return ignores `k` and leaves starts/path/CIGAR absent.
+NW aligns both complete sequences. SHW aligns the complete query to a target
+prefix with a free suffix; HW aligns it to a target substring with both target
+ends free. SHW/HW preserve query/target orientation and report every optimal
+end location. Ordinary DISTANCE uses Myers in all three modes.
 The text CLI accepts non-NUL ASCII sequences up to 4,096 characters.
 The [persistent byte workers](TRANSPORT.md) accept NUL and all 256 byte values,
 use explicit sequence lengths, and process many requests in one executable.

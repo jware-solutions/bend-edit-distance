@@ -3,7 +3,7 @@ import ./EdlibTypes.bend as E
 
 # Configured alignment uses the scalar recurrence. Only two score rows are
 # retained; PATH also carries persistent, shared operation prefixes. The
-# ordinary NW/DISTANCE API in main.bend keeps its Myers fast path.
+# ordinary DISTANCE API in main.bend uses Myers for NW, SHW and HW.
 type Cell is Data:
   Cell{score: U32, start: Nat, operations: List<&2, E.Operation>}
 
@@ -114,6 +114,9 @@ def rows(query: String, +columns: String, previous: List<&2, Cell>,
 
 def scores(query: String, +target: String, mode: E.Mode,
            pairs: List<&2, E.EqualityPair>, +tracing: Bool) -> List<&2, Cell>:
+  # Query rows and target columns must retain their orientation. D[i,0]=i;
+  # D[0,j]=j for NW/SHW, and D[0,j]=0 for HW. SHW/HW free target suffixes
+  # by minimizing the final query row instead of taking only its last cell.
   rows(query, target, initial_row(target, mode, 0, tracing, Nil{}),
     pairs, 1, tracing, Nil{})
 

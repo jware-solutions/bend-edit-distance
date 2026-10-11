@@ -4,7 +4,7 @@ import ./EdlibTypes.bend as E
 import ./Alignment.bend as A
 import ./AlignmentCli.bend as AC
 
-# The NW/distance path from vendor/edlib/edlib/src/edlib.cpp. Bend's native
+# The distance paths from vendor/edlib/edlib/src/edlib.cpp. Bend's native
 # integer is U32, so a Myers word covers 32 query characters instead of 64.
 # The scalar helper is NW, unit costs, unlimited distance (k = -1). The
 # configured API extends it with the typed modes/tasks in EdlibTypes.bend.
@@ -444,6 +444,140 @@ def search_shorter(query: String, target: String, +query_length: Nat,
       search_query(target, query, target_length, query_length, threshold,
         Bool.not(E.within_threshold(threshold, Nat.sub(query_length, target_length))))
 
+# Directional modes never swap query and target. The initial vertical scores
+# are i in both modes, while the top horizontal difference is +1 for SHW and
+# 0 for HW. NW's length/remaining-target band bounds do not apply here.
+def semiglobal_carry(mode: E.Mode) -> Carry:
+  match mode:
+    case E.HW{}:
+      Carry{0, 0}
+    case _:
+      Carry{1, 0}
+
+def init_semiglobal_band(profiles: List<&2, Peq>, length: Nat, +maximum: Nat) -> Band:
+  init_band.step(init_band_entries(
+    Nat.min(ceil_div(length, 32n), ceil_div(1n+maximum, 32n)), profiles, 32))
+
+# If the bottom score is >= k+32 every cell in that block is > k. Only
+# trailing blocks are removed. HW always retains block zero: its free top
+# boundary can seed a new alignment after an arbitrarily long target prefix.
+def trim_semiglobal(entries: List<&2, BandEntry>, rest: List<&2, Peq>,
+                    +mode: E.Mode, +index: Nat, +maximum: Nat) -> List<&2, BandEntry> & List<&2, Peq>:
+  match entries mode:
+    case Nil{} _:
+      (Nil{}, rest)
+    case BandEntry{profile, Block{pv, mv, +score}} <> tail E.HW{}:
+      trim_last.join(BandEntry{profile, Block{pv, mv, score}},
+        trim_semiglobal(tail, rest, mode, 1n+index, maximum),
+        Bool.or(Nat.is_eq(index, 0n), Nat.is_lt(U32.to_nat(score), Nat.add(maximum, 32n))))
+    case BandEntry{profile, Block{pv, mv, +score}} <> tail _:
+      trim_last.join(BandEntry{profile, Block{pv, mv, score}},
+        trim_semiglobal(tail, rest, mode, 1n+index, maximum),
+        Nat.is_lt(U32.to_nat(score), Nat.add(maximum, 32n)))
+
+def reduce_semiglobal(parts: List<&2, BandEntry> & List<&2, Peq>) -> Band:
+  match parts:
+    case (entries, rest):
+      Band{0n, entries, rest}
+
+def expand_semiglobal.result(result: Block & Carry, entries: List<&2, BandEntry>,
+                              profile: Peq, rest: List<&2, Peq>, mode: E.Mode,
+                              maximum: Nat) -> Band:
+  match result:
+    case (block, _):
+      reduce_semiglobal(trim_semiglobal(
+        List.append(&2, BandEntry, entries, [BandEntry{profile, block}]), rest, mode, 0n, maximum))
+
+def expand_semiglobal.choose(entries: List<&2, BandEntry>, profile: Peq,
+                             rest: List<&2, Peq>, previous: U32, eq: U32,
+                             carry: Carry, mode: E.Mode, maximum: Nat, expand: Bool) -> Band:
+  match expand:
+    case True{}:
+      expand_semiglobal.result(calculate_block(Block{4294967295, 0, U32.add(previous, 32)}, eq, carry),
+        entries, profile, rest, mode, maximum)
+    case False{}:
+      reduce_semiglobal(trim_semiglobal(entries, profile <> rest, mode, 0n, maximum))
+
+def expand_semiglobal(updated: UpdatedBand, rest: List<&2, Peq>, +symbol: U32,
+                       mode: E.Mode, +maximum: Nat) -> Band:
+  match updated rest:
+    case UpdatedBand{entries, +score, Carry{+positive, +negative}, _} +profile <> tail:
+      +previous = U32.sub(U32.add(score, negative), positive)
+      +eq = peq_get(profile, symbol, U32.is_ne(U32.and(symbol, 1), 0))
+      expand_semiglobal.choose(entries, profile, tail, previous, eq, Carry{positive, negative}, mode, maximum,
+        Bool.and(Nat.is_le(U32.to_nat(previous), maximum),
+          Bool.or(U32.is_ne(U32.and(eq, 1), 0), U32.is_ne(negative, 0))))
+    case UpdatedBand{entries, _, _, _} Nil{}:
+      reduce_semiglobal(trim_semiglobal(entries, Nil{}, mode, 0n, maximum))
+
+def semiglobal_step(band: Band, +symbol: U32, +mode: E.Mode, maximum: Nat) -> Band:
+  match band:
+    case Band{_, entries, rest}:
+      expand_semiglobal(advance_band(entries, symbol, semiglobal_carry(mode), 32n),
+        rest, symbol, mode, maximum)
+
+def semiglobal_endpoint(entries: List<&2, BandEntry>, rest: List<&2, Peq>, padding: Nat,
+                         column: Nat, +best: A.Best) -> A.Best:
+  match entries rest:
+    case Nil{} _:
+      best
+    case _ Nil{}:
+      A.Best{old, _} = best
+      +score = U32.from_nat(band_last_score(entries, padding))
+      A.update_best(best, score, A.Location{E.Position{column}, 0n}, U32.cmp(score, old))
+    case _ _:
+      best
+
+def myers_calc_edit_distance_semiglobal.step(band: Band, padding: Nat, column: Nat,
+                                             best: A.Best, next: Band -> A.Best -> A.Best) -> A.Best:
+  match band:
+    case Band{first, +entries, +rest}:
+      next(Band{first, entries, rest}, semiglobal_endpoint(entries, rest, padding, column, best))
+
+# Decode the real last query cell at every column, without Edlib's delayed
+# padded endpoints. Tighten k after a better score, but continue for every tie.
+def myers_calc_edit_distance_semiglobal(target: String, band: Band, +mode: E.Mode,
+                                         +padding: Nat, +column: Nat, +maximum: Nat,
+                                         +best: A.Best) -> A.Best:
+  match target band:
+    case _ Band{_, Nil{}, _}:
+      A.ordered(best)
+    case SNil{} _:
+      A.ordered(best)
+    case SCon{h, t} _:
+      A.Best{score, _} = best
+      +k = Nat.min(maximum, U32.to_nat(score))
+      myers_calc_edit_distance_semiglobal.step(semiglobal_step(band, Char.to_u32(h), mode, k),
+        padding, column, best, next => found =>
+          myers_calc_edit_distance_semiglobal(t, next, mode, padding, 1n+column, k, found))
+
+def semiglobal_initial_best(+length: Nat, include_before: Bool) -> A.Best:
+  match include_before:
+    case True{}:
+      A.Best{U32.from_nat(length), [A.Location{E.BeforeStart{}, 0n}]}
+    case False{}:
+      A.Best{4294967295, Nil{}}
+
+def semiglobal_maximum(threshold: E.Threshold, +length: Nat) -> Nat:
+  match threshold:
+    case E.Unlimited{}:
+      length
+    case E.MaxDistance{maximum}:
+      Nat.min(maximum, length)
+
+def semiglobal_align(+query: String, +target: String, +mode: E.Mode,
+                      +threshold: E.Threshold) -> E.AlignResult:
+  +length = String.length(query)
+  +count = ceil_div(length, 32n)
+  +maximum = semiglobal_maximum(threshold, length)
+  # Preserve pinned Edlib's 64-bit column-zero convention independently of
+  # this implementation's 32-bit padding (especially lengths 32 and 96).
+  best = semiglobal_initial_best(length, Nat.is_ne(Nat.mod(length, 64n), 0n))
+  A.finish(query, target, E.Distance{}, threshold, Nil{}, E.Extended{},
+    myers_calc_edit_distance_semiglobal(target,
+      init_semiglobal_band(build_peq(count, query), length, maximum), mode,
+      Nat.sub(Nat.mul(count, 32n), length), 0n, maximum, best))
+
 def search_distance(search: Search) -> E.EditDistance:
   match search:
     case Search{distance, _, _, _}:
@@ -490,6 +624,8 @@ def edlib_align(query: String, target: String, config: E.AlignConfig) -> E.Align
       +qn +tn = String.length(q) String.length(t)
       threshold_result(search_distance(search_shorter(q, t, qn, tn, threshold,
         Nat.is_le(qn, tn))), E.end_coordinate(tn))
+    case +q +t E.AlignConfig{mode, E.Distance{}, threshold, Nil{}, _}:
+      semiglobal_align(q, t, mode, threshold)
     case _ _ _:
       A.align(query, target, config)
 

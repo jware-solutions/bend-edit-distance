@@ -55,6 +55,89 @@ def Laws.threshold_exceeded():
 def Laws.threshold_length_rejection():
   {==}
 
+def Laws.dp_shw_top_boundary(length, column):
+  match length:
+    case 0n:
+      {==}
+    case 1n+p:
+      {==}
+
+def Laws.dp_hw_top_boundary(length, column):
+  match length:
+    case 0n:
+      {==}
+    case 1n+p:
+      {==}
+
+def Laws.shw_horizontal_boundary():
+  {==}
+
+def Laws.hw_horizontal_boundary():
+  {==}
+
+def Laws.dp_shw_free_suffix():
+  {==}
+
+def Laws.dp_hw_free_prefix_suffix():
+  {==}
+
+def Laws.shw_free_suffix():
+  {==}
+
+def Laws.shw_preserves_query():
+  {==}
+
+def Laws.hw_preserves_query():
+  {==}
+
+def Laws.shw_prefix_threshold_exceeded():
+  {==}
+
+def Laws.shw_prefix_threshold_inclusive():
+  {==}
+
+def Laws.hw_late_repeated_matches():
+  {==}
+
+def Laws.empty_target_threshold_mode(query, mode, task, threshold):
+  match query mode task:
+    case SNil{} E.NW{} E.Distance{}:
+      {==}
+    case SNil{} E.NW{} E.Locations{}:
+      {==}
+    case SNil{} E.NW{} E.Path{}:
+      {==}
+    case SNil{} E.SHW{} E.Distance{}:
+      {==}
+    case SNil{} E.SHW{} E.Locations{}:
+      {==}
+    case SNil{} E.SHW{} E.Path{}:
+      {==}
+    case SNil{} E.HW{} E.Distance{}:
+      {==}
+    case SNil{} E.HW{} E.Locations{}:
+      {==}
+    case SNil{} E.HW{} E.Path{}:
+      {==}
+    case SCon{h, t} E.NW{} E.Distance{}:
+      {==}
+    case SCon{h, t} E.NW{} E.Locations{}:
+      {==}
+    case SCon{h, t} E.NW{} E.Path{}:
+      {==}
+    case SCon{h, t} E.SHW{} E.Distance{}:
+      {==}
+    case SCon{h, t} E.SHW{} E.Locations{}:
+      {==}
+    case SCon{h, t} E.SHW{} E.Path{}:
+      {==}
+    case SCon{h, t} E.HW{} E.Distance{}:
+      {==}
+    case SCon{h, t} E.HW{} E.Locations{}:
+      {==}
+    case SCon{h, t} E.HW{} E.Path{}:
+      {==}
+
 def Laws.negative_cli_threshold():
   {==}
 

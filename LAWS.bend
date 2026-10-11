@@ -430,6 +430,63 @@ law empty_hw_threshold_task:
   {Main.edlib_align("", target, E.AlignConfig{E.HW{}, task, threshold, Nil{}, E.Extended{}}) ==
     E.distance_result(0n, E.BeforeStart{}, True{}) : E.AlignResult}
 
+# Directional boundaries: rows consume the original query; columns consume
+# the original target. SHW penalizes a target prefix and frees its suffix.
+# HW frees both target ends. Only NW may swap the two inputs.
+law dp_shw_top_boundary:
+  for length: Nat
+  for column: U32
+  {List.head(&1, U32, DP.initial_semiglobal_row(length, column, E.SHW{})) == Some{column} : Maybe<U32>}
+
+law dp_hw_top_boundary:
+  for length: Nat
+  for column: U32
+  {List.head(&1, U32, DP.initial_semiglobal_row(length, column, E.HW{})) == Some{0} : Maybe<U32>}
+
+law shw_horizontal_boundary:
+  {Main.semiglobal_carry(E.SHW{}) == Main.Carry{1, 0} : Main.Carry}
+
+law hw_horizontal_boundary:
+  {Main.semiglobal_carry(E.HW{}) == Main.Carry{0, 0} : Main.Carry}
+
+law dp_shw_free_suffix:
+  {DP.semiglobal("AC", "ACT", E.SHW{}) == DP.Best{0, [E.Position{1n}]} : DP.Best}
+
+law dp_hw_free_prefix_suffix:
+  {DP.semiglobal("AC", "TACG", E.HW{}) == DP.Best{0, [E.Position{2n}]} : DP.Best}
+
+law shw_free_suffix:
+  {Main.edlib_align("AC", "ACT", E.AlignConfig{E.SHW{}, E.Distance{}, E.MaxDistance{0n}, Nil{}, E.Extended{}}) ==
+    E.distance_result(0n, E.Position{1n}, True{}) : E.AlignResult}
+
+law shw_preserves_query:
+  {Main.edlib_align("ACT", "AC", E.AlignConfig{E.SHW{}, E.Distance{}, E.Unlimited{}, Nil{}, E.Extended{}}) ==
+    E.distance_result(1n, E.Position{1n}, True{}) : E.AlignResult}
+
+law hw_preserves_query:
+  {Main.edlib_align("ACT", "AC", E.AlignConfig{E.HW{}, E.Distance{}, E.Unlimited{}, Nil{}, E.Extended{}}) ==
+    E.distance_result(1n, E.Position{1n}, True{}) : E.AlignResult}
+
+law shw_prefix_threshold_exceeded:
+  {Main.edlib_align("AC", "TAC", E.AlignConfig{E.SHW{}, E.Distance{}, E.MaxDistance{0n}, Nil{}, E.Extended{}}) ==
+    E.not_found() : E.AlignResult}
+
+law shw_prefix_threshold_inclusive:
+  {Main.edlib_align("AC", "TAC", E.AlignConfig{E.SHW{}, E.Distance{}, E.MaxDistance{1n}, Nil{}, E.Extended{}}) ==
+    E.distance_result(1n, E.Position{2n}, True{}) : E.AlignResult}
+
+law hw_late_repeated_matches:
+  {Main.edlib_align("AC", "TTACGGAC", E.AlignConfig{E.HW{}, E.Distance{}, E.MaxDistance{0n}, Nil{}, E.Extended{}}) ==
+    E.AlignResult{E.Ok{}, E.Found{0n}, [E.Position{3n}, E.Position{7n}], None{}, None{}, None{}} : E.AlignResult}
+
+law empty_target_threshold_mode:
+  for query: String
+  for mode: E.Mode
+  for task: E.Task
+  for threshold: E.Threshold
+  {Main.edlib_align(query, "", E.AlignConfig{mode, task, threshold, Nil{}, E.Extended{}}) ==
+    E.distance_result(String.length(query), E.BeforeStart{}, True{}) : E.AlignResult}
+
 law threshold_not_found:
   for value: Nat
   for end: E.Coordinate

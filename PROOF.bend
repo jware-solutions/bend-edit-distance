@@ -502,19 +502,19 @@ def Laws.dp_row_width(length, column):
 def Laws.dp_initial_row():
   {==}
 
-def Laws.dp_row_cells_width(columns, previous, diagonal, left, symbol):
+def Laws.dp_row_cells_width(columns, previous, diagonal, left, symbol, pairs):
   match columns previous:
     case SNil{} _:
       {==}
     case SCon{h, t} Nil{}:
       {==}
     case SCon{+h, t} +above <> rest:
-      %Laws.dp_row_cells_width(t, rest, above, DP.cell(above, left, diagonal, symbol, h), symbol) :
+      %Laws.dp_row_cells_width(t, rest, above, DP.cell(above, left, diagonal, symbol, h, pairs), symbol, pairs) :
         {1n+List.length(&1, U32, DP.row_cells(t, rest, above,
-          DP.cell(above, left, diagonal, symbol, h), symbol)) == 1n+_ : Nat}
+          DP.cell(above, left, diagonal, symbol, h, pairs), symbol, pairs)) == 1n+_ : Nat}
       {==}
 
-def Laws.dp_cell(above, left, diagonal, row_symbol, column_symbol):
+def Laws.dp_cell(above, left, diagonal, row_symbol, column_symbol, pairs):
   {==}
 
 def Laws.dp_next_row():
@@ -566,4 +566,37 @@ def Laws.library_default_config():
   {==}
 
 def Laws.library_align_matches_main(query, target, config):
+  {==}
+
+def Laws.equality_without_pairs(a, b):
+  {==}
+
+def Laws.equality_literal_with_pairs():
+  {==}
+
+def Laws.equality_duplicate_reverse_pairs():
+  {==}
+
+def Laws.equality_wildcard_nontransitive():
+  {==}
+
+def Laws.equality_zero_high_byte():
+  {==}
+
+def Laws.configured_wildcard_padding(symbol, pairs):
+  {==}
+
+def Laws.configured_mask_case_insensitive():
+  {==}
+
+def Laws.configured_mask_nontransitive():
+  {==}
+
+def Laws.configured_table_zero_high_byte():
+  {==}
+
+def Laws.configured_dp_case_insensitive():
+  {==}
+
+def Laws.configured_dp_nontransitive():
   {==}

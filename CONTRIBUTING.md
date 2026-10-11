@@ -137,7 +137,7 @@ Blocks use native `U32` words with 32 query positions, adapting Edlib's 64-bit
 words. Immutable byte-indexed query tables are built with balanced parallel
 calls; the two input lengths are also computed in parallel. Blocks within a
 column and consecutive columns remain sequential because their carries depend
-on the preceding calculation. Ordinary NW/DISTANCE uses a block-level Ukkonen
+on the preceding calculation. NW/DISTANCE uses a block-level Ukkonen
 band: finite `k` rejects impossible length differences before profile creation,
 initializes only active blocks, expands by at most one block per column, prunes
 both ends and stops if the band collapses. Conservative block bounds are ported
@@ -154,7 +154,7 @@ attempts; tests verify pruning of both ends, immediate length rejection, early
 band collapse, adaptive retries, every padding size and threshold boundaries
 against independent scalar Bend DP and pinned C++ Edlib, including raw bytes.
 
-Ordinary SHW/HW DISTANCE uses `myers_calc_edit_distance_semiglobal`. Both
+SHW/HW DISTANCE uses `myers_calc_edit_distance_semiglobal`. Both
 initialize query scores to `i`; the first horizontal carry is +1 for SHW and
 zero for HW. A separate band initializes at most `ceil((k+1)/32)` blocks and
 expands by at most one block per target column. It prunes trailing blocks using
@@ -174,24 +174,34 @@ At `k = INT_MAX`, pinned Edlib's semiglobal initialization overflows `k+1`;
 Bend retains inclusive threshold semantics and checks that case against DP.
 
 `DistanceDP.bend` independently exports `distance(query, target) -> Nat` and
-ordinary DISTANCE `align(query, target, config)` for all three modes. It imports
+configured DISTANCE `align(query, target, config)` for all three modes. It imports
 only `Base` and the result types, with no Myers or configured-DP dependency.
 It implements the two-row Levenshtein recurrence:
 
 ```text
 D[0,j] = j; D[i,0] = i
 D[i,j] = min(D[i-1,j] + 1, D[i,j-1] + 1,
-             D[i-1,j-1] + (row[i-1] != column[j-1]))
+             D[i-1,j-1] + !equal(pairs, row[i-1], column[j-1]))
 ```
 
 For NW, the shorter sequence supplies the columns, so both rows have
 `min(m, n) + 1` cells. Directional modes keep target columns and use `n+1`
 cells: SHW keeps `D[0,j]=j`, HW uses `D[0,j]=0`, and both minimize `D[m,j]`
 to free the target suffix. Each row consumes its predecessor; no distance matrix
-or traceback is retained. This takes `O(m*n)` time, with `O(min(m,n))` score
-storage for NW and `O(n)` for SHW/HW. Scores use `U32`, as in Myers. Input
+or traceback is retained. For a fixed pair list this takes `O(m*n)` time,
+with `O(min(m,n))` score storage for NW and `O(n)` for SHW/HW. Matching scans
+the pair list, adding a factor of `p+1` for `p` configured pairs.
+Scores use `U32`, as in Myers. Input
 lengths are computed in parallel;
 cells and rows remain sequential because each depends on its predecessor.
+`EdlibTypes.equal` supplies the same literal-or-symmetric-pair predicate for
+independent DP, configured traceback and Myers profile construction. Pairs
+never form transitive equivalence classes: `N=A` and `N=C` leave `A` and `C`
+unequal. Duplicate, reversed, self and absent-symbol pairs are allowed; byte
+workers preserve all pair values, including NUL and bytes above 127. Profile
+padding remains wildcard regardless of the pairs. `tests/test_equalities.py`
+compares all three distance implementations, checks profiles for all 256 byte
+values and covers thresholds, word boundaries, locations and traceback.
 The scalar CLI continues to use Myers. Tests compile `tests/distance_dp.bend`
 as `build/bend-distance-dp`, which calls DP directly with the same CLI contract.
 
@@ -221,9 +231,11 @@ NW/SHW/HW modes, DISTANCE/LOC/PATH tasks, thresholds and additional equalities.
 The project implements part of Edlib's behavior.
 The following features and checks are still missing from this repository:
 
-- **Configured alignment performance:** locations, paths and custom
-  equalities use a scalar recurrence with two score rows. PATH retains shared
-  operation prefixes and recomputes NW for the first matching interval.
+- **Configured alignment performance:** locations and paths use a scalar
+  recurrence with two score rows. DISTANCE uses Myers even with custom equality
+  pairs; profile construction scans the configured pairs for each symbol match.
+  PATH retains shared operation prefixes and recomputes NW for the first
+  matching interval.
   Thresholds filter the final optimum; they do not prune the DP computation.
   General optimality proofs and acceleration for these scalar paths remain future work.
 - **Large alignment cost:** persistent workers remove text/argv limits, but

@@ -110,7 +110,7 @@ law empty_target:
 # Query-profile padding must match every symbol, including a full empty word.
 law wildcard_padding:
   for symbol: Char
-  {Main.build_peq_word("", symbol, 1) == 4294967295 : U32}
+  {Main.build_peq_word("", symbol, 1, Nil{}) == 4294967295 : U32}
 
 # Structural invariants quantify over all Bend Strings (including Unicode)
 # and unbounded Nat sizes. They make no alphabet or distance claim.
@@ -195,17 +195,17 @@ law small_ascii_equivalence:
 # Ordinary equality is case-sensitive; padding alone is a wildcard. Bit 31
 # remains a real query position when the word is full (no wildcard high bits).
 law mask_case_sensitive:
-  {Main.build_peq_word("aA", 'A', 1) == 4294967294 : U32}
+  {Main.build_peq_word("aA", 'A', 1, Nil{}) == 4294967294 : U32}
 
 law mask_full_word_high_bit:
-  {Main.build_peq_word("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAC", 'C', 1) == 2147483648 : U32}
+  {Main.build_peq_word("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAC", 'C', 1, Nil{}) == 2147483648 : U32}
 
 # The measured table lookup follows low bits first and preserves case/padding.
 law table_lookup_ascii:
-  {Main.peq_get(Main.build_peq_table(8n, "aA", 0, 1), 65, True{}) == 4294967294 : U32}
+  {Main.peq_get(Main.build_peq_table(8n, "aA", 0, 1, Nil{}), 65, True{}) == 4294967294 : U32}
 
 law table_lookup_missing:
-  {Main.peq_get(Main.build_peq_table(8n, "aA", 0, 1), 128, False{}) == 4294967292 : U32}
+  {Main.peq_get(Main.build_peq_table(8n, "aA", 0, 1, Nil{}), 128, False{}) == 4294967292 : U32}
 
 # Reachable first-column states distinguish a negative carry from zero.
 law block_match_carry:
@@ -267,7 +267,8 @@ law dp_row_cells_width:
   for diagonal: U32
   for left: U32
   for +symbol: Char
-  {List.length(&1, U32, DP.row_cells(columns, previous, diagonal, left, symbol)) ==
+  for +pairs: List<&2, E.EqualityPair>
+  {List.length(&1, U32, DP.row_cells(columns, previous, diagonal, left, symbol, pairs)) ==
     Nat.min(String.length(columns), List.length(&1, U32, previous)) : Nat}
 
 law dp_initial_row:
@@ -280,12 +281,13 @@ law dp_cell:
   for diagonal: U32
   for row_symbol: Char
   for column_symbol: Char
-  {DP.cell(above, left, diagonal, row_symbol, column_symbol) ==
+  for pairs: List<&2, E.EqualityPair>
+  {DP.cell(above, left, diagonal, row_symbol, column_symbol, pairs) ==
     U32.min(U32.min(U32.add(above, 1), U32.add(left, 1)),
-      U32.add(diagonal, Bool.to_u32(Bool.not(Char.is_eq(row_symbol, column_symbol))))) : U32}
+      U32.add(diagonal, Bool.to_u32(Bool.not(E.equal(pairs, row_symbol, column_symbol))))) : U32}
 
 law dp_next_row:
-  {DP.next_row([0, 1, 2], "AC", 'A', 1) == [1, 0, 1] : List<U32>}
+  {DP.next_row([0, 1, 2], "AC", 'A', 1, Nil{}) == [1, 0, 1] : List<U32>}
 
 law dp_match:
   {DP.distance("ACGT", "ACGT") == 0n : Nat}
@@ -397,7 +399,7 @@ law threshold_exceeded:
     E.not_found() : E.AlignResult}
 
 law threshold_length_rejection:
-  {Main.search_shorter("A", "AAAA", 1n, 4n, E.MaxDistance{2n}, True{}) ==
+  {Main.search_shorter("A", "AAAA", 1n, 4n, E.MaxDistance{2n}, True{}, Nil{}) ==
     Main.Search{E.NotFound{}, 0n, 0n, 0n} : Main.Search}
 
 law negative_cli_threshold:
@@ -450,10 +452,10 @@ law hw_horizontal_boundary:
   {Main.semiglobal_carry(E.HW{}) == Main.Carry{0, 0} : Main.Carry}
 
 law dp_shw_free_suffix:
-  {DP.semiglobal("AC", "ACT", E.SHW{}) == DP.Best{0, [E.Position{1n}]} : DP.Best}
+  {DP.semiglobal("AC", "ACT", E.SHW{}, Nil{}) == DP.Best{0, [E.Position{1n}]} : DP.Best}
 
 law dp_hw_free_prefix_suffix:
-  {DP.semiglobal("AC", "TACG", E.HW{}) == DP.Best{0, [E.Position{2n}]} : DP.Best}
+  {DP.semiglobal("AC", "TACG", E.HW{}, Nil{}) == DP.Best{0, [E.Position{2n}]} : DP.Best}
 
 law shw_free_suffix:
   {Main.edlib_align("AC", "ACT", E.AlignConfig{E.SHW{}, E.Distance{}, E.MaxDistance{0n}, Nil{}, E.Extended{}}) ==
@@ -501,10 +503,51 @@ law distance_end_location:
     E.AlignResult{E.Ok{}, E.Found{value}, [end], None{}, None{}, None{}} : E.AlignResult}
 
 law equality_pair_reverse:
-  {A.equal([E.EqualityPair{'A', 'N'}], 'N', 'A') == True{} : Bool}
+  {E.equal([E.EqualityPair{'A', 'N'}], 'N', 'A') == True{} : Bool}
 
 law equality_pair_nontransitive:
-  {A.equal([E.EqualityPair{'a', 'A'}, E.EqualityPair{'A', 'N'}], 'a', 'N') == False{} : Bool}
+  {E.equal([E.EqualityPair{'a', 'A'}, E.EqualityPair{'A', 'N'}], 'a', 'N') == False{} : Bool}
+
+law equality_without_pairs:
+  for a: Char
+  for b: Char
+  {E.equal(Nil{}, a, b) == Char.is_eq(a, b) : Bool}
+
+law equality_literal_with_pairs:
+  {E.equal([E.EqualityPair{'N', 'A'}], 'C', 'C') == True{} : Bool}
+
+law equality_duplicate_reverse_pairs:
+  {E.equal([E.EqualityPair{'A', 'a'}, E.EqualityPair{'A', 'a'},
+    E.EqualityPair{'a', 'A'}], 'a', 'A') == True{} : Bool}
+
+law equality_wildcard_nontransitive:
+  {E.equal([E.EqualityPair{'N', 'A'}, E.EqualityPair{'N', 'C'}], 'A', 'C') == False{} : Bool}
+
+law equality_zero_high_byte:
+  {E.equal([E.EqualityPair{Chr{0}, Chr{255}}], Chr{255}, Chr{0}) == True{} : Bool}
+
+law configured_wildcard_padding:
+  for symbol: Char
+  for pairs: List<&2, E.EqualityPair>
+  {Main.build_peq_word("", symbol, 1, pairs) == 4294967295 : U32}
+
+law configured_mask_case_insensitive:
+  {Main.build_peq_word("aA", 'A', 1, [E.EqualityPair{'a', 'A'}]) == 4294967295 : U32}
+
+law configured_mask_nontransitive:
+  {Main.build_peq_word("ACN", 'C', 1,
+    [E.EqualityPair{'N', 'A'}, E.EqualityPair{'N', 'C'}]) == 4294967294 : U32}
+
+law configured_table_zero_high_byte:
+  {Main.peq_get(Main.build_peq_table(8n, SCon{Chr{0}, ""}, 0, 1,
+    [E.EqualityPair{Chr{0}, Chr{255}}]), 255, True{}) == 4294967295 : U32}
+
+law configured_dp_case_insensitive:
+  {DP.distance_with_equalities("aA", "AA", [E.EqualityPair{'a', 'A'}]) == 0n : Nat}
+
+law configured_dp_nontransitive:
+  {DP.distance_with_equalities("A", "C",
+    [E.EqualityPair{'N', 'A'}, E.EqualityPair{'N', 'C'}]) == 1n : Nat}
 
 law standard_cigar_merges_match_mismatch:
   {E.alignment_to_cigar([E.Match{}, E.Mismatch{}, E.Insert{}, E.Delete{}], E.Standard{}) == "2M1I1D" : String}

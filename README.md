@@ -42,7 +42,10 @@ empty-input early return ignores `k` and leaves starts/path/CIGAR absent.
 NW aligns both complete sequences. SHW aligns the complete query to a target
 prefix with a free suffix; HW aligns it to a target substring with both target
 ends free. SHW/HW preserve query/target orientation and report every optimal
-end location. Ordinary DISTANCE uses Myers in all three modes.
+end location. DISTANCE uses Myers in all three modes, including configured
+equality pairs. Pairs match in both directions and preserve literal equality.
+They do not imply transitivity: configuring `N=A` and `N=C` still leaves `A`
+and `C` unequal. Duplicate or reversed pairs have no additional effect.
 The text CLI accepts non-NUL ASCII sequences up to 4,096 characters.
 The [persistent byte workers](TRANSPORT.md) accept NUL and all 256 byte values,
 use explicit sequence lengths, and process many requests in one executable.

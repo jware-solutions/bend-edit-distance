@@ -35,24 +35,27 @@ def split_query(n: Nat, query: String) -> String & String:
     case 1n+p SCon{h, t}:
       split_query.prepend(h, split_query(p, t))
 
-# Bit i matches query[i]. Unused high bits are wildcards, as in buildPeq.
-def build_peq_word(query: String, +symbol: Char, +bit: U32) -> U32:
+# Bit i matches query[i] literally or through an explicit symmetric pair.
+# Unused high bits are wildcards regardless of the pairs, as in buildPeq.
+def build_peq_word(query: String, +symbol: Char, +bit: U32,
+                   +pairs: List<&2, E.EqualityPair>) -> U32:
   match query:
     case SNil{}:
       U32.not(U32.sub(bit, 1))
     case SCon{h, t}:
-      (U32.mul(Bool.to_u32(Char.is_eq(h, symbol)), bit) .|.
-        build_peq_word(t, symbol, U32.shl(bit)) : U32)
+      (U32.mul(Bool.to_u32(E.equal(pairs, h, symbol)), bit) .|.
+        build_peq_word(t, symbol, U32.shl(bit), pairs) : U32)
 
 # A byte-indexed immutable table replaces the C++ transformed alphabet.
 # Low bits select branches, so lookup takes eight steps for every byte.
 # Both halves of the table have equal, independent work and run in parallel.
-def build_peq_table(+depth: Nat, +query: String, +symbol: U32, +step: U32) -> Peq:
+def build_peq_table(+depth: Nat, +query: String, +symbol: U32, +step: U32,
+                    +pairs: List<&2, E.EqualityPair>) -> Peq:
   match depth:
     case 0n:
-      Mask{build_peq_word(query, Chr{symbol}, 1)}
+      Mask{build_peq_word(query, Chr{symbol}, 1, pairs)}
     case 1n+p:
-      low high = build_peq_table(p, query, symbol, U32.shl(step)) build_peq_table(p, query, U32.add(symbol, step), U32.shl(step))
+      low high = build_peq_table(p, query, symbol, U32.shl(step), pairs) build_peq_table(p, query, U32.add(symbol, step), U32.shl(step), pairs)
       Branch{low, high}
 
 def peq_get(table: Peq, +code: U32, bit: Bool) -> U32:
@@ -66,17 +69,18 @@ def peq_get(table: Peq, +code: U32, bit: Bool) -> U32:
       +next = U32.shr(code)
       peq_get(low, next, U32.is_ne(U32.and(next, 1), 0))
 
-def build_peq.step(parts: String & String, tail: String -> List<&2, Peq>) -> List<&2, Peq>:
+def build_peq.step(parts: String & String, pairs: List<&2, E.EqualityPair>,
+                   tail: String -> List<&2, Peq>) -> List<&2, Peq>:
   match parts:
     case (word, rest):
-      build_peq_table(8n, word, 0, 1) <> tail(rest)
+      build_peq_table(8n, word, 0, 1, pairs) <> tail(rest)
 
-def build_peq(fuel: Nat, query: String) -> List<&2, Peq>:
+def build_peq(fuel: Nat, query: String, +pairs: List<&2, E.EqualityPair>) -> List<&2, Peq>:
   match fuel:
     case 0n:
       Nil{}
     case 1n+p:
-      build_peq.step(split_query(32n, query), rest => build_peq(p, rest))
+      build_peq.step(split_query(32n, query), pairs, rest => build_peq(p, rest, pairs))
 
 def ceil_div(+x: Nat, +y: Nat) -> Nat:
   Nat.div(Nat.add(x, Nat.sub(y, 1n)), y)
@@ -426,22 +430,23 @@ def search_profiles(target: String, profiles: List<&2, Peq>, +length: Nat,
         Nat.sub(Nat.mul(ceil_div(length, 32n), 32n), length), 0n, 0n, 0n)
 
 def search_query(+query: String, target: String, +length: Nat, target_length: Nat,
-                 threshold: E.Threshold, rejected: Bool) -> Search:
+                 threshold: E.Threshold, pairs: List<&2, E.EqualityPair>,
+                 rejected: Bool) -> Search:
   match rejected:
     case True{}:
       Search{E.NotFound{}, 0n, 0n, 0n}
     case False{}:
-      search_profiles(target, build_peq(ceil_div(length, 32n), query), length, target_length, threshold)
+      search_profiles(target, build_peq(ceil_div(length, 32n), query, pairs), length, target_length, threshold)
 
 def search_shorter(query: String, target: String, +query_length: Nat,
                    +target_length: Nat, +threshold: E.Threshold,
-                   query_is_shorter: Bool) -> Search:
+                   query_is_shorter: Bool, pairs: List<&2, E.EqualityPair>) -> Search:
   match query_is_shorter:
     case True{}:
-      search_query(query, target, query_length, target_length, threshold,
+      search_query(query, target, query_length, target_length, threshold, pairs,
         Bool.not(E.within_threshold(threshold, Nat.sub(target_length, query_length))))
     case False{}:
-      search_query(target, query, target_length, query_length, threshold,
+      search_query(target, query, target_length, query_length, threshold, pairs,
         Bool.not(E.within_threshold(threshold, Nat.sub(query_length, target_length))))
 
 # Directional modes never swap query and target. The initial vertical scores
@@ -566,16 +571,16 @@ def semiglobal_maximum(threshold: E.Threshold, +length: Nat) -> Nat:
       Nat.min(maximum, length)
 
 def semiglobal_align(+query: String, +target: String, +mode: E.Mode,
-                      +threshold: E.Threshold) -> E.AlignResult:
+                      +threshold: E.Threshold, +pairs: List<&2, E.EqualityPair>) -> E.AlignResult:
   +length = String.length(query)
   +count = ceil_div(length, 32n)
   +maximum = semiglobal_maximum(threshold, length)
   # Preserve pinned Edlib's 64-bit column-zero convention independently of
   # this implementation's 32-bit padding (especially lengths 32 and 96).
   best = semiglobal_initial_best(length, Nat.is_ne(Nat.mod(length, 64n), 0n))
-  A.finish(query, target, E.Distance{}, threshold, Nil{}, E.Extended{},
+  A.finish(query, target, E.Distance{}, threshold, pairs, E.Extended{},
     myers_calc_edit_distance_semiglobal(target,
-      init_semiglobal_band(build_peq(count, query), length, maximum), mode,
+      init_semiglobal_band(build_peq(count, query, pairs), length, maximum), mode,
       Nat.sub(Nat.mul(count, 32n), length), 0n, maximum, best))
 
 def search_distance(search: Search) -> E.EditDistance:
@@ -593,7 +598,7 @@ def found_value(distance: E.EditDistance) -> Nat:
 def align_shorter(query: String, target: String, query_length: Nat,
                   target_length: Nat, query_is_shorter: Bool) -> Nat:
   found_value(search_distance(search_shorter(query, target, query_length,
-    target_length, E.Unlimited{}, query_is_shorter)))
+    target_length, E.Unlimited{}, query_is_shorter, Nil{})))
 
 def distance(query: String, target: String) -> Nat:
   match query target:
@@ -620,12 +625,12 @@ def edlib_align(query: String, target: String, config: E.AlignConfig) -> E.Align
       A.align("", target, config)
     case SCon{h, t} SNil{} _:
       A.align(SCon{h, t}, "", config)
-    case +q +t E.AlignConfig{E.NW{}, E.Distance{}, threshold, Nil{}, _}:
+    case +q +t E.AlignConfig{E.NW{}, E.Distance{}, threshold, pairs, _}:
       +qn +tn = String.length(q) String.length(t)
       threshold_result(search_distance(search_shorter(q, t, qn, tn, threshold,
-        Nat.is_le(qn, tn))), E.end_coordinate(tn))
-    case +q +t E.AlignConfig{mode, E.Distance{}, threshold, Nil{}, _}:
-      semiglobal_align(q, t, mode, threshold)
+        Nat.is_le(qn, tn), pairs)), E.end_coordinate(tn))
+    case +q +t E.AlignConfig{mode, E.Distance{}, threshold, pairs, _}:
+      semiglobal_align(q, t, mode, threshold, pairs)
     case _ _ _:
       A.align(query, target, config)
 

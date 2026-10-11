@@ -53,6 +53,21 @@ type AlignResult is Data:
 def default_config() -> AlignConfig:
   AlignConfig{NW{}, Distance{}, Unlimited{}, Nil{}, Extended{}}
 
+# Literal equality plus explicitly configured symmetric pairs. Scanning the
+# pairs never follows a chain, so shared endpoints do not imply transitivity.
+def pair_matches(pair: EqualityPair, +a: Char, +b: Char) -> Bool:
+  match pair:
+    case EqualityPair{+first, +second}:
+      Bool.or(Bool.and(Char.is_eq(a, first), Char.is_eq(b, second)),
+        Bool.and(Char.is_eq(a, second), Char.is_eq(b, first)))
+
+def equal(pairs: List<&2, EqualityPair>, +a: Char, +b: Char) -> Bool:
+  match pairs:
+    case Nil{}:
+      Char.is_eq(a, b)
+    case pair <> tail:
+      Bool.or(pair_matches(pair, a, b), equal(tail, a, b))
+
 def end_coordinate(length: Nat) -> Coordinate:
   match length:
     case 0n:

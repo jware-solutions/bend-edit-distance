@@ -103,7 +103,7 @@ def prepared(mode: String, inputs: Inputs) -> IO(Unit):
     case Inputs{query, +target, +length, target_length, depth}:
       +count = M.ceil_div(length, 32n)
       do IO<Unit>:
-        profiles : List<&2, M.Peq> <- T.mark(List<&2, M.Peq>, 2, M.build_peq(count, query))
+        profiles : List<&2, M.Peq> <- T.mark(List<&2, M.Peq>, 2, M.build_peq(count, query, Nil{}))
         prepared_run(mode, depth, target, profiles, length, target_length, count)
 
 def compute(mode: String, +inputs: Inputs) -> IO(Unit):

@@ -3,7 +3,7 @@ import ./EdlibTypes.bend as E
 
 # Configured alignment uses the scalar recurrence. Only two score rows are
 # retained; PATH also carries persistent, shared operation prefixes. The
-# ordinary DISTANCE API in main.bend uses Myers for NW, SHW and HW.
+# DISTANCE API in main.bend uses Myers for NW, SHW and HW, including pairs.
 type Cell is Data:
   Cell{score: U32, start: Nat, operations: List<&2, E.Operation>}
 
@@ -12,20 +12,6 @@ type Location is Data:
 
 type Best is Data:
   Best{score: U32, locations: List<&2, Location>}
-
-# Additional pairs are symmetric, with no transitive closure.
-def pair_matches(pair: E.EqualityPair, +a: Char, +b: Char) -> Bool:
-  match pair:
-    case E.EqualityPair{+first, +second}:
-      Bool.or(Bool.and(Char.is_eq(a, first), Char.is_eq(b, second)),
-        Bool.and(Char.is_eq(a, second), Char.is_eq(b, first)))
-
-def equal(pairs: List<&2, E.EqualityPair>, +a: Char, +b: Char) -> Bool:
-  match pairs:
-    case Nil{}:
-      Char.is_eq(a, b)
-    case pair <> tail:
-      Bool.or(pair_matches(pair, a, b), equal(tail, a, b))
 
 def trace_step(operations: List<&2, E.Operation>, operation: E.Operation,
                tracing: Bool) -> List<&2, E.Operation>:
@@ -71,7 +57,7 @@ def row_cells(columns: String, previous: List<&2, Cell>, diagonal: Cell,
     case SCon{h, t} Nil{}:
       Nil{}
     case SCon{h, t} +above <> rest:
-      +next = step(above, left, diagonal, tracing, equal(pairs, symbol, h))
+      +next = step(above, left, diagonal, tracing, E.equal(pairs, symbol, h))
       next <> row_cells(t, rest, above, next, symbol, pairs, tracing)
 
 def next_row(previous: List<&2, Cell>, columns: String, symbol: Char,

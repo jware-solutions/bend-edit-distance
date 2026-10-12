@@ -44,6 +44,11 @@ type Operation is Data:
   Delete{}
   Mismatch{}
 
+# Encoded runs have positive counts and are merged after mapping to the selected
+# alphabet: adjacent Match/Mismatch operations form one Standard M run.
+type CigarRun is Data:
+  CigarRun{count: Nat, symbol: Char}
+
 type AlignResult is Data:
   AlignResult{status: Status, distance: EditDistance,
     end_locations: List<&2, Coordinate>,
@@ -120,30 +125,40 @@ def operation_char(format: CigarFormat, operation: Operation) -> Char:
     case Extended{} Mismatch{}:
       'X'
 
-def cigar_step(rest: Unit -> String, symbol: Char, count: Nat, same: Bool) -> String:
+def cigar_run_step(runs: List<&2, CigarRun>, count: Nat, symbol: Char,
+                   next: Char, same: Bool) -> List<&2, CigarRun>:
   match same:
     case True{}:
-      rest(Unit{})
+      CigarRun{1n+count, symbol} <> runs
     case False{}:
-      Nat.show(count) ++ SCon{symbol, rest(Unit{})}
+      CigarRun{1n, next} <> CigarRun{count, symbol} <> runs
 
-def cigar_runs(operations: List<&2, Operation>, +format: CigarFormat,
-               +symbol: Char, +count: Nat) -> String:
-  match operations:
-    case Nil{}:
-      Nat.show(count) ++ SCon{symbol, ""}
-    case h <> t:
+# The current run depends on the preceding symbol, so this scan is sequential.
+# Tail recursion keeps long homogeneous and alternating paths bounded in stack.
+def alignment_runs_reversed(operations: List<&2, Operation>, +format: CigarFormat,
+                             runs: List<&2, CigarRun>) -> List<&2, CigarRun>:
+  match operations runs:
+    case Nil{} _:
+      runs
+    case h <> t Nil{}:
+      alignment_runs_reversed(t, format, [CigarRun{1n, operation_char(format, h)}])
+    case h <> t CigarRun{count, +symbol} <> tail:
       +next = operation_char(format, h)
-      cigar_step(_ => cigar_runs(t, format, next,
-        Bool.pick(Nat, Char.is_eq(symbol, next), 1n+count, 1n)),
-        symbol, count, Char.is_eq(symbol, next))
+      alignment_runs_reversed(t, format,
+        cigar_run_step(tail, count, symbol, next, Char.is_eq(symbol, next)))
 
-def alignment_to_cigar(operations: List<&2, Operation>, +format: CigarFormat) -> String:
-  match operations:
+def alignment_runs(operations: List<&2, Operation>, format: CigarFormat) -> List<&2, CigarRun>:
+  List.reverse(&2, CigarRun, alignment_runs_reversed(operations, format, Nil{}))
+
+def cigar_runs_show(runs: List<&2, CigarRun>) -> String:
+  match runs:
     case Nil{}:
       ""
-    case h <> t:
-      cigar_runs(t, format, operation_char(format, h), 1n)
+    case CigarRun{count, symbol} <> tail:
+      Nat.show(count) ++ SCon{symbol, cigar_runs_show(tail)}
+
+def alignment_to_cigar(operations: List<&2, Operation>, format: CigarFormat) -> String:
+  cigar_runs_show(alignment_runs(operations, format))
 
 def coordinates_show(locations: List<&2, Coordinate>) -> String:
   List.show(~&2, ~Coordinate, ~coordinate_show, locations)

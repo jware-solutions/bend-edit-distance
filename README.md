@@ -44,6 +44,11 @@ is checked for complete interval consumption, configured equalities and edit
 cost equal to the reported distance. Small alignments use DP traceback; larger
 ones use Hirschberg reconstruction with linear score storage. An optimal path
 can differ from upstream's choice when several paths have the same cost.
+Standard CIGAR uses `M/I/D` and merges adjacent matches and mismatches into
+one `M` run. Extended CIGAR uses `=/X/I/D`, distinguishing matches under the
+configured equalities from mismatches. Runs have positive decimal counts;
+`I` consumes query and `D` consumes target. For example, operations
+`[0,3,0,1,1,2]` become `3M2I1D` or `1=1X1=2I1D`.
 Nonnegative thresholds are inclusive, including `k = 0`. Pinned Edlib's
 empty-input early return ignores `k` and leaves starts/path/CIGAR absent.
 NW aligns both complete sequences. SHW aligns the complete query to a target
@@ -72,6 +77,10 @@ def main() -> Nat:
 ```
 
 Bend resolves and caches the package from the Hub on import. The full configured API is available through `Edlib.align`, with `Edlib.default_config()` for the default NW distance setup.
+
+`Edlib.alignment_to_cigar(operations, format)` formats an existing path without
+running alignment. Use operation and format constructors from `EdlibTypes.bend`;
+an empty operation list produces `""` in either format.
 
 See [examples/library_usage.bend](examples/library_usage.bend) for a local library usage example.
 

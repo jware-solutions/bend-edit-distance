@@ -1,0 +1,427 @@
+{
+  "revision": "0ddc23ea06abd95ab6227442acb4c27bd7607b68",
+  "source": "Captured from pinned edlibAlign and edlibAlignmentToCigar via tests/edlib_oracle.cpp",
+  "contract": "Exact small-DP traceback ties and first-interval selection. General CIGAR semantics are tested separately; these fixtures do not require upstream Hirschberg ties.",
+  "cases": [
+    {
+      "id": "nw-insertion-after-repeated-matches",
+      "mode": "NW",
+      "query": "AAA",
+      "target": "AA",
+      "equalities": [],
+      "cigars": {
+        "STANDARD": "2M1I",
+        "EXTENDED": "2=1I"
+      },
+      "result": {
+        "status": 0,
+        "edit_distance": 1,
+        "end_locations": [
+          1
+        ],
+        "start_locations": [
+          0
+        ],
+        "alignment": [
+          0,
+          0,
+          1
+        ]
+      }
+    },
+    {
+      "id": "nw-deletion-after-repeated-matches",
+      "mode": "NW",
+      "query": "AA",
+      "target": "AAA",
+      "equalities": [],
+      "cigars": {
+        "STANDARD": "2M1D",
+        "EXTENDED": "2=1D"
+      },
+      "result": {
+        "status": 0,
+        "edit_distance": 1,
+        "end_locations": [
+          2
+        ],
+        "start_locations": [
+          0
+        ],
+        "alignment": [
+          0,
+          0,
+          2
+        ]
+      }
+    },
+    {
+      "id": "nw-shift-prefers-gaps-over-mismatches",
+      "mode": "NW",
+      "query": "AC",
+      "target": "CA",
+      "equalities": [],
+      "cigars": {
+        "STANDARD": "1D1M1I",
+        "EXTENDED": "1D1=1I"
+      },
+      "result": {
+        "status": 0,
+        "edit_distance": 2,
+        "end_locations": [
+          1
+        ],
+        "start_locations": [
+          0
+        ],
+        "alignment": [
+          2,
+          0,
+          1
+        ]
+      }
+    },
+    {
+      "id": "nw-internal-gap-tie",
+      "mode": "NW",
+      "query": "ACGT",
+      "target": "AGCT",
+      "equalities": [],
+      "cigars": {
+        "STANDARD": "1M1D1M1I1M",
+        "EXTENDED": "1=1D1=1I1="
+      },
+      "result": {
+        "status": 0,
+        "edit_distance": 2,
+        "end_locations": [
+          3
+        ],
+        "start_locations": [
+          0
+        ],
+        "alignment": [
+          0,
+          2,
+          0,
+          1,
+          0
+        ]
+      }
+    },
+    {
+      "id": "nw-mixed-diagonals",
+      "mode": "NW",
+      "query": "ACGT",
+      "target": "AGGT",
+      "equalities": [],
+      "cigars": {
+        "STANDARD": "4M",
+        "EXTENDED": "1=1X2="
+      },
+      "result": {
+        "status": 0,
+        "edit_distance": 1,
+        "end_locations": [
+          3
+        ],
+        "start_locations": [
+          0
+        ],
+        "alignment": [
+          0,
+          3,
+          0,
+          0
+        ]
+      }
+    },
+    {
+      "id": "nw-32-bit-boundary-insertion",
+      "mode": "NW",
+      "query": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+      "target": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+      "equalities": [],
+      "cigars": {
+        "STANDARD": "32M1I",
+        "EXTENDED": "32=1I"
+      },
+      "result": {
+        "status": 0,
+        "edit_distance": 1,
+        "end_locations": [
+          31
+        ],
+        "start_locations": [
+          0
+        ],
+        "alignment": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          1
+        ]
+      }
+    },
+    {
+      "id": "nw-dp-cutoff-repeated-tie",
+      "mode": "NW",
+      "query": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+      "target": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+      "equalities": [],
+      "cigars": {
+        "STANDARD": "62M1I",
+        "EXTENDED": "62=1I"
+      },
+      "result": {
+        "status": 0,
+        "edit_distance": 1,
+        "end_locations": [
+          61
+        ],
+        "start_locations": [
+          0
+        ],
+        "alignment": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          1
+        ]
+      }
+    },
+    {
+      "id": "shw-first-end-is-before-target",
+      "mode": "SHW",
+      "query": "AA",
+      "target": "CC",
+      "equalities": [],
+      "cigars": {
+        "STANDARD": "2I",
+        "EXTENDED": "2I"
+      },
+      "result": {
+        "status": 0,
+        "edit_distance": 2,
+        "end_locations": [
+          -1,
+          0,
+          1
+        ],
+        "start_locations": [
+          0,
+          0,
+          0
+        ],
+        "alignment": [
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "id": "shw-free-suffix-tie",
+      "mode": "SHW",
+      "query": "AC",
+      "target": "CAAC",
+      "equalities": [],
+      "cigars": {
+        "STANDARD": "1I1M",
+        "EXTENDED": "1I1="
+      },
+      "result": {
+        "status": 0,
+        "edit_distance": 1,
+        "end_locations": [
+          0
+        ],
+        "start_locations": [
+          0
+        ],
+        "alignment": [
+          1,
+          0
+        ]
+      }
+    },
+    {
+      "id": "hw-first-of-repeated-intervals",
+      "mode": "HW",
+      "query": "AA",
+      "target": "CAAA",
+      "equalities": [],
+      "cigars": {
+        "STANDARD": "2M",
+        "EXTENDED": "2="
+      },
+      "result": {
+        "status": 0,
+        "edit_distance": 0,
+        "end_locations": [
+          2,
+          3
+        ],
+        "start_locations": [
+          1,
+          2
+        ],
+        "alignment": [
+          0,
+          0
+        ]
+      }
+    },
+    {
+      "id": "hw-earliest-start-tie",
+      "mode": "HW",
+      "query": "AA",
+      "target": "ACA",
+      "equalities": [],
+      "cigars": {
+        "STANDARD": "1M1I",
+        "EXTENDED": "1=1I"
+      },
+      "result": {
+        "status": 0,
+        "edit_distance": 1,
+        "end_locations": [
+          0,
+          1,
+          2
+        ],
+        "start_locations": [
+          0,
+          0,
+          0
+        ],
+        "alignment": [
+          0,
+          1
+        ]
+      }
+    },
+    {
+      "id": "nw-equality-aware-gap-tie",
+      "mode": "NW",
+      "query": "aNA",
+      "target": "AA",
+      "equalities": [
+        [
+          "a",
+          "A"
+        ],
+        [
+          "N",
+          "A"
+        ]
+      ],
+      "cigars": {
+        "STANDARD": "2M1I",
+        "EXTENDED": "2=1I"
+      },
+      "result": {
+        "status": 0,
+        "edit_distance": 1,
+        "end_locations": [
+          1
+        ],
+        "start_locations": [
+          0
+        ],
+        "alignment": [
+          0,
+          0,
+          1
+        ]
+      }
+    }
+  ]
+}

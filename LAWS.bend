@@ -609,6 +609,39 @@ law standard_cigar_merges_match_mismatch:
 law extended_cigar_operations:
   {E.alignment_to_cigar([E.Match{}, E.Mismatch{}, E.Insert{}, E.Delete{}], E.Extended{}) == "1=1X1I1D" : String}
 
+# CIGAR maps symbols before coalescing, emits positive decimal counts, and
+# preserves an explicitly empty path as an empty string in either format.
+# These rules cover encoding; they impose no optimal-path tie policy.
+law cigar_empty:
+  for format: E.CigarFormat
+  {E.alignment_to_cigar(Nil{}, format) == "" : String}
+
+law cigar_standard_runs:
+  {E.alignment_runs([E.Match{}, E.Mismatch{}, E.Match{}, E.Insert{}, E.Insert{},
+    E.Delete{}, E.Delete{}, E.Mismatch{}], E.Standard{}) ==
+    [E.CigarRun{3n, 'M'}, E.CigarRun{2n, 'I'}, E.CigarRun{2n, 'D'}, E.CigarRun{1n, 'M'}] : List<&2, E.CigarRun>}
+
+law cigar_extended_runs:
+  {E.alignment_runs([E.Match{}, E.Match{}, E.Mismatch{}, E.Mismatch{},
+    E.Insert{}, E.Insert{}, E.Delete{}, E.Delete{}], E.Extended{}) ==
+    [E.CigarRun{2n, '='}, E.CigarRun{2n, 'X'}, E.CigarRun{2n, 'I'}, E.CigarRun{2n, 'D'}] : List<&2, E.CigarRun>}
+
+law cigar_decimal_counts:
+  {E.cigar_runs_show([E.CigarRun{10n, '='}, E.CigarRun{123n, 'I'}]) == "10=123I" : String}
+
+law cigar_equality_matches:
+  {E.alignment_to_cigar(R.dp("aN", "AA", [E.EqualityPair{'a', 'A'},
+    E.EqualityPair{'N', 'A'}]), E.Extended{}) == "2=" : String}
+
+law cigar_nontransitive_mismatch:
+  {E.alignment_to_cigar(R.dp("A", "C", [E.EqualityPair{'N', 'A'},
+    E.EqualityPair{'N', 'C'}]), E.Extended{}) == "1X" : String}
+
+law library_alignment_to_cigar:
+  for operations: List<&2, E.Operation>
+  for format: E.CigarFormat
+  {L.alignment_to_cigar(operations, format) == E.alignment_to_cigar(operations, format) : String}
+
 # Reconstruction laws specify operation direction and validation explicitly.
 # These finite examples and boundary rules do not prove general optimality or
 # exact upstream tie selection. Hirschberg chooses the first minimum split.

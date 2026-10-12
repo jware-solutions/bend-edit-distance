@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from itertools import groupby
 from pathlib import Path
 import re
 import subprocess
@@ -16,6 +15,51 @@ BEND_BINARY = ROOT / "build" / "bend-edit-distance"
 DP_BINARY = ROOT / "build" / "bend-distance-dp"
 CPP_BINARY = ROOT / "build" / "edlib-oracle"
 MAX_SEQUENCE_LENGTH = 4096
+
+
+def decode_cigar(cigar, format):
+    """Decode positive, maximal runs in exactly the selected CIGAR alphabet."""
+    assert isinstance(cigar, str)
+    alphabet = "MID" if format == CigarFormat.STANDARD else "=XID"
+    assert re.fullmatch(rf"(?:[1-9][0-9]*[{alphabet}])*", cigar) is not None, cigar
+    runs = tuple((int(count), symbol) for count, symbol in re.findall(r"([0-9]+)(.)", cigar))
+    assert all(a[1] != b[1] for a, b in zip(runs, runs[1:])), runs
+    return runs
+
+
+def assert_valid_cigar(query, segment, config, cigar, distance):
+    """Recover operations and cost from CIGAR and input bytes, without a path."""
+    query, segment = sequence_bytes(query), sequence_bytes(segment)
+    pairs = {tuple(pair.to_bytes()) for pair in config.equalities}
+    pairs |= {(b, a) for a, b in pairs}
+    q = t = cost = 0
+    operations = []
+    for count, symbol in decode_cigar(cigar, config.cigar_format):
+        if symbol == "I":
+            assert q + count <= len(query), (q, t, cigar)
+            q += count
+            cost += count
+            operations.extend([Operation.INSERT] * count)
+        elif symbol == "D":
+            assert t + count <= len(segment), (q, t, cigar)
+            t += count
+            cost += count
+            operations.extend([Operation.DELETE] * count)
+        else:
+            assert q + count <= len(query) and t + count <= len(segment)
+            for a, b in zip(query[q:q + count], segment[t:t + count]):
+                matches = a == b or (a, b) in pairs
+                if symbol == "=":
+                    assert matches, (q, t, a, b, cigar)
+                elif symbol == "X":
+                    assert not matches, (q, t, a, b, cigar)
+                operations.append(Operation.MATCH if matches else Operation.MISMATCH)
+                cost += not matches
+            q += count
+            t += count
+        assert q <= len(query) and t <= len(segment), (q, t, cigar)
+    assert (q, t, cost) == (len(query), len(segment), distance)
+    return tuple(operations)
 
 
 def assert_valid_path(query, target, config, result):
@@ -51,15 +95,8 @@ def assert_valid_path(query, target, config, result):
             raise AssertionError(f"Unknown operation: {operation!r}")
         cost += operation != Operation.MATCH
     assert (q, t, cost) == (len(query), len(segment), result.require_distance())
-    symbols = {
-        Operation.MATCH: "M" if config.cigar_format == CigarFormat.STANDARD else "=",
-        Operation.MISMATCH: "M" if config.cigar_format == CigarFormat.STANDARD else "X",
-        Operation.INSERT: "I", Operation.DELETE: "D",
-    }
-    assert result.cigar == "".join(
-        f"{sum(1 for _ in run)}{symbol}"
-        for symbol, run in groupby(symbols[op] for op in result.alignment)
-    )
+    assert assert_valid_cigar(query, segment, config, result.cigar,
+                              result.require_distance()) == result.alignment
 
 
 def execute(

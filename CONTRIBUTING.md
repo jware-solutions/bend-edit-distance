@@ -58,6 +58,8 @@ simple NW distance API, `default_config` and `align` for structured alignment
 results. Run `bend examples/library_usage.bend` to try the API from a separate
 Bend file using a local checkout. Consumers do not need the Python test setup;
 after publication, Bend resolves the package directly from the Hub import.
+`alignment_to_cigar(operations, format)` also converts an existing operation
+list directly, returning an empty string for an empty list.
 
 ### Publishing
 
@@ -392,6 +394,29 @@ leaves starts/alignment/CIGAR null; LOC leaves alignment/CIGAR null.
 Operation codes are 0 match, 1 insertion into target
 (consumes query), 2 deletion from target (consumes target), 3 mismatch. Standard
 CIGAR merges matches/mismatches as `M`; extended CIGAR uses `=`/`X`.
+`EdlibTypes.alignment_runs` returns ordered `CigarRun{count, symbol}` values;
+mapping to the selected alphabet happens before adjacent symbols are merged.
+Counts are positive and emitted as decimal integers, including `1`.
+`lib.alignment_to_cigar` exposes string conversion for arbitrary operation
+lists. Both conversion and run storage are linear in path length, plus the
+decimal output length. The run scan remains sequential because its current
+count depends on the preceding symbol. Equality-aware `Match` operations
+remain `=` even when their input bytes differ; the formatter trusts the
+supplied operation list, while alignment validates it before formatting.
+Standard `M` alone does not specify substitution cost: decoding requires the
+aligned bytes and configured equality pairs. Empty operation lists encode as
+`""`, distinct from an absent CIGAR on unrequested, rejected or upstream
+empty-input results.
+
+```bend
+import Base
+import ./lib.bend as Edlib
+import ./EdlibTypes.bend as E
+
+def main() -> String:
+  Edlib.alignment_to_cigar([E.Match{}, E.Mismatch{}, E.Match{}, E.Insert{},
+    E.Insert{}, E.Delete{}], E.Standard{})  # "3M2I1D"
+```
 
 Threshold accepts Edlib's signed 32-bit range; every negative value means
 unlimited and every nonnegative value is an inclusive maximum. `k=0` accepts
@@ -459,6 +484,15 @@ equalities, parallel start searches and many ordered optimal locations.
 `tests/test_reconstruction.py` independently exercises full DP, forced
 Hirschberg splits and public dispatch, including transposition, first-interval
 selection, large byte inputs, both CIGAR formats and explicit differing ties.
+`tests/test_cigar.py` tests arbitrary operation lists, empty paths, consecutive
+and alternating runs, multi-digit counts, equality-aware diagonals and both
+alphabets. The shared path checker independently decodes CIGAR, verifying full
+query/selected-target consumption, recovered operations and edit cost under
+the configured equality predicate. `tests/test_cigar_fixtures.py` separately
+replays exact paths and both CIGAR strings from
+`tests/regressions/upstream_cigar.json` against Bend and the pinned oracle.
+Those fixtures specify selected small-DP ties and first-interval selection;
+general semantic tests permit other optimal paths under Hirschberg.
 
 ## Test alignment
 

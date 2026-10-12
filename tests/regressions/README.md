@@ -41,5 +41,16 @@ and task: distances may exceed the requested maximum, and LOC/PATH leave
 starts, alignment and CIGAR absent. `test_thresholds.py` replays them against
 both implementations across tasks and finite/unlimited thresholds.
 
+`upstream_cigar.json` freezes results captured from the pinned C++ oracle's
+`edlibAlign` and `edlibAlignmentToCigar` calls. Each case records the complete
+path result plus standard and extended strings. These selected small-DP
+fixtures require exact upstream traceback ties, including repeated-symbol
+insertions/deletions, shift ties, equality-aware matches, word boundaries and
+SHW/HW first-interval selection. `test_cigar_fixtures.py` replays them against
+both implementations independently of `test_cigar.py`'s encoding and decoded
+consumption/cost properties. Exact upstream Hirschberg tie compatibility is
+outside this fixture contract. Empty-input absence is recorded separately in
+`upstream_empty.json`; an explicitly empty operation list encodes as `""`.
+
 The upstream cases are derived from Edlib, Copyright (c) 2014 Martin Šošić,
 under the [MIT license](../../vendor/edlib/LICENSE), retained with the vendored source.

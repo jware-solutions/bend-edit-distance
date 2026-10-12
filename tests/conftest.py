@@ -106,6 +106,14 @@ def reconstruction_probe(bend_tool):
 
 
 @pytest.fixture(scope="session")
+def cigar_probe(bend_tool):
+    binary = ROOT / "build" / "cigar-probe"
+    binary.parent.mkdir(parents=True, exist_ok=True)
+    execute([bend_tool, ROOT / "tests" / "cigar_probe.bend", "-o", binary], timeout=180)
+    return binary
+
+
+@pytest.fixture(scope="session")
 def cpp_binary():
     if os.name == "nt":
         pytest.fail("Native tests must run in WSL. Use: python run_tests.py", pytrace=False)

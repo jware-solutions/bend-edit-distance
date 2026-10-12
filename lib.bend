@@ -11,3 +11,7 @@ def default_config() -> Types.AlignConfig:
 
 def align(query: String, target: String, config: Types.AlignConfig) -> Types.AlignResult:
   Main.edlib_align(query, target, config)
+
+# Format any path, including an explicitly empty path, independently of align.
+def alignment_to_cigar(operations: List<&2, Types.Operation>, format: Types.CigarFormat) -> String:
+  Types.alignment_to_cigar(operations, format)

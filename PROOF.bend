@@ -297,6 +297,27 @@ def Laws.standard_cigar_merges_match_mismatch():
 def Laws.extended_cigar_operations():
   {==}
 
+def Laws.cigar_empty(format):
+  {==}
+
+def Laws.cigar_standard_runs():
+  {==}
+
+def Laws.cigar_extended_runs():
+  {==}
+
+def Laws.cigar_decimal_counts():
+  {==}
+
+def Laws.cigar_equality_matches():
+  {==}
+
+def Laws.cigar_nontransitive_mismatch():
+  {==}
+
+def Laws.library_alignment_to_cigar(operations, format):
+  {==}
+
 def Laws.small_ascii_equivalence(query, target):
   match query target:
     case Laws.EmptyAscii{} Laws.EmptyAscii{}:

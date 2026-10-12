@@ -26,6 +26,10 @@ type AlignConfig is Data:
   AlignConfig{mode: Mode, task: Task, threshold: Threshold,
     equalities: List<&2, EqualityPair>, cigar_format: CigarFormat}
 
+# Each independent batch job keeps its own configuration and orientation.
+type AlignJob is Data:
+  AlignJob{query: String, target: String, config: AlignConfig}
+
 type Status is Data:
   Ok{}
   Error{}

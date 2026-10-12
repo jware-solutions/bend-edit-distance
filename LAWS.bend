@@ -8,6 +8,37 @@ import ./lib.bend as L
 import ./ByteProtocol.bend as BT
 import ./AlignmentCli.bend as AC
 import ./Reconstruction.bend as R
+import ./Batch.bend as B
+
+# CPU batches contain independent byte-alignment jobs with separate configs.
+# Planning sorts estimated work and assigns large jobs to the lighter child,
+# with child counts bounded by ceil(n/2). The complete plan precedes execution;
+# no carries within a column or successive target columns are parallelized.
+# Results restore original input indices: one result per job, including empty,
+# rejected and duplicate jobs. Thread counts affect scheduling, not values.
+# Estimates ignore similarity/bands and use worst-case HW ends; they are not
+# speedup guarantees. Native mixed-job tests compare EVERY field to singles.
+law batch_empty:
+  {L.align_batch(Nil{}) == Nil{} : List<&2, E.AlignResult>}
+
+law batch_singleton:
+  for query: String
+  for target: String
+  for config: E.AlignConfig
+  {L.align_batch([E.AlignJob{query, target, config}]) ==
+    [L.align(query, target, config)] : List<&2, E.AlignResult>}
+
+# A bounded permutation checks complete-result restoration independently of
+# floating-point scheduling weights (native F32 arithmetic is not normalized
+# by the proof checker). Mixed native batches exercise planning and execution.
+law batch_restores_indices:
+  {B.results(List.sort(~B.IndexedResult, ~B.earlier, [
+    B.IndexedResult{2n, L.align("", "", E.default_config())},
+    B.IndexedResult{0n, L.align("A", "", E.default_config())},
+    B.IndexedResult{1n, L.align("ACGT", "TGCA", E.default_config())}])) ==
+    [L.align("A", "", E.default_config()),
+     L.align("ACGT", "TGCA", E.default_config()),
+     L.align("", "", E.default_config())] : List<&2, E.AlignResult>}
 
 # Byte transport maps each input byte to one Char with the same numeric value;
 # it never decodes UTF-8, stops at NUL, or applies the ASCII CLI size limit.

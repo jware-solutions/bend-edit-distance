@@ -175,7 +175,8 @@ def summarize(samples):
 def environment(version, cxx, builds, args):
     git = git_command()
     status = command([*git, "status", "--porcelain", "--untracked-files=normal"])
-    sources = ["main.bend", "Cli.bend", ".bend-version", "run_benchmarks.py",
+    sources = ["main.bend", "lib.bend", "Batch.bend", "EdlibTypes.bend", "Alignment.bend",
+               "Reconstruction.bend", "Cli.bend", ".bend-version", "run_benchmarks.py",
                "benchmarks/bend.bend", "benchmarks/timer.bend", "benchmarks/timer.c",
                "benchmarks/edlib.cpp", "benchmarks/launch.c", "benchmarks/runner.py", "benchmarks/generate.py",
                "vendor/edlib/edlib/src/edlib.cpp", "vendor/edlib/edlib/include/edlib.h"]
@@ -227,7 +228,8 @@ def write_report(output, document):
     lines = ["# Native performance observation", "",
              f"Corpus SHA-256: `{document['corpus_sha256']}`. "
              f"{document['repeats']} measured runs after {document['warmups']} discarded warmups per workload.", "",
-             "Wall times use median samples; full includes profile construction per pair, prepared reuses one profile. "
+             "Wall times use median samples; Bend full uses the public align_batch API, including planning and ordering; "
+             "full includes profile construction per pair, prepared reuses one profile. "
              "Edlib is single threaded. All distances/checksums were validated. Peak RSS covers the entire child process. "
              "E2E includes the native RSS launcher; launcher/native startup times are recorded separately.", "",
              "| Case | Workload | Bend threads | Bend work ms | Edlib work ms | Bend / Edlib | Bend E2E ms | Edlib E2E ms | Bend RSS KiB | Edlib RSS KiB |",

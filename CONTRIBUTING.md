@@ -55,8 +55,9 @@ diagnostics. Build products and the Python environment stay under ignored
 
 `lib.bend` is the public package entry point. It exports `distance` for the
 simple NW distance API, `default_config` and `align` for structured alignment
-results. Run `bend examples/library_usage.bend` to try the API from a separate
-Bend file using a local checkout. Consumers do not need the Python test setup;
+results, and `align_batch` for independent CPU jobs. Run
+`bend examples/library_usage.bend` to try the API from a separate Bend file
+using a local checkout. Consumers do not need the Python test setup;
 after publication, Bend resolves the package directly from the Hub import.
 `alignment_to_cigar(operations, format)` also converts an existing operation
 list directly, returning an empty string for an empty list.
@@ -306,10 +307,10 @@ The following features and checks are still missing from this repository:
   one-core latency, homogeneous batch throughput and whole-process peak RSS
   against C++ Edlib. Measurements are host/workload observations, not a general
   speedup claim. Ordinary NW/DISTANCE uses threshold bands,
-  early rejection and adaptive retries. Parallelism currently covers
-  preprocessing for one pair; balanced benchmark batches are benchmark-only.
-  There is no production CPU batch API, GPU entry point or
-  genuine-device test. Tests with multiple CPU threads check correctness only.
+  early rejection and adaptive retries. `lib.align_batch` runs independent
+  CPU jobs in a tree grouped by estimated work, in addition to parallel
+  preprocessing and HW start searches within a pair. There is no GPU entry
+  point or genuine-device test. Tests with multiple CPU threads check correctness only.
 - **Library and release readiness:** `lib.bend` provides a stable Bend import
   surface for the current distance and configured-alignment APIs. Its first
   BendHub name/version is prepared in the documentation but has not been
@@ -458,6 +459,66 @@ DISTANCE results. The legacy Bend/independent DP CLIs continue printing a scalar
 Worker inputs are bytes; ASCII strings remain a convenience conversion. Encode
 other text explicitly. Worker lengths are limited by the signed frame length
 range and practical memory/work costs, rather than argv or the CLI size cap.
+
+### Independent CPU alignment batches
+
+`lib.align_batch(jobs: List<&2, EdlibTypes.AlignJob>)` returns
+`List<&2, EdlibTypes.AlignResult>`, with one complete result per job in input
+order. Each `AlignJob{query, target, config}` owns its configuration and keeps
+the same query/target orientation and result semantics as `lib.align`, including
+empty-input shortcuts, threshold rejection, equalities and PATH ties. Empty
+batches return an empty list; duplicates produce separate result entries.
+The pure API accepts the same byte-valued Bend strings as single-pair alignment.
+Existing persistent byte workers continue processing requests one at a time;
+the batch API is a Bend library API, without a new wire protocol.
+
+```bend
+import Base
+import ./lib.bend as Edlib
+import ./EdlibTypes.bend as E
+
+def main() -> IO(Unit):
+  results = Edlib.align_batch([
+    E.AlignJob{"kitten", "sitting", Edlib.default_config()},
+    E.AlignJob{"AC", "TACGAC", E.AlignConfig{E.HW{}, E.Path{},
+      E.Unlimited{}, Nil{}, E.Extended{}}}])
+  IO.print(List.show(~&2, ~E.AlignResult, ~E.result_show, results))
+```
+
+Compile [examples/batch_usage.bend](examples/batch_usage.bend) in WSL and run
+the executable with `--threads 1`, `--threads 2` or `--threads 4`.
+`Batch.bend` indexes jobs, stably sorts largest estimated work first, and
+greedily places each job in the lighter of two branches. Each branch has a
+capacity of floor/ceil half the job count, so the tree has logarithmic depth
+even for equal costs or one dominant job. Empty and singleton batches bypass
+planning. Each child retains descending work
+order for its next partition. The entire plan is prepared before execution;
+only ready child plans enter Bend's parallel calls. Every leaf invokes the
+existing single-pair implementation. Results are sorted by their original
+indices after execution. Column carries and successive target columns remain
+dependent and sequential.
+
+The estimate includes input scans, 256-symbol profile work multiplied by the
+equality-pair count, full Myers block/column work, worst-case HW start searches
+and PATH DP cells. NW uses the shorter query axis; SHW/HW retain orientation.
+Positive `F32` weights avoid overflowing a 32-bit area product or allocating
+quadratic unary `Nat` estimates. These are scheduling heuristics: threshold
+bands, retries, similarity and selected intervals affect actual cost. A single
+large alignment can still dominate a batch. Planning and result ordering use
+`O(J log J)` list operations/comparisons for `J` jobs (plus input scans and
+numeric operations), with `O(J)` plan nodes plus inputs, results and
+the live storage of concurrent alignments. All results remain live until the
+batch returns; choose batch sizes appropriate to PATH output and memory costs.
+
+`tests/test_batches.py` compares every full result with independent single-pair
+execution across 1, 2 and 4 CPU threads, repeats mixed-size/configuration jobs,
+checks shuffled/duplicate ordering, and cross-checks distance/locations and
+path validity against Edlib. A test-only probe imports the public API and reads
+ordinary byte frames into a finite job list. Planner tests verify count bounds,
+job conservation and distribution of clustered heavy jobs. `LAWS.bend` states
+empty/singleton contracts and a bounded result-index permutation; these are proved
+in `PROOF.bend`. General batch permutation and scheduler scaling proofs remain
+outside that proof coverage.
 See [TRANSPORT.md](TRANSPORT.md) for field layouts, error recovery, explicit
 worker ownership, byte equality pairs and lifecycle behavior.
 
@@ -657,15 +718,18 @@ and binary hashes, Git commit/dirty status, compiler commands and build duration
 No test or benchmark claims a speedup from correctness on multiple threads.
 
 Workloads measure the same pair repeatedly within one native process. These are
-**homogeneous batches**, not a persistent worker protocol or a mixed-query batch
-API. Batch sizes are powers of two, 2 through 512. Bend splits independent
-alignments into a balanced fork/join tree; columns/carries stay sequential. Edlib
+**homogeneous benchmark batches**; correctness tests separately exercise mixed
+jobs through the public batch API. Benchmark sizes are powers of two, 2 through
+512; the library accepts arbitrary job counts. Bend's `full` workload invokes
+`lib.align_batch`, including job construction, work estimation, planning,
+alignment, complete results and restoration of input order. Prepared/lookup/scan
+retain their benchmark-only repeated-pair trees. Columns/carries stay sequential. Edlib
 runs the same number of independent alignments in a sequential loop.
 
 | Workload | Timed work | Profile treatment |
 | --- | --- | --- |
-| `full`, batch size 1 | One-core native alignment latency, or the requested thread count | Each production `distance`/public `edlibAlign` call constructs/frees its own profile |
-| `full`, batch size B | Full alignment throughput, B / work wall seconds | Constructs a new profile per pair, as production does |
+| `full`, batch size 1 | Public singleton batch latency, or the requested thread count | Bend `align_batch` / Edlib `edlibAlign` constructs/frees a profile and packages a result |
+| `full`, batch size B | Public batch throughput, B / work wall seconds, including Bend planning/ordering | Constructs a new profile and complete result per pair |
 | `prepared`, sizes 1 and B | Active-block initialization, banded columns, adaptive retries, decoding and runtime/refcount work | Builds one profile before timing work and retains it until the separate release phase |
 | Bend `lookup`, size B | All target-symbol/block `peq_get` calls, with consumed mask checksums | Uses the unchanged 256-symbol trees, prepared before timing |
 | Bend `scan`, size B | The matching target/block traversal with the tree lookup omitted | A control workload; no alignment distance is computed |
@@ -689,9 +753,9 @@ remain unchanged. The measurements distinguish:
 | --- | --- |
 | Launcher and native startup | Parent launch to small RSS launcher; native fork/exec to first entry-point effect, respectively; their sum is startup |
 | Transport | `IO.args()` / materialization of argv strings after entry-point readiness; kernel argv copying is in startup |
-| Preparation | Mode/count parsing, validation, orientation/lengths; Edlib prepared mode also transforms its alphabet |
+| Preparation | Mode/count parsing, validation, lengths and prepared Bend orientation; Edlib prepared mode also transforms its alphabet |
 | Profile construction | Direct Bend `build_peq` (256 symbols per 32-character word), or Edlib `buildPeq`; reported separately in prepared/lookup/scan modes |
-| Work / release | Workload above, then persistent-profile release; `full` includes per-call profile construction and freeing within work |
+| Work / release | Workload above, then persistent-profile release; Bend `full` also includes job construction/planning/ordering and result consumption; `full` includes per-call profile construction and freeing within work |
 | Native wall / end-to-end wall | Native fork to reaped worker; parent launch to reaped RSS launcher, respectively; E2E includes startup, transport, phases, output and teardown |
 | CPU time / peak RSS | Worker user + system CPU time; worker's lifetime maximum resident set in KiB, including runtime and profiles, from native `wait4` |
 | Latency / throughput | Work time / batch size in microseconds; B / work seconds and B / E2E seconds for full/prepared alignments |

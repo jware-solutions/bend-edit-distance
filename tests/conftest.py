@@ -83,6 +83,14 @@ def bend_binary(bend_tool):
 
 
 @pytest.fixture(scope="session")
+def batch_probe(bend_tool):
+    binary = ROOT / "build" / "batch-probe"
+    binary.parent.mkdir(parents=True, exist_ok=True)
+    execute([bend_tool, ROOT / "tests" / "batch_probe.bend", "-o", binary], timeout=180)
+    return binary
+
+
+@pytest.fixture(scope="session")
 def dp_binary(bend_tool):
     DP_BINARY.parent.mkdir(parents=True, exist_ok=True)
     execute([bend_tool, ROOT / "tests" / "distance_dp.bend", "-o", DP_BINARY], timeout=180)

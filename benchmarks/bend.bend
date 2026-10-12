@@ -2,6 +2,7 @@ import Base
 import ../main.bend as M
 import ../Cli.bend as CLI
 import ../EdlibTypes.bend as E
+import ../lib.bend as L
 import ./timer.bend as T
 
 type Inputs is Data:
@@ -14,25 +15,37 @@ def orient(q: String, t: String, qn: Nat, tn: Nat, shorter: Bool, depth: Nat) ->
     case False{}:
       Inputs{t, q, tn, qn, depth}
 
-def prepare(q: String, t: String, depth: Nat, status: CLI.InputStatus) -> IO(Inputs):
+def prepare_inputs(mode: String, q: String, t: String, +qn: Nat, +tn: Nat,
+                   depth: Nat) -> Inputs:
+  match mode:
+    case "full":
+      Inputs{q, t, qn, tn, depth}
+    case _:
+      orient(q, t, qn, tn, Nat.is_le(qn, tn), depth)
+
+def prepare(mode: String, q: String, t: String, depth: Nat,
+            status: CLI.InputStatus) -> IO(Inputs):
   match status:
     case CLI.Supported{}:
       +query = q
       +target = t
       +qn +tn = String.length(query) String.length(target)
-      IO.pure(Inputs, orient(query, target, qn, tn, Nat.is_le(qn, tn), depth))
+      IO.pure(Inputs, prepare_inputs(mode, query, target, qn, tn, depth))
     case _:
       IO.die(Inputs, 2, "Unsupported benchmark input")
 
-# Balanced independent copies of the SAME pair, a homogeneous CPU batch.
-# Each full alignment constructs its own query profile, as production does.
-def full(+depth: Nat, +query: String, +target: String) -> Nat:
-  match depth:
-    case 0n:
-      M.distance(query, target)
-    case 1n+p:
-      left right = full(p, query, target) full(p, query, target)
-      Nat.add(left, right)
+def checksum(results: List<&2, E.AlignResult>) -> Nat:
+  match results:
+    case Nil{}:
+      0n
+    case E.AlignResult{_, distance, _, _, _, _} <> tail:
+      Nat.add(M.found_value(distance), checksum(tail))
+
+# Homogeneous inputs exercise the public CPU batch API. Work includes job-list
+# construction, estimation, planning, per-job alignment and result ordering.
+def full(depth: Nat, query: String, target: String) -> Nat:
+  checksum(L.align_batch(List.replicate(E.AlignJob, Nat.pow(2n, depth),
+    E.AlignJob{query, target, E.default_config()})))
 
 def aligned(+depth: Nat, +target: String, +profiles: List<&2, M.Peq>,
             +length: Nat, +target_length: Nat, +count: Nat) -> Nat:
@@ -115,11 +128,11 @@ def compute(mode: String, +inputs: Inputs) -> IO(Unit):
     case _ _:
       prepared(mode, inputs)
 
-def parsed_bound(mode: String, +query: String, +target: String, depth: Nat, bounded: Bool) -> IO(Unit):
+def parsed_bound(+mode: String, +query: String, +target: String, depth: Nat, bounded: Bool) -> IO(Unit):
   match bounded:
     case True{}:
       do IO<Unit>:
-        checked : Inputs <- prepare(query, target, depth, CLI.validate(query, target))
+        checked : Inputs <- prepare(mode, query, target, depth, CLI.validate(query, target))
         inputs : Inputs <- T.mark(Inputs, 1, checked)
         compute(mode, inputs)
     case False{}:

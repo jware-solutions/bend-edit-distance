@@ -4,6 +4,15 @@ import ./DistanceDP.bend as DP
 import ./main.bend as Main
 import ./EdlibTypes.bend as E
 
+def Laws.batch_empty():
+  {==}
+
+def Laws.batch_singleton(query, target, config):
+  {==}
+
+def Laws.batch_restores_indices():
+  {==}
+
 def Laws.path_operation_codes():
   {==}
 

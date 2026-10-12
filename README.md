@@ -82,6 +82,13 @@ Bend resolves and caches the package from the Hub on import. The full configured
 running alignment. Use operation and format constructors from `EdlibTypes.bend`;
 an empty operation list produces `""` in either format.
 
+`Edlib.align_batch(jobs)` executes independent `EdlibTypes.AlignJob{query,
+target, config}` values on CPU in a tree grouped by estimated work. It returns
+one complete result per job in input order, including for mixed sizes and
+configurations. Compile [examples/batch_usage.bend](examples/batch_usage.bend)
+and run with `--threads 1`, `2` or `4`. See the
+[batch API details](CONTRIBUTING.md#independent-cpu-alignment-batches).
+
 See [examples/library_usage.bend](examples/library_usage.bend) for a local library usage example.
 
 ## Contributing and development

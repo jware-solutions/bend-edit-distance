@@ -7,6 +7,7 @@ import ./Alignment.bend as A
 import ./lib.bend as L
 import ./ByteProtocol.bend as BT
 import ./AlignmentCli.bend as AC
+import ./Reconstruction.bend as R
 
 # Byte transport maps each input byte to one Char with the same numeric value;
 # it never decodes UTF-8, stops at NUL, or applies the ASCII CLI size limit.
@@ -608,6 +609,83 @@ law standard_cigar_merges_match_mismatch:
 law extended_cigar_operations:
   {E.alignment_to_cigar([E.Match{}, E.Mismatch{}, E.Insert{}, E.Delete{}], E.Extended{}) == "1=1X1I1D" : String}
 
+# Reconstruction laws specify operation direction and validation explicitly.
+# These finite examples and boundary rules do not prove general optimality or
+# exact upstream tie selection. Hirschberg chooses the first minimum split.
+law path_operation_codes:
+  {[BT.operation_value(E.Match{}), BT.operation_value(E.Insert{}),
+    BT.operation_value(E.Delete{}), BT.operation_value(E.Mismatch{})] == [0, 1, 2, 3] : List<U32>}
+
+law path_transpose_operations:
+  {R.transpose([E.Match{}, E.Insert{}, E.Delete{}, E.Mismatch{}]) ==
+    [E.Match{}, E.Delete{}, E.Insert{}, E.Mismatch{}] : List<&2, E.Operation>}
+
+law path_dp_cutoff:
+  {(R.small_matrix(63n, 63n), R.small_matrix(64n, 64n)) ==
+    (True{}, False{}) : Bool & Bool}
+
+law path_dp_empty_query:
+  {R.dp("", "AC", Nil{}) == [E.Delete{}, E.Delete{}] : List<&2, E.Operation>}
+
+law path_dp_empty_target:
+  {R.dp("AC", "", Nil{}) == [E.Insert{}, E.Insert{}] : List<&2, E.Operation>}
+
+law path_dp_insert_direction:
+  {R.dp("AC", "A", Nil{}) == [E.Match{}, E.Insert{}] : List<&2, E.Operation>}
+
+law path_dp_delete_direction:
+  {R.dp("A", "AC", Nil{}) == [E.Match{}, E.Delete{}] : List<&2, E.Operation>}
+
+law path_dp_diagonals:
+  {R.dp("AC", "AG", Nil{}) == [E.Match{}, E.Mismatch{}] : List<&2, E.Operation>}
+
+law path_dp_traceback_tie:
+  {R.dp("AC", "CA", Nil{}) == [E.Delete{}, E.Match{}, E.Insert{}] : List<&2, E.Operation>}
+
+law path_divide_valid_tie:
+  {R.valid_path("AC", "CA", R.divide(2n, "AC", "CA", 2n, 2n, Nil{}, False{}), Nil{}, 2n) ==
+    True{} : Bool}
+
+law path_validate_empty:
+  {R.valid_path("", "", Nil{}, Nil{}, 0n) == True{} : Bool}
+
+law path_validate_equalities:
+  {R.valid_path("aN", "AA", [E.Match{}, E.Match{}],
+    [E.EqualityPair{'a', 'A'}, E.EqualityPair{'N', 'A'}], 0n) == True{} : Bool}
+
+law path_validate_nontransitive:
+  {R.valid_path("a", "N", [E.Match{}],
+    [E.EqualityPair{'a', 'A'}, E.EqualityPair{'A', 'N'}], 0n) == False{} : Bool}
+
+law path_validate_wrong_cost:
+  {R.valid_path("AC", "AG", [E.Match{}, E.Mismatch{}], Nil{}, 0n) == False{} : Bool}
+
+law path_validate_partial_consumption:
+  {R.valid_path("AC", "AC", [E.Match{}], Nil{}, 0n) == False{} : Bool}
+
+law path_validate_overconsumption:
+  {R.valid_path("A", "A", [E.Match{}, E.Insert{}], Nil{}, 1n) == False{} : Bool}
+
+law path_validate_wrong_diagonal:
+  {R.valid_path("A", "A", [E.Mismatch{}], Nil{}, 1n) == False{} : Bool}
+
+law path_validate_wrong_gap_direction:
+  {R.valid_path("A", "", [E.Delete{}], Nil{}, 1n) == False{} : Bool}
+
+law path_invalid_interval:
+  {A.location_valid("AC", A.Location{E.Position{1n}, 3n}) == False{} : Bool}
+
+law path_invalid_before_start:
+  {A.location_valid("AC", A.Location{E.BeforeStart{}, 1n}) == False{} : Bool}
+
+law path_rejected_validation:
+  for score: U32
+  for locations: List<&2, A.Location>
+  for format: E.CigarFormat
+  for operations: List<&2, E.Operation>
+  {A.path_checked(score, locations, format, operations, False{}) ==
+    E.AlignResult{E.Error{}, E.NotFound{}, Nil{}, None{}, None{}, None{}} : E.AlignResult}
+
 # The public package module preserves the distance and configured APIs.
 law library_distance_matches_main:
   for query: String
@@ -624,7 +702,9 @@ law library_align_matches_main:
   {L.align(query, target, config) == Main.edlib_align(query, target, config) : E.AlignResult}
 
 # Configured DP cells and columns retain their dependencies. Independent
-# input scans and Myers profile branches remain balanced parallel calls.
+# input scans, Myers profile branches and Hirschberg score passes run in
+# balanced parallel calls. DP matrices are bounded; larger PATHs use linear
+# score storage, with insertion/deletion remapped after input transposition.
 # Equalities are symmetric and nontransitive. Threshold failure has OK status,
 # no locations and absent starts/path/CIGAR. PATH covers the first location.
 # Pinned Edlib skips threshold filtering and starts/path on empty inputs.

@@ -10,7 +10,7 @@ from alignment import (
     AlignConfig, AlignResult, BeforeStart, DistanceFound, DistanceNotFound,
     MaxDistance, Mode, Position, Status, Task, Unlimited, threshold_from_edlib,
 )
-from tests.helpers import ROOT, bend_align, cpp_edlib_align, execute
+from tests.helpers import ROOT, assert_valid_path, bend_align, cpp_edlib_align, execute
 from transport import LENGTH, decode_response, encode_request
 
 EMPTY = json.loads((ROOT / "tests/regressions/upstream_empty.json").read_text())
@@ -36,7 +36,15 @@ def test_nw_inclusive_threshold(bend_binary, cpp_binary, task, query, target, di
     for maximum in {0, max(0, distance - 1), distance, distance + 1, 2**31 - 1}:
         config = AlignConfig(task=task, threshold=MaxDistance(maximum))
         actual = bend_align(query, target, config, binary=bend_binary)
-        assert actual == cpp_edlib_align(query, target, config, binary=cpp_binary)
+        expected = cpp_edlib_align(query, target, config, binary=cpp_binary)
+        if task == Task.PATH:
+            # Threshold acceptance is independent of optimal-path tie policy.
+            assert (actual.status, actual.distance, actual.end_locations, actual.start_locations) == (
+                expected.status, expected.distance, expected.end_locations, expected.start_locations)
+            assert_valid_path(query, target, config, actual)
+            assert_valid_path(query, target, config, expected)
+        else:
+            assert actual == expected
         if maximum < distance:
             assert actual == AlignResult(Status.OK, DistanceNotFound(), (), None, None, None)
         else:

@@ -640,7 +640,7 @@ def configured_found(task: E.Task, mode: E.Mode, +query: String, +target: String
         rt, tn, build_peq(ceil_div(qn, 32n), rq, pairs), qn, U32.to_nat(score))
       A.result(query, target, task, pairs, format, A.Best{score, resolved}, True{})
     case _ _ _:
-      # NW/SHW always start at zero; only PATH needs a scalar traceback.
+      # NW/SHW always start at zero; only PATH needs reconstruction.
       A.result(query, target, task, pairs, format, best, True{})
 
 def configured_result(query: String, target: String, mode: E.Mode, task: E.Task,

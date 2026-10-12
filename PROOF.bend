@@ -4,6 +4,69 @@ import ./DistanceDP.bend as DP
 import ./main.bend as Main
 import ./EdlibTypes.bend as E
 
+def Laws.path_operation_codes():
+  {==}
+
+def Laws.path_transpose_operations():
+  {==}
+
+def Laws.path_dp_cutoff():
+  {==}
+
+def Laws.path_dp_empty_query():
+  {==}
+
+def Laws.path_dp_empty_target():
+  {==}
+
+def Laws.path_dp_insert_direction():
+  {==}
+
+def Laws.path_dp_delete_direction():
+  {==}
+
+def Laws.path_dp_diagonals():
+  {==}
+
+def Laws.path_dp_traceback_tie():
+  {==}
+
+def Laws.path_divide_valid_tie():
+  {==}
+
+def Laws.path_validate_empty():
+  {==}
+
+def Laws.path_validate_equalities():
+  {==}
+
+def Laws.path_validate_nontransitive():
+  {==}
+
+def Laws.path_validate_wrong_cost():
+  {==}
+
+def Laws.path_validate_partial_consumption():
+  {==}
+
+def Laws.path_validate_overconsumption():
+  {==}
+
+def Laws.path_validate_wrong_diagonal():
+  {==}
+
+def Laws.path_validate_wrong_gap_direction():
+  {==}
+
+def Laws.path_invalid_interval():
+  {==}
+
+def Laws.path_invalid_before_start():
+  {==}
+
+def Laws.path_rejected_validation(score, locations, format, operations):
+  {==}
+
 def Laws.transport_byte_values():
   {==}
 

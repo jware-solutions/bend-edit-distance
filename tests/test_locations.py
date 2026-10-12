@@ -8,8 +8,7 @@ from alignment import (
     AlignConfig, AlignResult, BeforeStart, DistanceFound, DistanceNotFound,
     EqualityPair, MaxDistance, Mode, Operation, Position, Status, Task, Unlimited,
 )
-from tests.helpers import bend_align, cpp_edlib_align
-from tests.test_configured_alignment import assert_valid_path
+from tests.helpers import assert_valid_path, bend_align, cpp_edlib_align
 
 
 def coordinates(values):

@@ -164,6 +164,38 @@ Independent start searches run in balanced parallel branches and retain end
 order. A forward end of `-1` gets start `0`, matching pinned Edlib.
 Start searches and traceback are skipped when no alignment meets `k`.
 
+`Reconstruction.bend` reconstructs a global alignment of the complete query
+against the **first** reported target interval; it never recomputes the selected
+locations. Full DP stores scores and predecessor operations for matrices of at
+most 4,096 cells, including boundaries. Traceback prefers up, left, diagonal on
+ties, preserving the tested small upstream paths. Operation `1` consumes query
+only (insertion into target), `2` consumes target only (deletion from target),
+and `0`/`3` consume both, using the configured equality predicate.
+
+Larger matrices use Hirschberg: split the query rows in half, compute forward
+and reverse NW score rows, and choose the first minimum of `forward[j] +
+reverse[n-j]`. These equally sized score passes run in parallel after their
+reversed inputs have been prepared. The pinned native runtime drains its
+frontier if recursive argument preparation occurs inside the second parallel
+call; the probe tests cover this at one, two and four threads. Score rows are
+consumed before recursion; the two subpaths run sequentially to keep live score
+storage linear. The shorter original input supplies columns, and a transposed
+alignment maps insertion/deletion operations back to the original orientation.
+Single-row and empty subproblems terminate directly or through linear DP.
+Score storage is `O(min(m,n))` plus bounded DP base cases and recursion state;
+inputs and output need `O(m+n)` space. Reconstruction uses scalar DP work,
+`O(m*n*(p+1))` for `p` configured equality pairs, without threshold banding.
+
+Before returning PATH, `Alignment.bend` validates the selected interval bounds,
+exact consumption of both sequences, every match/mismatch under the configured
+equalities, and edit cost equal to the Myers distance. An internal validation
+failure returns an error with absent result fields. Tests independently check
+these properties and CIGAR runs, including NUL/high bytes and nontransitive
+pairs. **Semantic optimality and exact upstream tie compatibility are separate
+contracts**: DP tie tests assert exact upstream operations, while divide-and-
+conquer tests require optimal valid operations with exact distance/locations.
+Upstream Hirschberg split and band-dependent tie choices are not reproduced.
+
 SHW/HW uses `myers_calc_edit_distance_semiglobal`. Both
 initialize query scores to `i`; the first horizontal carry is +1 for SHW and
 zero for HW. A separate band initializes at most `ceil((k+1)/32)` blocks and
@@ -244,13 +276,13 @@ The following features and checks are still missing from this repository:
 - **Configured alignment performance:** every task uses banded Myers for
   distances and ends; HW starts require a reverse SHW search per optimal end.
   Profile construction scans the configured pairs for each symbol match.
-  PATH uses a scalar recurrence with two score rows and shared operation
-  prefixes for the first matching interval. Threshold rejection happens before
-  traceback, but does not prune accepted traceback computation.
-  General optimality proofs and faster traceback remain future work.
+  PATH uses bounded DP traceback and scalar Hirschberg reconstruction for the
+  first matching interval. Threshold rejection happens before reconstruction,
+  but does not prune accepted reconstruction work. General optimality proofs,
+  bit-vector reconstruction and exact upstream Hirschberg ties remain future work.
 - **Large alignment cost:** persistent workers remove text/argv limits, but
-  configured scalar alignment can still require quadratic work and substantial
-  memory. Protocol frames use Edlib's signed length range. The legacy text CLI
+  scalar reconstruction still requires quadratic work, with linear score
+  storage plus input/output. Protocol frames use Edlib's signed length range. The legacy text CLI
   retains its conservative ASCII/4,096-character limit.
 - **Correctness coverage:** independent DP cross-checks Myers and C++ Edlib,
   including the exhaustive small-input matrix, shrinking properties, direct
@@ -410,8 +442,8 @@ for LOC/PATH. `tests/regressions/upstream_empty.json` records all nine combinati
 of empty query/target and mode, with distance and end coordinates independent
 of the live oracle. Its semiglobal search omits the before-zero end location when
 query length is a multiple of 64; configured Bend matches that behavior.
-Valid PATH results can choose different optimal operations from Edlib on large
-matrices (where Edlib uses Hirschberg); comparisons validate path cost and
+Valid PATH results can choose different optimal operations once Bend uses
+Hirschberg, even when upstream uses direct traceback; comparisons validate path cost and
 consumption as well as exact distances/locations. Small deterministic paths
 and CIGAR are compared exactly.
 
@@ -424,6 +456,9 @@ threshold laws are recorded in `LAWS.bend` and proved in `PROOF.bend`.
 `tests/test_locations.py` dedicates comparisons to task-dependent absent
 fields, rejection by `k`, HW start ties across word boundaries, custom byte
 equalities, parallel start searches and many ordered optimal locations.
+`tests/test_reconstruction.py` independently exercises full DP, forced
+Hirschberg splits and public dispatch, including transposition, first-interval
+selection, large byte inputs, both CIGAR formats and explicit differing ties.
 
 ## Test alignment
 

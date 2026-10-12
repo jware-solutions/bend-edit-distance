@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+from itertools import groupby
 from pathlib import Path
 import re
 import subprocess
 from typing import Sequence
 
-from alignment import AlignConfig, AlignResult
+from alignment import AlignConfig, AlignResult, CigarFormat, Operation, Task
 from transport import cached_worker, sequence_bytes
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -15,6 +16,50 @@ BEND_BINARY = ROOT / "build" / "bend-edit-distance"
 DP_BINARY = ROOT / "build" / "bend-distance-dp"
 CPP_BINARY = ROOT / "build" / "edlib-oracle"
 MAX_SEQUENCE_LENGTH = 4096
+
+
+def assert_valid_path(query, target, config, result):
+    """Check semantics independently of the chosen optimal-path tie policy."""
+    query, target = sequence_bytes(query), sequence_bytes(target)
+    if result.alignment is None:
+        assert config.task != Task.PATH or result.edit_distance < 0 or not query or not target
+        assert result.cigar is None
+        return
+    assert result.start_locations is not None
+    assert len(result.start_locations) == len(result.end_locations) > 0
+    start = result.start_locations[0].to_edlib()
+    end = result.end_locations[0].to_edlib()
+    assert 0 <= start <= end + 1 <= len(target)
+    segment = target[start:end + 1]
+    pairs = {tuple(pair.to_bytes()) for pair in config.equalities}
+    pairs |= {(b, a) for a, b in pairs}
+    q = t = cost = 0
+    for operation in result.alignment:
+        if operation in (Operation.MATCH, Operation.MISMATCH):
+            assert q < len(query) and t < len(segment), (q, t, operation)
+            matches = query[q] == segment[t] or (query[q], segment[t]) in pairs
+            assert matches == (operation == Operation.MATCH), (q, t, operation)
+            q += 1
+            t += 1
+        elif operation == Operation.INSERT:
+            assert q < len(query), (q, t, operation)
+            q += 1
+        elif operation == Operation.DELETE:
+            assert t < len(segment), (q, t, operation)
+            t += 1
+        else:
+            raise AssertionError(f"Unknown operation: {operation!r}")
+        cost += operation != Operation.MATCH
+    assert (q, t, cost) == (len(query), len(segment), result.require_distance())
+    symbols = {
+        Operation.MATCH: "M" if config.cigar_format == CigarFormat.STANDARD else "=",
+        Operation.MISMATCH: "M" if config.cigar_format == CigarFormat.STANDARD else "X",
+        Operation.INSERT: "I", Operation.DELETE: "D",
+    }
+    assert result.cigar == "".join(
+        f"{sum(1 for _ in run)}{symbol}"
+        for symbol, run in groupby(symbols[op] for op in result.alignment)
+    )
 
 
 def execute(

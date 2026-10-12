@@ -98,6 +98,14 @@ def myers_probe(bend_tool):
 
 
 @pytest.fixture(scope="session")
+def reconstruction_probe(bend_tool):
+    binary = ROOT / "build" / "reconstruction-probe"
+    binary.parent.mkdir(parents=True, exist_ok=True)
+    execute([bend_tool, ROOT / "tests" / "reconstruction_probe.bend", "-o", binary], timeout=180)
+    return binary
+
+
+@pytest.fixture(scope="session")
 def cpp_binary():
     if os.name == "nt":
         pytest.fail("Native tests must run in WSL. Use: python run_tests.py", pytrace=False)

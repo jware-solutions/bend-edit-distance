@@ -37,6 +37,13 @@ build/bend-edit-distance --threads 1 -- --config HW PATH -1 '' EXTENDED AC TACGA
 
 DISTANCE includes end locations; LOC adds starts; PATH adds operation codes and
 CIGAR. Missing distance and the coordinate before zero serialize as `-1`.
+PATH describes the first reported start/end pair. Operation codes preserve
+Edlib's convention: match `0`, insertion into target `1` (consumes query),
+deletion from target `2` (consumes target), mismatch `3`. Every returned path
+is checked for complete interval consumption, configured equalities and edit
+cost equal to the reported distance. Small alignments use DP traceback; larger
+ones use Hirschberg reconstruction with linear score storage. An optimal path
+can differ from upstream's choice when several paths have the same cost.
 Nonnegative thresholds are inclusive, including `k = 0`. Pinned Edlib's
 empty-input early return ignores `k` and leaves starts/path/CIGAR absent.
 NW aligns both complete sequences. SHW aligns the complete query to a target

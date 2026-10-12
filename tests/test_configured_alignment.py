@@ -12,7 +12,7 @@ from alignment import (
     DistanceNotFound, EqualityPair, MaxDistance, Mode, Operation, Position,
     Status, Task, Unlimited,
 )
-from tests.helpers import bend_align, cpp_edlib_align, execute
+from tests.helpers import assert_valid_path, bend_align, cpp_edlib_align, execute
 
 
 @pytest.mark.parametrize("mode", list(Mode))
@@ -140,30 +140,6 @@ def test_native_configuration_rejections(bend_binary, cpp_binary, field, value):
         assert result.returncode == 2, result
         assert result.stdout == ""
         assert result.stderr
-
-
-def assert_valid_path(query, target, config, result):
-    if result.alignment is None:
-        return
-    assert result.start_locations is not None
-    start = result.start_locations[0].to_edlib()
-    end = result.end_locations[0].to_edlib()
-    segment = target[start:end + 1]
-    q = t = cost = 0
-    pairs = {(p.first, p.second) for p in config.equalities}
-    pairs |= {(b, a) for a, b in pairs}
-    for operation in result.alignment:
-        if operation in (Operation.MATCH, Operation.MISMATCH):
-            matches = query[q] == segment[t] or (query[q], segment[t]) in pairs
-            assert matches == (operation == Operation.MATCH)
-            q += 1
-            t += 1
-        elif operation == Operation.INSERT:
-            q += 1
-        else:
-            t += 1
-        cost += operation != Operation.MATCH
-    assert (q, t, cost) == (len(query), len(segment), result.require_distance())
 
 
 @settings(max_examples=50, deadline=None, derandomize=True)

@@ -37,6 +37,10 @@ def pytest_addoption(parser):
         "--verdict", action="store_true",
         help="Also verify proofs with the Lean-backed BendTT kernel",
     )
+    parser.addoption(
+        "--gpu-device", action="store_true",
+        help="Require a CUDA build and genuine device execution; unavailable hardware fails",
+    )
 
 
 def pytest_collection_modifyitems(config, items):
@@ -46,6 +50,8 @@ def pytest_collection_modifyitems(config, items):
             item.add_marker(pytest.mark.skip(reason="Enable distance tests with --alignment"))
         if "kernel" in item.keywords and not config.getoption("--verdict"):
             item.add_marker(pytest.mark.skip(reason="Enable kernel proofs with --verdict"))
+        if "gpu" in item.keywords and not config.getoption("--gpu-device"):
+            item.add_marker(pytest.mark.skip(reason="Require CUDA hardware with --gpu-device"))
 
 
 @pytest.fixture(scope="session")
@@ -87,6 +93,36 @@ def batch_probe(bend_tool):
     binary = ROOT / "build" / "batch-probe"
     binary.parent.mkdir(parents=True, exist_ok=True)
     execute([bend_tool, ROOT / "tests" / "batch_probe.bend", "-o", binary], timeout=180)
+    return binary
+
+
+@pytest.fixture(scope="session")
+def gpu_binary(bend_tool):
+    binary = ROOT / "build" / "gpu-batch"
+    binary.parent.mkdir(parents=True, exist_ok=True)
+    execute([bend_tool, ROOT / "gpu_batch.bend", "-o", binary], timeout=180)
+    return binary
+
+
+@pytest.fixture(scope="session")
+def gpu_cpu_probe(bend_tool):
+    from benchmarks.gpu_runner import build_probe
+    return build_probe()
+
+
+@pytest.fixture(scope="session")
+def cpu_batch_control(bend_tool):
+    from benchmarks.gpu_runner import build_probe
+    return build_probe(cpu_control=True)
+
+
+@pytest.fixture(scope="session")
+def gpu_device_probe(bend_tool):
+    from benchmarks.gpu_runner import build_probe, require_gpu_build
+    # This fixture is requested only by explicitly enabled GPU tests. Missing
+    # CUDA, build errors and unsupported devices FAIL instead of being skipped.
+    binary = build_probe(cuda_enabled=True)
+    require_gpu_build(binary)
     return binary
 
 

@@ -16,6 +16,23 @@ cost still bound practical input sizes. A worker processes requests sequentially
 use separate workers for concurrent requests. Bend still uses its configured
 CPU threads for independent work within an alignment.
 
+## GPU batch entry point
+
+Compile `gpu_batch.bend` to `build/gpu-batch`, then invoke
+`build/gpu-batch --gpu on -- COUNT`. Send exactly COUNT ordinary BED1 request
+frames on stdin. The program collects the jobs, prepares a balanced plan on
+CPU, executes the independent alignment tree in one GPU `!` call, and writes
+COUNT BER1 responses in input order. COUNT zero is valid. Missing/truncated
+requests fail before batch evaluation. Additional input after COUNT frames is
+outside this invocation's batch and is not consumed. This is a one-shot batch
+process, with the same byte/configuration/result encoding as the worker.
+
+Keep the compiled `.gpu` program beside the binary. `--gpu off` explicitly runs
+the same entry point on CPU. Default GPU selection permits fallback; successful
+responses alone do not demonstrate device execution. Use
+`python run_gpu_benchmarks.py --check-build` for forced-device validation with
+completed-dispatch evidence. The pure Bend API is `GpuBatch.align_batch(jobs)`.
+
 ## Request
 
 The fixed payload header is 24 bytes:

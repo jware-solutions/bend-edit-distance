@@ -677,6 +677,115 @@ and runtime startup. The corpus includes all byte values. Timing differences
 are observations, not test pass/fail thresholds. The phase benchmarks below
 retain their separate startup/argv instrumentation.
 
+## GPU batches and genuine-device validation
+
+`GpuBatch.bend` exports `align_batch(jobs)` with the same typed inputs and
+complete ordered results as the CPU batch API. It prepares `Batch.Plan` on the
+host, calls `Batch.execute!(plan)` once, then sorts indexed results on the host.
+Each alignment keeps its existing sequential column/carry dependencies and
+independent profile/leaf parallelism. GPU eligibility does not imply a speedup:
+mixed lengths, PATH reconstruction, and linked data structures can diverge.
+`lib.bend` remains the CPU package entry point; GPU use is an explicit import.
+
+Build and run the example in WSL:
+
+```bash
+export PATH="$PWD/build/tools/bend/bin:$PATH"
+bend examples/gpu_batch_usage.bend -o build/gpu-example
+build/gpu-example --gpu off       # Explicit CPU control
+build/gpu-example --gpu on        # Requires supported hardware
+bend gpu_batch.bend -o build/gpu-batch
+build/gpu-batch --gpu on -- 16 < requests.bin > responses.bin
+```
+
+The binary entry point reads a natural COUNT and COUNT ordinary binary requests
+from stdin; see [TRANSPORT.md](TRANSPORT.md#gpu-batch-entry-point). It preserves
+raw bytes, per-job modes/tasks/thresholds/equalities, duplicate inputs, empty
+inputs, and input order. Keep the `.gpu` file beside the binary. The fallback
+control accepts `--gpu off`; Bend's default automatic device selection can
+silently use CPU. The pinned runtime's `--gpu on` (and explicit heap sizes)
+requires hardware or exits with an error. Its `--gpu-build` can exit zero when
+no device exists, so this project's build test removes stale sidecars and also
+requires a freshly generated, nonempty `.gpu` artifact.
+
+The CUDA validation environment needs **Clang 19+** as `clang`, CUDA headers and
+NVRTC/libraries at `/usr/local/cuda` (the probe also accepts `CUDA_HOME`), a
+working NVIDIA driver, and concurrent managed-memory access on device zero.
+Bend 2.0.36 explicitly rejects devices without that capability, including WSL2
+CUDA environments that lack it. These commands forward Windows to WSL; if WSL
+cannot supply the capability, run validation on a supported native Linux CUDA
+host. The hardware workflow expects such a runner with preinstalled tools.
+CPU tests require no CUDA installation. Metal device validation is not supplied
+by this CUDA harness.
+
+```bash
+python3 run_tests.py tests/test_gpu.py -v                # CPU controls and fallback rejection
+python3 run_tests.py tests/test_gpu.py --gpu-device -v   # CUDA build + required real execution
+python3 run_gpu_benchmarks.py --check-build              # Build both device programs + genuine smoke execution
+python3 run_gpu_benchmarks.py --case example --batch-sizes 1 2 4 8 16 32 64 128 256 512 --threads 4
+```
+
+`--gpu-device` is opt-in; once enabled, unavailable hardware/build failure is a
+test failure, never a skip. It compares every result field for mixed raw-byte
+jobs across all modes/tasks, thresholds, custom equalities, empty/rejected jobs,
+paths and CIGAR formats. Ordinary CI always compiles the GPU entry point for
+CPU fallback and tests the evidence parser's rejection of fallback. The manual
+[GPU workflow](.github/workflows/gpu.yml) builds the actual CUDA programs and
+runs the hardware tests and benchmarks on a runner labeled `cuda`.
+
+The validation probe emits C using the pinned compiler, then instruments only
+the runtime branch that calls `gpu_pass`. A counter increments after each
+successful synchronized device pass; the CPU branch cannot increment it.
+Instrumentation rejects changed runtime anchors or a missing reachable bang.
+The production library/binary are unmodified. A positive device verdict
+requires forced-device mode, backend CUDA, positive completed-pass count and
+timing, valid device-memory observations, and complete ordered result equality.
+Neither output equality, a GPU name, a sidecar, nor backend selection alone can
+satisfy it. The value laws in `LAWS.bend` prove scheduling-independent semantics;
+they make no device/timing claims.
+
+The benchmark writes `build/gpu/results/results.json` and `REPORT.md`. It sweeps
+the committed corpus with configurable batch sizes, interleaves CPU/GPU order,
+discards warm-ups, retains raw samples and dispersion, and checks complete
+results and the corpus distance on every invocation. Benchmark CPU runs use a
+separate CPU-only executable of the same prepared `Batch.Plan`, execution and
+restoration stages with the selected `--threads`. This preserves Bend's no-bang
+CPU scheduler optimizations rather than treating bang fallback as the CPU
+performance baseline. Fallback remains a separate correctness control. Every sample
+starts a fresh process, so end-to-end includes device initialization, framing,
+host planning, synchronized execution, ordering and response writes. Compile
+time and Python payload encoding are excluded. The first measured GPU win is
+reported per workload using end-to-end demand-mode medians; all winning sizes
+are retained because a crossover need not be monotonic. No win in the range is
+reported explicitly. Extend `--batch-sizes` to establish a wider boundary.
+
+CUDA uses managed memory, so demand-run scheduler wall time includes implicit
+migration and launch overhead. A second controlled experiment uses synchronized
+[`cuMemPrefetchAsync`](https://docs.nvidia.com/cuda/cuda-driver-api/cuda_driver_api/group__CUDA__UNIFIED.html)
+before and after the bang, reporting both times and requested byte counts. It
+prefetches scheduler metadata, allocated arena pages (including freed pages),
+and occupied allocator-bank entries rather than the whole reserved heap.
+These requested ranges include runtime overhead; requested bytes are not actual
+PCIe traffic, and this experiment does not isolate the demand run's implicit
+migration cost. Separate-run timing differences are never labeled transfers.
+
+`cuMemGetInfo` observations before/after device passes and prefetch report
+device-wide used VRAM, its baseline, and the maximum observed sample. This is a
+lower bound on peak residency, includes other processes, and is not exact
+per-process peak memory. Use an otherwise idle GPU. `managed_heap_bytes` is the
+reserved arena size, not resident VRAM. `--heap 1GB` caps that reservation and
+still forces hardware; increase it if the runtime reports insufficient space.
+Device-pass wall time includes synchronization and migration, not just kernel
+time. Memory-sampling instrumentation also contributes overhead to work timing.
+Source/corpus hashes, compiler versions, CPU affinity/model and available
+NVIDIA device/driver information are saved with the results.
+
+On an unsupported environment the benchmark exits nonzero and saves a failure
+report. It cannot produce a GPU-equivalence, transfer, VRAM or crossover verdict
+by falling back. The local WSL preflight is recorded in
+[gpu-wsl-2026-10-12](benchmarks/results/gpu-wsl-2026-10-12/REPORT.md);
+it has no hardware performance measurements.
+
 ## Reproducible performance benchmarks
 
 From PowerShell at the project root, after native tools and the Edlib submodule

@@ -89,6 +89,16 @@ configurations. Compile [examples/batch_usage.bend](examples/batch_usage.bend)
 and run with `--threads 1`, `2` or `4`. See the
 [batch API details](CONTRIBUTING.md#independent-cpu-alignment-batches).
 
+For GPU batches, import `./GpuBatch.bend` and call `align_batch(jobs)`; see
+[examples/gpu_batch_usage.bend](examples/gpu_batch_usage.bend). The separate
+module keeps CPU consumers independent of the GPU toolchain. It prepares the
+plan on CPU, executes one `!` call, and restores result order on CPU.
+`gpu_batch.bend` also accepts a count and binary requests on stdin.
+Force `--gpu on` when requiring hardware execution: Bend's default can fall
+back to CPU. [GPU validation and benchmarks](CONTRIBUTING.md#gpu-batches-and-genuine-device-validation)
+require completed device dispatches, compare complete CPU/GPU results, and
+measure transfers, observed VRAM and the batch-size crossover.
+
 See [examples/library_usage.bend](examples/library_usage.bend) for a local library usage example.
 
 ## Contributing and development

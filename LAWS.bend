@@ -9,6 +9,27 @@ import ./ByteProtocol.bend as BT
 import ./AlignmentCli.bend as AC
 import ./Reconstruction.bend as R
 import ./Batch.bend as B
+import ./GpuBatch.bend as G
+
+# GPU batches prepare a complete plan on the host, execute it in one ! call,
+# then restore input order on the host. Bang changes scheduling, not values.
+# Device execution is a runtime claim: --gpu on AND completed device passes
+# are required. CPU fallback, a .gpu file, and successful output alone are
+# never evidence of device execution. CUDA requires concurrent managed access;
+# Bend 2.0.36 rejects WSL CUDA without it. Metrics are outside these proofs.
+law gpu_execution_values:
+  for plan: B.Plan
+  {G.execute(plan) == B.execute(plan) : List<&2, B.IndexedResult>}
+
+law gpu_batch_empty:
+  {G.align_batch(Nil{}) == Nil{} : List<&2, E.AlignResult>}
+
+law gpu_batch_singleton:
+  for query: String
+  for target: String
+  for config: E.AlignConfig
+  {G.align_batch([E.AlignJob{query, target, config}]) ==
+    [L.align(query, target, config)] : List<&2, E.AlignResult>}
 
 # CPU batches contain independent byte-alignment jobs with separate configs.
 # Planning sorts estimated work and assigns large jobs to the lighter child,

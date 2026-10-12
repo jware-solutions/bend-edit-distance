@@ -1,0 +1,51 @@
+name: GPU validation
+
+# Dispatch only on a trusted branch to a provisioned native Linux CUDA host.
+# Hosted CPU runners cannot satisfy this job; it never substitutes CPU results.
+on:
+  workflow_dispatch:
+    inputs:
+      cpu_threads:
+        description: CPU threads for the benchmark comparison
+        required: true
+        default: '4'
+      corpus_case:
+        description: Committed corpus case to benchmark
+        required: true
+        default: example
+
+permissions:
+  contents: read
+
+env:
+  BEND_NO_TELEMETRY: '1'
+
+jobs:
+  gpu:
+    runs-on: [self-hosted, linux, x64, cuda]
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Provision pinned Bend, oracle and Python environment
+        # CUDA/NVRTC, NVIDIA driver and default Clang 19+ are runner prerequisites.
+        run: bash scripts/setup.sh --native-only --skip-system
+      - name: Require CUDA device builds and compare complete mixed-job results
+        run: python3 run_tests.py tests/test_gpu.py --gpu-device -v --junitxml=build/gpu-tests.xml
+      - name: Measure crossover, managed transfer costs and observed VRAM
+        env:
+          CPU_THREADS: ${{ inputs.cpu_threads }}
+          CORPUS_CASE: ${{ inputs.corpus_case }}
+        run: |
+          python3 run_gpu_benchmarks.py --case "$CORPUS_CASE" --threads "$CPU_THREADS"
+          cat build/gpu/results/REPORT.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: gpu-validation
+          path: |
+            build/gpu-tests.xml
+            build/gpu/results/
+            build/environment.txt
+          if-no-files-found: error

@@ -4,6 +4,15 @@ import ./DistanceDP.bend as DP
 import ./main.bend as Main
 import ./EdlibTypes.bend as E
 
+def Laws.gpu_execution_values(plan):
+  {==}
+
+def Laws.gpu_batch_empty():
+  {==}
+
+def Laws.gpu_batch_singleton(query, target, config):
+  {==}
+
 def Laws.batch_empty():
   {==}
 

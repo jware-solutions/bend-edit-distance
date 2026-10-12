@@ -154,7 +154,17 @@ attempts; tests verify pruning of both ends, immediate length rejection, early
 band collapse, adaptive retries, every padding size and threshold boundaries
 against independent scalar Bend DP and pinned C++ Edlib, including raw bytes.
 
-SHW/HW DISTANCE uses `myers_calc_edit_distance_semiglobal`. Both
+All tasks use the same Myers distance and end-location searches. NW reports
+the original target's last position, even when the distance search swaps the
+inputs internally. NW/SHW LOC results add zero starts without running DP.
+HW LOC/PATH reverses both sequences, reuses one reversed query profile and
+runs SHW up to each optimal end. The last optimal reverse end selects the
+earliest corresponding forward start, including mismatch/insertion ties.
+Independent start searches run in balanced parallel branches and retain end
+order. A forward end of `-1` gets start `0`, matching pinned Edlib.
+Start searches and traceback are skipped when no alignment meets `k`.
+
+SHW/HW uses `myers_calc_edit_distance_semiglobal`. Both
 initialize query scores to `i`; the first horizontal carry is +1 for SHW and
 zero for HW. A separate band initializes at most `ceil((k+1)/32)` blocks and
 expands by at most one block per target column. It prunes trailing blocks using
@@ -231,13 +241,13 @@ NW/SHW/HW modes, DISTANCE/LOC/PATH tasks, thresholds and additional equalities.
 The project implements part of Edlib's behavior.
 The following features and checks are still missing from this repository:
 
-- **Configured alignment performance:** locations and paths use a scalar
-  recurrence with two score rows. DISTANCE uses Myers even with custom equality
-  pairs; profile construction scans the configured pairs for each symbol match.
-  PATH retains shared operation prefixes and recomputes NW for the first
-  matching interval.
-  Thresholds filter the final optimum; they do not prune the DP computation.
-  General optimality proofs and acceleration for these scalar paths remain future work.
+- **Configured alignment performance:** every task uses banded Myers for
+  distances and ends; HW starts require a reverse SHW search per optimal end.
+  Profile construction scans the configured pairs for each symbol match.
+  PATH uses a scalar recurrence with two score rows and shared operation
+  prefixes for the first matching interval. Threshold rejection happens before
+  traceback, but does not prune accepted traceback computation.
+  General optimality proofs and faster traceback remain future work.
 - **Large alignment cost:** persistent workers remove text/argv limits, but
   configured scalar alignment can still require quadratic work and substantial
   memory. Protocol frames use Edlib's signed length range. The legacy text CLI
@@ -342,7 +352,12 @@ build/edlib-oracle --config HW PATH -1 '' EXTENDED AC TACGAC
 
 Modes are NW (global), SHW (prefix), HW (infix). DISTANCE returns all optimal
 end locations, LOC adds their corresponding starts, and PATH adds an alignment
-for the first interval. Operation codes are 0 match, 1 insertion into target
+for the first interval. Ends are returned in upstream order, with matching
+start entries in the same order. Coordinates are zero-based and inclusive;
+`-1` is a valid end before the target, with HW start `0`. NW/SHW starts are
+always `0`; HW selects the earliest optimal start for each end. DISTANCE
+leaves starts/alignment/CIGAR null; LOC leaves alignment/CIGAR null.
+Operation codes are 0 match, 1 insertion into target
 (consumes query), 2 deletion from target (consumes target), 3 mismatch. Standard
 CIGAR merges matches/mismatches as `M`; extended CIGAR uses `=`/`X`.
 
@@ -406,6 +421,9 @@ configuration/results and word boundaries with 1/2/4 threads. `--alignment`
 adds an exhaustive configured comparison for all 15 strings over `{A,C}` of
 length 0..3 (2,025 mode/task/pair combinations). Typed serialization and
 threshold laws are recorded in `LAWS.bend` and proved in `PROOF.bend`.
+`tests/test_locations.py` dedicates comparisons to task-dependent absent
+fields, rejection by `k`, HW start ties across word boundaries, custom byte
+equalities, parallel start searches and many ordered optimal locations.
 
 ## Test alignment
 

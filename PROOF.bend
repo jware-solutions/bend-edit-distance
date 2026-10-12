@@ -195,6 +195,33 @@ def Laws.threshold_not_found(value, end):
 def Laws.distance_end_location(value, end):
   {==}
 
+def Laws.task_failure_fields(query, target, mode, task, pairs, format, best):
+  {==}
+
+def Laws.distance_task_fields(query, target, mode, pairs, format, score, locations):
+  match mode:
+    case E.NW{}:
+      {==}
+    case E.SHW{}:
+      {==}
+    case E.HW{}:
+      {==}
+
+def Laws.hw_before_start_location(reverse_target, target_length, profiles, query_length, maximum):
+  {==}
+
+def Laws.hw_last_reverse_tie():
+  {==}
+
+def Laws.nw_locations_keep_target_axis():
+  {==}
+
+def Laws.hw_earliest_start_tie():
+  {==}
+
+def Laws.hw_path_before_start():
+  {==}
+
 def Laws.equality_pair_reverse():
   {==}
 

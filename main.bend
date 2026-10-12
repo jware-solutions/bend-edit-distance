@@ -570,18 +570,102 @@ def semiglobal_maximum(threshold: E.Threshold, +length: Nat) -> Nat:
     case E.MaxDistance{maximum}:
       Nat.min(maximum, length)
 
-def semiglobal_align(+query: String, +target: String, +mode: E.Mode,
-                      +threshold: E.Threshold, +pairs: List<&2, E.EqualityPair>) -> E.AlignResult:
-  +length = String.length(query)
+def semiglobal_best(target: String, profiles: List<&2, Peq>, +length: Nat,
+                      +maximum: Nat, +mode: E.Mode) -> A.Best:
   +count = ceil_div(length, 32n)
-  +maximum = semiglobal_maximum(threshold, length)
   # Preserve pinned Edlib's 64-bit column-zero convention independently of
   # this implementation's 32-bit padding (especially lengths 32 and 96).
   best = semiglobal_initial_best(length, Nat.is_ne(Nat.mod(length, 64n), 0n))
-  A.finish(query, target, E.Distance{}, threshold, pairs, E.Extended{},
-    myers_calc_edit_distance_semiglobal(target,
-      init_semiglobal_band(build_peq(count, query, pairs), length, maximum), mode,
-      Nat.sub(Nat.mul(count, 32n), length), 0n, maximum, best))
+  myers_calc_edit_distance_semiglobal(target,
+    init_semiglobal_band(profiles, length, maximum), mode,
+    Nat.sub(Nat.mul(count, 32n), length), 0n, maximum, best)
+
+# Edlib selects the LAST optimal reverse-SHW end, hence the earliest start
+# for each forward end. Preserve the special forward end -1 with start 0.
+def hw_start(+end: Nat, reverse_location: A.Location) -> A.Location:
+  match reverse_location:
+    case A.Location{E.BeforeStart{}, _}:
+      A.Location{E.Position{end}, 1n+end}
+    case A.Location{E.Position{reverse_end}, _}:
+      A.Location{E.Position{end}, Nat.sub(end, reverse_end)}
+
+def hw_start_best(+end: Nat, best: A.Best) -> A.Location:
+  match best:
+    case A.Best{_, locations}:
+      hw_start(end, Maybe.default(&2, A.Location,
+        List.last(&2, A.Location, locations), A.Location{E.BeforeStart{}, 0n}))
+
+def hw_location(location: A.Location, reverse_target: String, target_length: Nat,
+                  profiles: List<&2, Peq>, query_length: Nat, maximum: Nat) -> A.Location:
+  match location:
+    case A.Location{E.BeforeStart{}, _}:
+      A.Location{E.BeforeStart{}, 0n}
+    case A.Location{E.Position{+end}, _}:
+      hw_start_best(end, semiglobal_best(
+        String.drop(reverse_target, Nat.sub(target_length, 1n+end)),
+        profiles, query_length, maximum, E.SHW{}))
+
+# Independent starts share one reversed query profile. Split their searches
+# into balanced parallel branches, then concatenate in the original end order.
+def hw_locations(fuel: Nat, locations: List<&2, A.Location>,
+                   +reverse_target: String, +target_length: Nat,
+                   +profiles: List<&2, Peq>, +query_length: Nat,
+                   +maximum: Nat) -> List<&2, A.Location>:
+  match fuel locations:
+    case 0n _:
+      locations
+    case 1n+p Nil{}:
+      Nil{}
+    case 1n+p location <> Nil{}:
+      [hw_location(location, reverse_target, target_length, profiles, query_length, maximum)]
+    case Succ{+p} +values:
+      +half = Nat.div(List.length(&2, A.Location, values), 2n)
+      left right =
+        hw_locations(p, List.take(&2, A.Location, values, half),
+          reverse_target, target_length, profiles, query_length, maximum)
+        hw_locations(p, List.drop(&2, A.Location, values, half),
+          reverse_target, target_length, profiles, query_length, maximum)
+      List.append(&2, A.Location, left, right)
+
+def configured_found(task: E.Task, mode: E.Mode, +query: String, +target: String,
+                        +pairs: List<&2, E.EqualityPair>, format: E.CigarFormat,
+                        best: A.Best) -> E.AlignResult:
+  match task mode best:
+    case E.Distance{} _ _:
+      A.result(query, target, task, pairs, format, best, True{})
+    case _ E.HW{} A.Best{+score, +locations}:
+      +qn +tn = String.length(query) String.length(target)
+      rq rt = String.reverse(query) String.reverse(target)
+      resolved = hw_locations(List.length(&2, A.Location, locations), locations,
+        rt, tn, build_peq(ceil_div(qn, 32n), rq, pairs), qn, U32.to_nat(score))
+      A.result(query, target, task, pairs, format, A.Best{score, resolved}, True{})
+    case _ _ _:
+      # NW/SHW always start at zero; only PATH needs a scalar traceback.
+      A.result(query, target, task, pairs, format, best, True{})
+
+def configured_result(query: String, target: String, mode: E.Mode, task: E.Task,
+                         pairs: List<&2, E.EqualityPair>, format: E.CigarFormat,
+                         best: A.Best, accepted: Bool) -> E.AlignResult:
+  match accepted:
+    case False{}:
+      E.not_found()
+    case True{}:
+      configured_found(task, mode, query, target, pairs, format, best)
+
+def configured_finish(query: String, target: String, mode: E.Mode, task: E.Task,
+                         threshold: E.Threshold, pairs: List<&2, E.EqualityPair>,
+                         format: E.CigarFormat, +best: A.Best) -> E.AlignResult:
+  A.Best{score, _} = best
+  configured_result(query, target, mode, task, pairs, format, best,
+    E.within_threshold(threshold, U32.to_nat(score)))
+
+def semiglobal_align(+query: String, +target: String, +mode: E.Mode, task: E.Task,
+                       +threshold: E.Threshold, +pairs: List<&2, E.EqualityPair>,
+                       format: E.CigarFormat) -> E.AlignResult:
+  +length = String.length(query)
+  configured_finish(query, target, mode, task, threshold, pairs, format,
+    semiglobal_best(target, build_peq(ceil_div(length, 32n), query, pairs),
+      length, semiglobal_maximum(threshold, length), mode))
 
 def search_distance(search: Search) -> E.EditDistance:
   match search:
@@ -612,12 +696,15 @@ def distance(query: String, target: String) -> Nat:
       +qn +tn = String.length(q) String.length(t)
       align_shorter(q, t, qn, tn, Nat.is_le(qn, tn))
 
-def threshold_result(distance: E.EditDistance, end: E.Coordinate) -> E.AlignResult:
+def nw_result(query: String, target: String, task: E.Task,
+                 pairs: List<&2, E.EqualityPair>, format: E.CigarFormat,
+                 end: E.Coordinate, distance: E.EditDistance) -> E.AlignResult:
   match distance:
     case E.NotFound{}:
       E.not_found()
     case E.Found{score}:
-      E.distance_result(score, end, True{})
+      configured_result(query, target, E.NW{}, task, pairs, format,
+        A.Best{U32.from_nat(score), [A.Location{end, 0n}]}, True{})
 
 def edlib_align(query: String, target: String, config: E.AlignConfig) -> E.AlignResult:
   match query target config:
@@ -625,14 +712,12 @@ def edlib_align(query: String, target: String, config: E.AlignConfig) -> E.Align
       A.align("", target, config)
     case SCon{h, t} SNil{} _:
       A.align(SCon{h, t}, "", config)
-    case +q +t E.AlignConfig{E.NW{}, E.Distance{}, threshold, pairs, _}:
+    case +q +t E.AlignConfig{E.NW{}, task, threshold, +pairs, format}:
       +qn +tn = String.length(q) String.length(t)
-      threshold_result(search_distance(search_shorter(q, t, qn, tn, threshold,
-        Nat.is_le(qn, tn), pairs)), E.end_coordinate(tn))
-    case +q +t E.AlignConfig{mode, E.Distance{}, threshold, pairs, _}:
-      semiglobal_align(q, t, mode, threshold, pairs)
-    case _ _ _:
-      A.align(query, target, config)
+      nw_result(q, t, task, pairs, format, E.end_coordinate(tn),
+        search_distance(search_shorter(q, t, qn, tn, threshold, Nat.is_le(qn, tn), pairs)))
+    case +q +t E.AlignConfig{mode, task, threshold, pairs, format}:
+      semiglobal_align(q, t, mode, task, threshold, pairs, format)
 
 def response(query: String, target: String) -> String:
   Nat.show(distance(query, target))

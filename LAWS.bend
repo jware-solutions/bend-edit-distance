@@ -502,6 +502,59 @@ law distance_end_location:
   {E.distance_result(value, end, True{}) ==
     E.AlignResult{E.Ok{}, E.Found{value}, [end], None{}, None{}, None{}} : E.AlignResult}
 
+# Every task uses the same accepted optimum and ordered ends. Additional
+# fields are calculated only after k succeeds, and DISTANCE never asks for
+# starts or traceback. HW resolves one start for each end using reverse SHW.
+law task_failure_fields:
+  for query: String
+  for target: String
+  for mode: E.Mode
+  for task: E.Task
+  for pairs: List<&2, E.EqualityPair>
+  for format: E.CigarFormat
+  for best: A.Best
+  {Main.configured_result(query, target, mode, task, pairs, format, best, False{}) ==
+    E.not_found() : E.AlignResult}
+
+law distance_task_fields:
+  for query: String
+  for target: String
+  for mode: E.Mode
+  for pairs: List<&2, E.EqualityPair>
+  for format: E.CigarFormat
+  for score: U32
+  for locations: List<&2, A.Location>
+  {Main.configured_result(query, target, mode, E.Distance{}, pairs, format,
+    A.Best{score, locations}, True{}) ==
+    E.AlignResult{E.Ok{}, E.Found{U32.to_nat(score)}, A.ends(locations), None{}, None{}, None{}} : E.AlignResult}
+
+law hw_before_start_location:
+  for reverse_target: String
+  for target_length: Nat
+  for profiles: List<&2, Main.Peq>
+  for query_length: Nat
+  for maximum: Nat
+  {Main.hw_location(A.Location{E.BeforeStart{}, 0n}, reverse_target, target_length,
+    profiles, query_length, maximum) == A.Location{E.BeforeStart{}, 0n} : A.Location}
+
+law hw_last_reverse_tie:
+  {Main.hw_start_best(3n, A.Best{1,
+    [A.Location{E.Position{1n}, 0n}, A.Location{E.Position{2n}, 0n}]}) ==
+    A.Location{E.Position{3n}, 1n} : A.Location}
+
+law nw_locations_keep_target_axis:
+  {Main.edlib_align("TACGT", "AC", E.AlignConfig{E.NW{}, E.Locations{}, E.Unlimited{}, Nil{}, E.Extended{}}) ==
+    E.AlignResult{E.Ok{}, E.Found{3n}, [E.Position{1n}], Some{[E.Position{0n}]}, None{}, None{}} : E.AlignResult}
+
+law hw_earliest_start_tie:
+  {Main.edlib_align("ABC", "XXBC", E.AlignConfig{E.HW{}, E.Locations{}, E.MaxDistance{1n}, Nil{}, E.Extended{}}) ==
+    E.AlignResult{E.Ok{}, E.Found{1n}, [E.Position{3n}], Some{[E.Position{1n}]}, None{}, None{}} : E.AlignResult}
+
+law hw_path_before_start:
+  {Main.edlib_align("A", "TT", E.AlignConfig{E.HW{}, E.Path{}, E.MaxDistance{1n}, Nil{}, E.Extended{}}) ==
+    E.AlignResult{E.Ok{}, E.Found{1n}, [E.BeforeStart{}, E.Position{0n}, E.Position{1n}],
+      Some{[E.Position{0n}, E.Position{0n}, E.Position{1n}]}, Some{[E.Insert{}]}, Some{"1I"}} : E.AlignResult}
+
 law equality_pair_reverse:
   {E.equal([E.EqualityPair{'A', 'N'}], 'N', 'A') == True{} : Bool}
 

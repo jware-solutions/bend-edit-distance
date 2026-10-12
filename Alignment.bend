@@ -1,9 +1,9 @@
 import Base
 import ./EdlibTypes.bend as E
 
-# Configured alignment uses the scalar recurrence. Only two score rows are
-# retained; PATH also carries persistent, shared operation prefixes. The
-# DISTANCE API in main.bend uses Myers for NW, SHW and HW, including pairs.
+# Scalar reference alignment and PATH traceback use two score rows. PATH
+# carries persistent, shared operation prefixes. The public API in main.bend
+# uses Myers for all tasks' distances/ends and reverse SHW for HW starts.
 type Cell is Data:
   Cell{score: U32, start: Nat, operations: List<&2, E.Operation>}
 

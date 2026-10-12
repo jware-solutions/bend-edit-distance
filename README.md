@@ -70,7 +70,7 @@ Import its library module from any Bend file:
 
 ```bend
 import Base
-import bend-edit-distance@0.1.0.0/lib.bend as Edlib
+import bend-edit-distance@0.2.0.0/lib.bend as Edlib
 
 def main() -> Nat:
   Edlib.distance("kitten", "sitting")

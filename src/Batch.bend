@@ -1,6 +1,6 @@
 import Base
-import ./EdlibTypes.bend as E
-import ./main.bend as M
+import ../EdlibTypes.bend as E
+import ./Myers.bend as M
 
 type WeightedJob is Data:
   WeightedJob{index: Nat, work: F32, job: E.AlignJob}
@@ -176,6 +176,9 @@ def results(values: List<&2, IndexedResult>) -> List<&2, E.AlignResult>:
     case IndexedResult{_, result} <> tail:
       result <> results(tail)
 
+def ordered(values: List<&2, IndexedResult>) -> List<&2, E.AlignResult>:
+  results(List.sort(~IndexedResult, ~earlier, values))
+
 def align_batch(jobs: List<&2, E.AlignJob>) -> List<&2, E.AlignResult>:
   match jobs:
     case Nil{}:
@@ -183,4 +186,4 @@ def align_batch(jobs: List<&2, E.AlignJob>) -> List<&2, E.AlignResult>:
     case E.AlignJob{query, target, config} <> Nil{}:
       [M.edlib_align(query, target, config)]
     case values:
-      results(List.sort(~IndexedResult, ~earlier, execute(prepare(values))))
+      ordered(execute(prepare(values)))

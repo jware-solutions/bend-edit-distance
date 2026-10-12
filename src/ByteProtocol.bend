@@ -1,5 +1,5 @@
 import Base
-import ./EdlibTypes.bend as E
+import ../EdlibTypes.bend as E
 
 def byte_string(bytes: List<U32>) -> String:
   match bytes:

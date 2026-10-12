@@ -1,5 +1,5 @@
 import Base
-import ./EdlibTypes.bend as E
+import ../EdlibTypes.bend as E
 import ./ByteProtocol.bend as P
 
 # The native bridge returns lists of byte values, never decoded UTF-8 text.
@@ -53,3 +53,32 @@ def run(~align: String -> String -> E.AlignConfig -> E.AlignResult,
 
 def serve(~align: String -> String -> E.AlignConfig -> E.AlignResult) -> IO(Unit):
   run(~align, 4294967295n)
+
+# COUNT ordinary binary requests followed by COUNT ordinary binary responses.
+def job(request: Request) -> IO(E.AlignJob):
+  match request:
+    case Bytes{m, t, k, f, qb, tb, eq}:
+      IO.pure(E.AlignJob, E.AlignJob{P.byte_string(qb), P.byte_string(tb),
+        E.AlignConfig{P.mode(m), P.task(t), P.threshold(k), P.pairs(eq), P.format(f)}})
+    case _:
+      IO.die(E.AlignJob, 2, "Expected a complete alignment request")
+
+def read_batch(count: Nat) -> IO(List<&2, E.AlignJob>):
+  match count:
+    case 0n:
+      IO.pure(List<&2, E.AlignJob>, Nil{})
+    case 1n+p:
+      do IO<List<&2, E.AlignJob>>:
+        request : Request <- read_request()
+        head : E.AlignJob <- job(request)
+        tail : List<&2, E.AlignJob> <- read_batch(p)
+        return head <> tail
+
+def write_batch(results: List<&2, E.AlignResult>) -> IO(Unit):
+  match results:
+    case Nil{}:
+      IO.pure(Unit, Unit{})
+    case head <> tail:
+      do IO<Unit>:
+        write_response(P.encode(head))
+        write_batch(tail)

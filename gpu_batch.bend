@@ -1,6 +1,6 @@
 import Base
 import ./GpuBatch.bend as G
-import ./BatchIO.bend as BT
+import ./src/Transport.bend as BT
 import ./EdlibTypes.bend as E
 
 def parsed(count: Maybe<&2, Nat>) -> IO(Unit):
@@ -9,8 +9,8 @@ def parsed(count: Maybe<&2, Nat>) -> IO(Unit):
       IO.die(Unit, 2, "Expected a natural batch count")
     case Some{n}:
       do IO<Unit>:
-        jobs : List<&2, E.AlignJob> <- BT.read(n)
-        BT.write(G.align_batch(jobs))
+        jobs : List<&2, E.AlignJob> <- BT.read_batch(n)
+        BT.write_batch(G.align_batch(jobs))
 
 def run(args: List<String>) -> IO(Unit):
   match args:

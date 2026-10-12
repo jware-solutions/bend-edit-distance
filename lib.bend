@@ -1,17 +1,17 @@
 import Base
 import ./EdlibTypes.bend as Types
-import ./main.bend as Main
-import ./Batch.bend as Batch
+import ./src/Myers.bend as Myers
+import ./src/Batch.bend as Batch
 
-# Public BendHub library entry point. Keep CLI startup behind main.bend's main.
+# Public CPU library entry point, independent of CLI and foreign transport.
 def distance(query: String, target: String) -> Nat:
-  Main.distance(query, target)
+  Myers.distance(query, target)
 
 def default_config() -> Types.AlignConfig:
   Types.default_config()
 
 def align(query: String, target: String, config: Types.AlignConfig) -> Types.AlignResult:
-  Main.edlib_align(query, target, config)
+  Myers.edlib_align(query, target, config)
 
 # One result per job, in input order, with independent CPU alignment leaves.
 def align_batch(jobs: List<&2, Types.AlignJob>) -> List<&2, Types.AlignResult>:

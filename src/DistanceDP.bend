@@ -1,5 +1,5 @@
 import Base
-import ./EdlibTypes.bend as E
+import ../EdlibTypes.bend as E
 
 # Independent Levenshtein distance with unit edit costs.
 # Keep only the previous and current rows. NW uses min(m,n)+1 cells;

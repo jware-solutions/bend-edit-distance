@@ -1,7 +1,7 @@
 import Base
 import ./LAWS.bend as Laws
-import ./DistanceDP.bend as DP
-import ./main.bend as Main
+import ./src/DistanceDP.bend as DP
+import ./src/Myers.bend as Myers
 import ./EdlibTypes.bend as E
 
 def Laws.gpu_execution_values(plan):
@@ -438,7 +438,7 @@ def Laws.small_ascii_equivalence(query, target):
       {==}
 
 def split_rejoins_step(h: Char, parts: String & String) ->
-  {SCon{h, Laws.rejoin(parts)} == Laws.rejoin(Main.split_query.prepend(h, parts)) : String}:
+  {SCon{h, Laws.rejoin(parts)} == Laws.rejoin(Myers.split_query.prepend(h, parts)) : String}:
   match parts:
     case (prefix, suffix):
       {==}
@@ -450,13 +450,13 @@ def Laws.split_rejoins(size, query):
     case 1n+p SNil{}:
       {==}
     case Succ{+p} SCon{+h, +t}:
-      %split_rejoins_step(h, Main.split_query(p, t)) : {_ == SCon{h, t} : String}
-      %Laws.split_rejoins(p, t) : {SCon{h, Laws.rejoin(Main.split_query(p, t))} == SCon{h, _} : String}
+      %split_rejoins_step(h, Myers.split_query(p, t)) : {_ == SCon{h, t} : String}
+      %Laws.split_rejoins(p, t) : {SCon{h, Laws.rejoin(Myers.split_query(p, t))} == SCon{h, _} : String}
       {==}
 
 def split_prefix_step(h: Char, parts: String & String) ->
   {1n+String.length(Pair.fst(String, String, parts)) ==
-    String.length(Pair.fst(String, String, Main.split_query.prepend(h, parts))) : Nat}:
+    String.length(Pair.fst(String, String, Myers.split_query.prepend(h, parts))) : Nat}:
   match parts:
     case (prefix, suffix):
       {==}
@@ -468,9 +468,9 @@ def Laws.split_prefix_length(size, query):
     case 1n+p SNil{}:
       {==}
     case Succ{+p} SCon{+h, +t}:
-      %split_prefix_step(h, Main.split_query(p, t)) : {_ == 1n+Nat.min(p, String.length(t)) : Nat}
+      %split_prefix_step(h, Myers.split_query(p, t)) : {_ == 1n+Nat.min(p, String.length(t)) : Nat}
       %Laws.split_prefix_length(p, t) :
-        {1n+String.length(Pair.fst(String, String, Main.split_query(p, t))) == 1n+_ : Nat}
+        {1n+String.length(Pair.fst(String, String, Myers.split_query(p, t))) == 1n+_ : Nat}
       {==}
 
 def Laws.initial_block_count(count, bottom):
@@ -479,7 +479,7 @@ def Laws.initial_block_count(count, bottom):
       {==}
     case 1n+p:
       %Laws.initial_block_count(p, U32.add(bottom, 32)) :
-        {1n+List.length(&1, Main.Block, Main.init_blocks(p, U32.add(bottom, 32))) == 1n+_ : Nat}
+        {1n+List.length(&1, Myers.Block, Myers.init_blocks(p, U32.add(bottom, 32))) == 1n+_ : Nat}
       {==}
 
 def Laws.decode_no_padding(positive, negative, score):
@@ -487,7 +487,7 @@ def Laws.decode_no_padding(positive, negative, score):
 
 def Laws.carry_score_independent(positive, negative, eq, incoming, first_score, second_score):
   match incoming:
-    case Main.Carry{hin_positive, hin_negative}:
+    case Myers.Carry{hin_positive, hin_negative}:
       {==}
 
 def Laws.initial_uniform_carry(score, incoming, matches):

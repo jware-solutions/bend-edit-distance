@@ -1,7 +1,7 @@
 import Base
-import ../Cli.bend as CLI
-import ../DistanceDP.bend as DP
-import ../BinaryTransport.bend as BT
+import ../src/Cli.bend as CLI
+import ../src/DistanceDP.bend as DP
+import ../src/Transport.bend as BT
 
 # Separate executable so differential tests exercise DP without Myers dispatch.
 def run(args: List<String>) -> IO(Unit):
@@ -9,7 +9,7 @@ def run(args: List<String>) -> IO(Unit):
     case _ <> "--worker" <> Nil{}:
       BT.serve(~DP.align)
     case _:
-      CLI.run(~DP.distance, args)
+      CLI.run_distance(~DP.distance, args)
 
 def main() -> IO(Unit):
   do IO<Unit>:

@@ -237,7 +237,13 @@ def main(argv=None):
         "options": {"repeats": args.repeats, "warmups": args.warmups}, "records": [], "break_even": {}}
     document["environment"]["cpu_affinity"] = sorted(os.sched_getaffinity(0))
     document["environment"]["sources_sha256"] = {str(path.relative_to(ROOT)): hashlib.sha256(path.read_bytes()).hexdigest()
-        for path in sorted(list(ROOT.glob("*.bend")) + list((ROOT / "benchmarks").glob("gpu_*")) + [ROOT / "benchmarks/cpu_batch_probe.bend"])}
+        for path in sorted(
+            list(ROOT.glob("*.bend")) + list((ROOT / "src").rglob("*.bend")) +
+            list((ROOT / "benchmarks").glob("gpu_*")) + [
+                ROOT / "src/transport.c", ROOT / "benchmarks/cpu_batch_probe.bend",
+                ROOT / "benchmarks/runner.py", ROOT / "run_gpu_benchmarks.py",
+                ROOT / "alignment.py", ROOT / "transport.py", ROOT / ".bend-version",
+            ])}
     cpuinfo = Path("/proc/cpuinfo").read_text()
     document["environment"]["cpu_model"] = next((line.split(":", 1)[1].strip() for line in cpuinfo.splitlines() if line.startswith("model name")), platform.machine())
     try:

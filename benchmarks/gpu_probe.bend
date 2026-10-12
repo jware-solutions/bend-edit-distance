@@ -1,6 +1,6 @@
 import Base
-import ../Batch.bend as B
-import ../BatchIO.bend as BT
+import ../src/Batch.bend as B
+import ../src/Transport.bend as BT
 import ../GpuBatch.bend as G
 import ../EdlibTypes.bend as E
 import ./gpu_metrics.bend as T
@@ -11,10 +11,10 @@ def parsed(prefetch: Bool, count: Maybe<&2, Nat>) -> IO(Unit):
       IO.die(Unit, 2, "Expected a natural batch count")
     case Some{n}:
       do IO<Unit>:
-        jobs : List<&2, E.AlignJob> <- BT.read(n)
+        jobs : List<&2, E.AlignJob> <- BT.read_batch(n)
         plan : B.Plan <- T.begin(B.Plan, prefetch, B.prepare(jobs))
         values : List<&2, B.IndexedResult> <- T.end(List<&2, B.IndexedResult>, G.execute(plan))
-        BT.write(G.ordered(values))
+        BT.write_batch(G.ordered(values))
         T.finish()
 
 def run(args: List<String>) -> IO(Unit):

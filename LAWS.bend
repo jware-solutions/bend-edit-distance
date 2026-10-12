@@ -1,14 +1,14 @@
 import Base
-import ./main.bend as Main
-import ./DistanceDP.bend as DP
-import ./Cli.bend as CLI
+import ./src/Myers.bend as Myers
+import ./src/DistanceDP.bend as DP
+import ./src/Cli.bend as CLI
 import ./EdlibTypes.bend as E
-import ./Alignment.bend as A
+import ./src/Alignment.bend as A
 import ./lib.bend as L
-import ./ByteProtocol.bend as BT
-import ./AlignmentCli.bend as AC
-import ./Reconstruction.bend as R
-import ./Batch.bend as B
+import ./src/ByteProtocol.bend as BT
+import ./src/Cli.bend as AC
+import ./src/Reconstruction.bend as R
+import ./src/Batch.bend as B
 import ./GpuBatch.bend as G
 
 # GPU batches prepare a complete plan on the host, execute it in one ! call,
@@ -114,14 +114,14 @@ type CarrySign is Data:
   ZeroCarry{}
   PositiveCarry{}
 
-def carry(sign: CarrySign) -> Main.Carry:
+def carry(sign: CarrySign) -> Myers.Carry:
   match sign:
     case NegativeCarry{}:
-      Main.Carry{0, 1}
+      Myers.Carry{0, 1}
     case ZeroCarry{}:
-      Main.Carry{0, 0}
+      Myers.Carry{0, 0}
     case PositiveCarry{}:
-      Main.Carry{1, 0}
+      Myers.Carry{1, 0}
 
 def uniform_eq(matches: Bool) -> U32:
   match matches:
@@ -130,18 +130,18 @@ def uniform_eq(matches: Bool) -> U32:
     case True{}:
       4294967295
 
-def initial_carry(sign: CarrySign, matches: Bool) -> Main.Carry:
+def initial_carry(sign: CarrySign, matches: Bool) -> Myers.Carry:
   match sign matches:
     case NegativeCarry{} _:
-      Main.Carry{0, 1}
+      Myers.Carry{0, 1}
     case ZeroCarry{} False{}:
-      Main.Carry{0, 0}
+      Myers.Carry{0, 0}
     case PositiveCarry{} False{}:
-      Main.Carry{0, 0}
+      Myers.Carry{0, 0}
     case ZeroCarry{} True{}:
-      Main.Carry{0, 1}
+      Myers.Carry{0, 1}
     case PositiveCarry{} True{}:
-      Main.Carry{0, 1}
+      Myers.Carry{0, 1}
 
 # Benchmark contract: same ordered corpus pairs, unrestricted NW/unit costs,
 # supported ASCII, checksummed homogeneous batches, and pinned CPU affinity.
@@ -154,16 +154,16 @@ def initial_carry(sign: CarrySign, matches: Bool) -> Main.Carry:
 # length. These quantify over every string, rather than selected examples.
 law empty_query:
   for target: String
-  {Main.distance("", target) == String.length(target) : Nat}
+  {Myers.distance("", target) == String.length(target) : Nat}
 
 law empty_target:
   for query: String
-  {Main.distance(query, "") == String.length(query) : Nat}
+  {Myers.distance(query, "") == String.length(query) : Nat}
 
 # Query-profile padding must match every symbol, including a full empty word.
 law wildcard_padding:
   for symbol: Char
-  {Main.build_peq_word("", symbol, 1, Nil{}) == 4294967295 : U32}
+  {Myers.build_peq_word("", symbol, 1, Nil{}) == 4294967295 : U32}
 
 # Structural invariants quantify over all Bend Strings (including Unicode)
 # and unbounded Nat sizes. They make no alphabet or distance claim.
@@ -174,18 +174,18 @@ def rejoin(parts: String & String) -> String:
 law split_rejoins:
   for size: Nat
   for query: String
-  {rejoin(Main.split_query(size, query)) == query : String}
+  {rejoin(Myers.split_query(size, query)) == query : String}
 
 law split_prefix_length:
   for size: Nat
   for query: String
-  {String.length(Pair.fst(String, String, Main.split_query(size, query))) ==
+  {String.length(Pair.fst(String, String, Myers.split_query(size, query))) ==
     Nat.min(size, String.length(query)) : Nat}
 
 law initial_block_count:
   for count: Nat
   for bottom: U32
-  {List.length(&1, Main.Block, Main.init_blocks(count, bottom)) == count : Nat}
+  {List.length(&1, Myers.Block, Myers.init_blocks(count, bottom)) == count : Nat}
 
 # With no padding, decoding preserves every U32 score, even for unreachable
 # bit-vector states. This does not assert nonwrapping arithmetic or optimality.
@@ -193,7 +193,7 @@ law decode_no_padding:
   for positive: U32
   for negative: U32
   for score: U32
-  {Main.get_block_cell_value(0n, positive, negative, score) == score : U32}
+  {Myers.get_block_cell_value(0n, positive, negative, score) == score : U32}
 
 # Outgoing carries depend only on the equality/vertical masks and incoming
 # carry. Every U32 score is allowed, including wraparound values. This states
@@ -202,13 +202,13 @@ law carry_score_independent:
   for positive: U32
   for negative: U32
   for eq: U32
-  for incoming: Main.Carry
+  for incoming: Myers.Carry
   for first_score: U32
   for second_score: U32
-  {Pair.snd(Main.Block, Main.Carry,
-    Main.calculate_block(Main.Block{positive, negative, first_score}, eq, incoming)) ==
-    Pair.snd(Main.Block, Main.Carry,
-      Main.calculate_block(Main.Block{positive, negative, second_score}, eq, incoming)) : Main.Carry}
+  {Pair.snd(Myers.Block, Myers.Carry,
+    Myers.calculate_block(Myers.Block{positive, negative, first_score}, eq, incoming)) ==
+    Pair.snd(Myers.Block, Myers.Carry,
+      Myers.calculate_block(Myers.Block{positive, negative, second_score}, eq, incoming)) : Myers.Carry}
 
 # Carry propagation families: every U32 score, all three incoming signs, and
 # a uniform equality word (all 32 positions match, or all mismatch). The first
@@ -219,17 +219,17 @@ law initial_uniform_carry:
   for score: U32
   for incoming: CarrySign
   for matches: Bool
-  {Pair.snd(Main.Block, Main.Carry,
-    Main.calculate_block(Main.Block{4294967295, 0, score},
-      uniform_eq(matches), carry(incoming))) == initial_carry(incoming, matches) : Main.Carry}
+  {Pair.snd(Myers.Block, Myers.Carry,
+    Myers.calculate_block(Myers.Block{4294967295, 0, score},
+      uniform_eq(matches), carry(incoming))) == initial_carry(incoming, matches) : Myers.Carry}
 
 law finished_uniform_carry:
   for score: U32
   for incoming: CarrySign
   for matches: Bool
-  {Pair.snd(Main.Block, Main.Carry,
-    Main.calculate_block(Main.Block{0, 4294967295, score},
-      uniform_eq(matches), carry(incoming))) == Main.Carry{1, 0} : Main.Carry}
+  {Pair.snd(Myers.Block, Myers.Carry,
+    Myers.calculate_block(Myers.Block{0, 4294967295, score},
+      uniform_eq(matches), carry(incoming))) == Myers.Carry{1, 0} : Myers.Carry}
 
 law small_ascii_supported:
   for sequence: SmallAscii
@@ -237,64 +237,64 @@ law small_ascii_supported:
 
 law small_ascii_identity:
   for sequence: SmallAscii
-  {Main.distance(small_ascii(sequence), small_ascii(sequence)) == 0n : Nat}
+  {Myers.distance(small_ascii(sequence), small_ascii(sequence)) == 0n : Nat}
 
 law small_ascii_equivalence:
   for query: SmallAscii
   for target: SmallAscii
-  {Main.distance(small_ascii(query), small_ascii(target)) ==
+  {Myers.distance(small_ascii(query), small_ascii(target)) ==
     DP.distance(small_ascii(query), small_ascii(target)) : Nat}
 
 # Ordinary equality is case-sensitive; padding alone is a wildcard. Bit 31
 # remains a real query position when the word is full (no wildcard high bits).
 law mask_case_sensitive:
-  {Main.build_peq_word("aA", 'A', 1, Nil{}) == 4294967294 : U32}
+  {Myers.build_peq_word("aA", 'A', 1, Nil{}) == 4294967294 : U32}
 
 law mask_full_word_high_bit:
-  {Main.build_peq_word("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAC", 'C', 1, Nil{}) == 2147483648 : U32}
+  {Myers.build_peq_word("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAC", 'C', 1, Nil{}) == 2147483648 : U32}
 
 # The measured table lookup follows low bits first and preserves case/padding.
 law table_lookup_ascii:
-  {Main.peq_get(Main.build_peq_table(8n, "aA", 0, 1, Nil{}), 65, True{}) == 4294967294 : U32}
+  {Myers.peq_get(Myers.build_peq_table(8n, "aA", 0, 1, Nil{}), 65, True{}) == 4294967294 : U32}
 
 law table_lookup_missing:
-  {Main.peq_get(Main.build_peq_table(8n, "aA", 0, 1, Nil{}), 128, False{}) == 4294967292 : U32}
+  {Myers.peq_get(Myers.build_peq_table(8n, "aA", 0, 1, Nil{}), 128, False{}) == 4294967292 : U32}
 
 # Reachable first-column states distinguish a negative carry from zero.
 law block_match_carry:
-  {Main.calculate_block(Main.Block{4294967295, 0, 32}, 4294967295, Main.Carry{1, 0}) ==
-    (Main.Block{4294967294, 1, 31}, Main.Carry{0, 1}) : Main.Block & Main.Carry}
+  {Myers.calculate_block(Myers.Block{4294967295, 0, 32}, 4294967295, Myers.Carry{1, 0}) ==
+    (Myers.Block{4294967294, 1, 31}, Myers.Carry{0, 1}) : Myers.Block & Myers.Carry}
 
 law block_mismatch_carry:
-  {Main.calculate_block(Main.Block{4294967295, 0, 32}, 0, Main.Carry{1, 0}) ==
-    (Main.Block{4294967294, 0, 32}, Main.Carry{0, 0}) : Main.Block & Main.Carry}
+  {Myers.calculate_block(Myers.Block{4294967295, 0, 32}, 0, Myers.Carry{1, 0}) ==
+    (Myers.Block{4294967294, 0, 32}, Myers.Carry{0, 0}) : Myers.Block & Myers.Carry}
 
 # After a full matching column sequence, a trailing mismatch inserts one more
 # target character and produces a positive horizontal carry.
 law block_positive_carry:
-  {Main.calculate_block(Main.Block{0, 4294967295, 0}, 0, Main.Carry{1, 0}) ==
-    (Main.Block{0, 4294967295, 1}, Main.Carry{1, 0}) : Main.Block & Main.Carry}
+  {Myers.calculate_block(Myers.Block{0, 4294967295, 0}, 0, Myers.Carry{1, 0}) ==
+    (Myers.Block{0, 4294967295, 1}, Myers.Carry{1, 0}) : Myers.Block & Myers.Carry}
 
 law block_decode_high_bit:
-  {Main.get_block_cell_value(31n, 4294967294, 1, 31) == 0 : U32}
+  {Myers.get_block_cell_value(31n, 4294967294, 1, 31) == 0 : U32}
 
 law distance_empty:
-  {Main.response("", "") == "0" : String}
+  {Myers.response("", "") == "0" : String}
 
 law distance_match:
-  {Main.response("A", "A") == "0" : String}
+  {Myers.response("A", "A") == "0" : String}
 
 law distance_substitution:
-  {Main.response("A", "T") == "1" : String}
+  {Myers.response("A", "T") == "1" : String}
 
 law distance_deletion:
-  {Main.response("ACGT", "ACG") == "1" : String}
+  {Myers.response("ACGT", "ACG") == "1" : String}
 
 law distance_insertion:
-  {Main.response("ACG", "ACGT") == "1" : String}
+  {Myers.response("ACG", "ACGT") == "1" : String}
 
 law distance_example:
-  {Main.response("kitten", "sitting") == "3" : String}
+  {Myers.response("kitten", "sitting") == "3" : String}
 
 # DP has its own entry point and boundary laws, independent of Myers.
 law dp_empty_query:
@@ -440,20 +440,20 @@ law threshold_comparison:
 # uses 32-bit words; broader correctness is checked against independent DP
 # and pinned Edlib, not claimed by these concrete or structural laws.
 law threshold_zero_match:
-  {Main.edlib_align("A", "A", E.AlignConfig{E.NW{}, E.Distance{}, E.MaxDistance{0n}, Nil{}, E.Extended{}}) ==
+  {Myers.edlib_align("A", "A", E.AlignConfig{E.NW{}, E.Distance{}, E.MaxDistance{0n}, Nil{}, E.Extended{}}) ==
     E.distance_result(0n, E.Position{0n}, True{}) : E.AlignResult}
 
 law threshold_inclusive:
-  {Main.edlib_align("A", "T", E.AlignConfig{E.NW{}, E.Distance{}, E.MaxDistance{1n}, Nil{}, E.Extended{}}) ==
+  {Myers.edlib_align("A", "T", E.AlignConfig{E.NW{}, E.Distance{}, E.MaxDistance{1n}, Nil{}, E.Extended{}}) ==
     E.distance_result(1n, E.Position{0n}, True{}) : E.AlignResult}
 
 law threshold_exceeded:
-  {Main.edlib_align("A", "T", E.AlignConfig{E.NW{}, E.Distance{}, E.MaxDistance{0n}, Nil{}, E.Extended{}}) ==
+  {Myers.edlib_align("A", "T", E.AlignConfig{E.NW{}, E.Distance{}, E.MaxDistance{0n}, Nil{}, E.Extended{}}) ==
     E.not_found() : E.AlignResult}
 
 law threshold_length_rejection:
-  {Main.search_shorter("A", "AAAA", 1n, 4n, E.MaxDistance{2n}, True{}, Nil{}) ==
-    Main.Search{E.NotFound{}, 0n, 0n, 0n} : Main.Search}
+  {Myers.search_shorter("A", "AAAA", 1n, 4n, E.MaxDistance{2n}, True{}, Nil{}) ==
+    Myers.Search{E.NotFound{}, 0n, 0n, 0n} : Myers.Search}
 
 law negative_cli_threshold:
   # Parsing the entire i32 range is exercised natively; reducing a billion-
@@ -468,21 +468,21 @@ law empty_nw_threshold_task:
   for target: String
   for task: E.Task
   for threshold: E.Threshold
-  {Main.edlib_align("", target, E.AlignConfig{E.NW{}, task, threshold, Nil{}, E.Extended{}}) ==
+  {Myers.edlib_align("", target, E.AlignConfig{E.NW{}, task, threshold, Nil{}, E.Extended{}}) ==
     E.distance_result(String.length(target), E.end_coordinate(String.length(target)), True{}) : E.AlignResult}
 
 law empty_shw_threshold_task:
   for target: String
   for task: E.Task
   for threshold: E.Threshold
-  {Main.edlib_align("", target, E.AlignConfig{E.SHW{}, task, threshold, Nil{}, E.Extended{}}) ==
+  {Myers.edlib_align("", target, E.AlignConfig{E.SHW{}, task, threshold, Nil{}, E.Extended{}}) ==
     E.distance_result(0n, E.BeforeStart{}, True{}) : E.AlignResult}
 
 law empty_hw_threshold_task:
   for target: String
   for task: E.Task
   for threshold: E.Threshold
-  {Main.edlib_align("", target, E.AlignConfig{E.HW{}, task, threshold, Nil{}, E.Extended{}}) ==
+  {Myers.edlib_align("", target, E.AlignConfig{E.HW{}, task, threshold, Nil{}, E.Extended{}}) ==
     E.distance_result(0n, E.BeforeStart{}, True{}) : E.AlignResult}
 
 # Directional boundaries: rows consume the original query; columns consume
@@ -499,10 +499,10 @@ law dp_hw_top_boundary:
   {List.head(&1, U32, DP.initial_semiglobal_row(length, column, E.HW{})) == Some{0} : Maybe<U32>}
 
 law shw_horizontal_boundary:
-  {Main.semiglobal_carry(E.SHW{}) == Main.Carry{1, 0} : Main.Carry}
+  {Myers.semiglobal_carry(E.SHW{}) == Myers.Carry{1, 0} : Myers.Carry}
 
 law hw_horizontal_boundary:
-  {Main.semiglobal_carry(E.HW{}) == Main.Carry{0, 0} : Main.Carry}
+  {Myers.semiglobal_carry(E.HW{}) == Myers.Carry{0, 0} : Myers.Carry}
 
 law dp_shw_free_suffix:
   {DP.semiglobal("AC", "ACT", E.SHW{}, Nil{}) == DP.Best{0, [E.Position{1n}]} : DP.Best}
@@ -511,27 +511,27 @@ law dp_hw_free_prefix_suffix:
   {DP.semiglobal("AC", "TACG", E.HW{}, Nil{}) == DP.Best{0, [E.Position{2n}]} : DP.Best}
 
 law shw_free_suffix:
-  {Main.edlib_align("AC", "ACT", E.AlignConfig{E.SHW{}, E.Distance{}, E.MaxDistance{0n}, Nil{}, E.Extended{}}) ==
+  {Myers.edlib_align("AC", "ACT", E.AlignConfig{E.SHW{}, E.Distance{}, E.MaxDistance{0n}, Nil{}, E.Extended{}}) ==
     E.distance_result(0n, E.Position{1n}, True{}) : E.AlignResult}
 
 law shw_preserves_query:
-  {Main.edlib_align("ACT", "AC", E.AlignConfig{E.SHW{}, E.Distance{}, E.Unlimited{}, Nil{}, E.Extended{}}) ==
+  {Myers.edlib_align("ACT", "AC", E.AlignConfig{E.SHW{}, E.Distance{}, E.Unlimited{}, Nil{}, E.Extended{}}) ==
     E.distance_result(1n, E.Position{1n}, True{}) : E.AlignResult}
 
 law hw_preserves_query:
-  {Main.edlib_align("ACT", "AC", E.AlignConfig{E.HW{}, E.Distance{}, E.Unlimited{}, Nil{}, E.Extended{}}) ==
+  {Myers.edlib_align("ACT", "AC", E.AlignConfig{E.HW{}, E.Distance{}, E.Unlimited{}, Nil{}, E.Extended{}}) ==
     E.distance_result(1n, E.Position{1n}, True{}) : E.AlignResult}
 
 law shw_prefix_threshold_exceeded:
-  {Main.edlib_align("AC", "TAC", E.AlignConfig{E.SHW{}, E.Distance{}, E.MaxDistance{0n}, Nil{}, E.Extended{}}) ==
+  {Myers.edlib_align("AC", "TAC", E.AlignConfig{E.SHW{}, E.Distance{}, E.MaxDistance{0n}, Nil{}, E.Extended{}}) ==
     E.not_found() : E.AlignResult}
 
 law shw_prefix_threshold_inclusive:
-  {Main.edlib_align("AC", "TAC", E.AlignConfig{E.SHW{}, E.Distance{}, E.MaxDistance{1n}, Nil{}, E.Extended{}}) ==
+  {Myers.edlib_align("AC", "TAC", E.AlignConfig{E.SHW{}, E.Distance{}, E.MaxDistance{1n}, Nil{}, E.Extended{}}) ==
     E.distance_result(1n, E.Position{2n}, True{}) : E.AlignResult}
 
 law hw_late_repeated_matches:
-  {Main.edlib_align("AC", "TTACGGAC", E.AlignConfig{E.HW{}, E.Distance{}, E.MaxDistance{0n}, Nil{}, E.Extended{}}) ==
+  {Myers.edlib_align("AC", "TTACGGAC", E.AlignConfig{E.HW{}, E.Distance{}, E.MaxDistance{0n}, Nil{}, E.Extended{}}) ==
     E.AlignResult{E.Ok{}, E.Found{0n}, [E.Position{3n}, E.Position{7n}], None{}, None{}, None{}} : E.AlignResult}
 
 law empty_target_threshold_mode:
@@ -539,7 +539,7 @@ law empty_target_threshold_mode:
   for mode: E.Mode
   for task: E.Task
   for threshold: E.Threshold
-  {Main.edlib_align(query, "", E.AlignConfig{mode, task, threshold, Nil{}, E.Extended{}}) ==
+  {Myers.edlib_align(query, "", E.AlignConfig{mode, task, threshold, Nil{}, E.Extended{}}) ==
     E.distance_result(String.length(query), E.BeforeStart{}, True{}) : E.AlignResult}
 
 law threshold_not_found:
@@ -566,7 +566,7 @@ law task_failure_fields:
   for pairs: List<&2, E.EqualityPair>
   for format: E.CigarFormat
   for best: A.Best
-  {Main.configured_result(query, target, mode, task, pairs, format, best, False{}) ==
+  {Myers.configured_result(query, target, mode, task, pairs, format, best, False{}) ==
     E.not_found() : E.AlignResult}
 
 law distance_task_fields:
@@ -577,34 +577,34 @@ law distance_task_fields:
   for format: E.CigarFormat
   for score: U32
   for locations: List<&2, A.Location>
-  {Main.configured_result(query, target, mode, E.Distance{}, pairs, format,
+  {Myers.configured_result(query, target, mode, E.Distance{}, pairs, format,
     A.Best{score, locations}, True{}) ==
     E.AlignResult{E.Ok{}, E.Found{U32.to_nat(score)}, A.ends(locations), None{}, None{}, None{}} : E.AlignResult}
 
 law hw_before_start_location:
   for reverse_target: String
   for target_length: Nat
-  for profiles: List<&2, Main.Peq>
+  for profiles: List<&2, Myers.Peq>
   for query_length: Nat
   for maximum: Nat
-  {Main.hw_location(A.Location{E.BeforeStart{}, 0n}, reverse_target, target_length,
+  {Myers.hw_location(A.Location{E.BeforeStart{}, 0n}, reverse_target, target_length,
     profiles, query_length, maximum) == A.Location{E.BeforeStart{}, 0n} : A.Location}
 
 law hw_last_reverse_tie:
-  {Main.hw_start_best(3n, A.Best{1,
+  {Myers.hw_start_best(3n, A.Best{1,
     [A.Location{E.Position{1n}, 0n}, A.Location{E.Position{2n}, 0n}]}) ==
     A.Location{E.Position{3n}, 1n} : A.Location}
 
 law nw_locations_keep_target_axis:
-  {Main.edlib_align("TACGT", "AC", E.AlignConfig{E.NW{}, E.Locations{}, E.Unlimited{}, Nil{}, E.Extended{}}) ==
+  {Myers.edlib_align("TACGT", "AC", E.AlignConfig{E.NW{}, E.Locations{}, E.Unlimited{}, Nil{}, E.Extended{}}) ==
     E.AlignResult{E.Ok{}, E.Found{3n}, [E.Position{1n}], Some{[E.Position{0n}]}, None{}, None{}} : E.AlignResult}
 
 law hw_earliest_start_tie:
-  {Main.edlib_align("ABC", "XXBC", E.AlignConfig{E.HW{}, E.Locations{}, E.MaxDistance{1n}, Nil{}, E.Extended{}}) ==
+  {Myers.edlib_align("ABC", "XXBC", E.AlignConfig{E.HW{}, E.Locations{}, E.MaxDistance{1n}, Nil{}, E.Extended{}}) ==
     E.AlignResult{E.Ok{}, E.Found{1n}, [E.Position{3n}], Some{[E.Position{1n}]}, None{}, None{}} : E.AlignResult}
 
 law hw_path_before_start:
-  {Main.edlib_align("A", "TT", E.AlignConfig{E.HW{}, E.Path{}, E.MaxDistance{1n}, Nil{}, E.Extended{}}) ==
+  {Myers.edlib_align("A", "TT", E.AlignConfig{E.HW{}, E.Path{}, E.MaxDistance{1n}, Nil{}, E.Extended{}}) ==
     E.AlignResult{E.Ok{}, E.Found{1n}, [E.BeforeStart{}, E.Position{0n}, E.Position{1n}],
       Some{[E.Position{0n}, E.Position{0n}, E.Position{1n}]}, Some{[E.Insert{}]}, Some{"1I"}} : E.AlignResult}
 
@@ -635,17 +635,17 @@ law equality_zero_high_byte:
 law configured_wildcard_padding:
   for symbol: Char
   for pairs: List<&2, E.EqualityPair>
-  {Main.build_peq_word("", symbol, 1, pairs) == 4294967295 : U32}
+  {Myers.build_peq_word("", symbol, 1, pairs) == 4294967295 : U32}
 
 law configured_mask_case_insensitive:
-  {Main.build_peq_word("aA", 'A', 1, [E.EqualityPair{'a', 'A'}]) == 4294967295 : U32}
+  {Myers.build_peq_word("aA", 'A', 1, [E.EqualityPair{'a', 'A'}]) == 4294967295 : U32}
 
 law configured_mask_nontransitive:
-  {Main.build_peq_word("ACN", 'C', 1,
+  {Myers.build_peq_word("ACN", 'C', 1,
     [E.EqualityPair{'N', 'A'}, E.EqualityPair{'N', 'C'}]) == 4294967294 : U32}
 
 law configured_table_zero_high_byte:
-  {Main.peq_get(Main.build_peq_table(8n, SCon{Chr{0}, ""}, 0, 1,
+  {Myers.peq_get(Myers.build_peq_table(8n, SCon{Chr{0}, ""}, 0, 1,
     [E.EqualityPair{Chr{0}, Chr{255}}]), 255, True{}) == 4294967295 : U32}
 
 law configured_dp_case_insensitive:
@@ -775,7 +775,7 @@ law path_rejected_validation:
 law library_distance_matches_main:
   for query: String
   for target: String
-  {L.distance(query, target) == Main.distance(query, target) : Nat}
+  {L.distance(query, target) == Myers.distance(query, target) : Nat}
 
 law library_default_config:
   {L.default_config() == E.default_config() : E.AlignConfig}
@@ -784,7 +784,7 @@ law library_align_matches_main:
   for query: String
   for target: String
   for config: E.AlignConfig
-  {L.align(query, target, config) == Main.edlib_align(query, target, config) : E.AlignResult}
+  {L.align(query, target, config) == Myers.edlib_align(query, target, config) : E.AlignResult}
 
 # Configured DP cells and columns retain their dependencies. Independent
 # input scans, Myers profile branches and Hirschberg score passes run in

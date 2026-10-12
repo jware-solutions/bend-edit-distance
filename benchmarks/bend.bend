@@ -1,6 +1,6 @@
 import Base
-import ../main.bend as M
-import ../Cli.bend as CLI
+import ../src/Myers.bend as M
+import ../src/Cli.bend as CLI
 import ../EdlibTypes.bend as E
 import ../lib.bend as L
 import ./timer.bend as T

@@ -103,6 +103,12 @@ See [examples/library_usage.bend](examples/library_usage.bend) for a local libra
 
 ## Contributing and development
 
+The public CPU API is [lib.bend](lib.bend), with canonical types and constructors
+in [EdlibTypes.bend](EdlibTypes.bend). [GpuBatch.bend](GpuBatch.bend) is the explicit
+GPU API. The compatible `main.bend`, `worker.bend` and `gpu_batch.bend` entries
+delegate to the flat implementation modules in `src/`. See the
+[source layout and preserved contracts](docs/SIMPLIFICATION.md).
+
 See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, implementation notes, testing and proof commands, benchmarks, and CI/release information.
 
 ## License

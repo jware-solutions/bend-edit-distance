@@ -119,7 +119,7 @@ The 4,096-character cap bounds query-profile allocation and alignment work:
 Myers advances at most `4096 * 128` blocks, and the DP test executable computes
 at most `4096 * 4096` cells. It also keeps scores well inside `U32` and arguments
 below the tested WSL/Linux transport limits. This is a conservative supported
-size, not a universal latency guarantee. `Cli.bend` validates both inputs in
+size, not a universal latency guarantee. `src/Cli.bend` validates both inputs in
 parallel with bounded scans (at most 4,097 characters per sequence), before
 either algorithm or its empty-input shortcuts run. Workers use explicit byte
 lengths and bypass this CLI validation. The pure Myers distance function requires
@@ -127,7 +127,12 @@ byte-valued characters; its table indexes the low eight bits of each character.
 
 ## Implementation
 
-The Myers implementation in `main.bend` ports the distance path from the
+Implementation lives in a flat `src/` directory. `lib.bend`, `EdlibTypes.bend`
+and `GpuBatch.bend` remain the public modules; `main.bend`, `worker.bend` and
+`gpu_batch.bend` remain executable entries. `LAWS.bend` and `PROOF.bend` stay at
+the root. See [the module responsibilities and contracts](docs/SIMPLIFICATION.md).
+
+The Myers implementation in `src/Myers.bend` ports the distance path from the
 vendored `edlib.cpp`:
 `build_peq`/`build_peq_word` build equality masks, `calculate_block` advances a
 Myers bit-vector block, `get_block_cell_value` removes wildcard padding from the
@@ -167,7 +172,7 @@ Independent start searches run in balanced parallel branches and retain end
 order. A forward end of `-1` gets start `0`, matching pinned Edlib.
 Start searches and traceback are skipped when no alignment meets `k`.
 
-`Reconstruction.bend` reconstructs a global alignment of the complete query
+`src/Reconstruction.bend` reconstructs a global alignment of the complete query
 against the **first** reported target interval; it never recomputes the selected
 locations. Full DP stores scores and predecessor operations for matrices of at
 most 4,096 cells, including boundaries. Traceback prefers up, left, diagonal on
@@ -189,7 +194,7 @@ Score storage is `O(min(m,n))` plus bounded DP base cases and recursion state;
 inputs and output need `O(m+n)` space. Reconstruction uses scalar DP work,
 `O(m*n*(p+1))` for `p` configured equality pairs, without threshold banding.
 
-Before returning PATH, `Alignment.bend` validates the selected interval bounds,
+Before returning PATH, `src/Alignment.bend` validates the selected interval bounds,
 exact consumption of both sequences, every match/mismatch under the configured
 equalities, and edit cost equal to the Myers distance. An internal validation
 failure returns an error with absent result fields. Tests independently check
@@ -218,7 +223,7 @@ inputs, free target ends, repeated matches, thresholds and every padding size.
 At `k = INT_MAX`, pinned Edlib's semiglobal initialization overflows `k+1`;
 Bend retains inclusive threshold semantics and checks that case against DP.
 
-`DistanceDP.bend` independently exports `distance(query, target) -> Nat` and
+`src/DistanceDP.bend` independently exports `distance(query, target) -> Nat` and
 configured DISTANCE `align(query, target, config)` for all three modes. It imports
 only `Base` and the result types, with no Myers or configured-DP dependency.
 It implements the two-row Levenshtein recurrence:
@@ -487,7 +492,7 @@ def main() -> IO(Unit):
 
 Compile [examples/batch_usage.bend](examples/batch_usage.bend) in WSL and run
 the executable with `--threads 1`, `--threads 2` or `--threads 4`.
-`Batch.bend` indexes jobs, stably sorts largest estimated work first, and
+`src/Batch.bend` indexes jobs, stably sorts largest estimated work first, and
 greedily places each job in the lighter of two branches. Each branch has a
 capacity of floor/ceil half the job count, so the tree has logarithmic depth
 even for equal costs or one dominant job. Empty and singleton batches bypass

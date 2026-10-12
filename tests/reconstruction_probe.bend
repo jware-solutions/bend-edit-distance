@@ -1,9 +1,9 @@
 import Base
 import ../EdlibTypes.bend as E
-import ../Alignment.bend as A
-import ../DistanceDP.bend as DP
-import ../Reconstruction.bend as R
-import ../BinaryTransport.bend as BT
+import ../src/Alignment.bend as A
+import ../src/DistanceDP.bend as DP
+import ../src/Reconstruction.bend as R
+import ../src/Transport.bend as BT
 
 # Exercise full DP and forced splits independently of public dispatch and
 # Myers. Empty inputs here deliberately return paths to test base cases.

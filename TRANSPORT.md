@@ -7,6 +7,12 @@ from stdin and flush one binary response to stdout per request, in order, until
 EOF. Stderr contains diagnostics only. The independent DP test executable
 supports the same transport for NW DISTANCE with ordinary equality.
 
+`src/Transport.bend` owns both persistent worker IO (`read_request`, `serve`)
+and counted batch IO (`read_batch`, `write_batch`). `src/ByteProtocol.bend`
+contains the pure byte/configuration/result conversions. The native bridge in
+`src/transport.c` is shared with `tests/edlib_oracle.cpp`; foreign effects stay
+outside the laws' import graph. Batch probes use this production adapter.
+
 All integers use little endian encoding. Each frame starts with a `u32` payload
 length, excluding that four-byte prefix. Frame lengths must be between the
 relevant header size and `2^31 - 1`, consistent with Edlib's signed length range.

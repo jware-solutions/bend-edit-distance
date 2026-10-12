@@ -1,5 +1,5 @@
 import Base
-import ./Batch.bend as B
+import ./src/Batch.bend as B
 import ./EdlibTypes.bend as E
 
 # Keep host planning and ordered-result restoration outside the single bang.
@@ -8,7 +8,7 @@ def execute(plan: B.Plan) -> List<&2, B.IndexedResult>:
   B.execute!(plan)
 
 def ordered(values: List<&2, B.IndexedResult>) -> List<&2, E.AlignResult>:
-  B.results(List.sort(~B.IndexedResult, ~B.earlier, values))
+  B.ordered(values)
 
 def align_plan(plan: B.Plan) -> List<&2, E.AlignResult>:
   ordered(execute(plan))

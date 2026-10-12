@@ -175,11 +175,14 @@ def summarize(samples):
 def environment(version, cxx, builds, args):
     git = git_command()
     status = command([*git, "status", "--porcelain", "--untracked-files=normal"])
-    sources = ["main.bend", "lib.bend", "Batch.bend", "EdlibTypes.bend", "Alignment.bend",
-               "Reconstruction.bend", "Cli.bend", ".bend-version", "run_benchmarks.py",
-               "benchmarks/bend.bend", "benchmarks/timer.bend", "benchmarks/timer.c",
-               "benchmarks/edlib.cpp", "benchmarks/launch.c", "benchmarks/runner.py", "benchmarks/generate.py",
-               "vendor/edlib/edlib/src/edlib.cpp", "vendor/edlib/edlib/include/edlib.h"]
+    sources = [
+        "main.bend", "worker.bend", "gpu_batch.bend", "lib.bend", "EdlibTypes.bend", "GpuBatch.bend",
+        "src/Myers.bend", "src/Alignment.bend", "src/Reconstruction.bend", "src/DistanceDP.bend",
+        "src/Batch.bend", "src/Cli.bend", "src/ByteProtocol.bend", "src/Transport.bend", "src/transport.c",
+        ".bend-version", "run_benchmarks.py", "benchmarks/bend.bend", "benchmarks/timer.bend",
+        "benchmarks/timer.c", "benchmarks/edlib.cpp", "benchmarks/launch.c", "benchmarks/runner.py",
+        "benchmarks/generate.py", "vendor/edlib/edlib/src/edlib.cpp", "vendor/edlib/edlib/include/edlib.h",
+    ]
     cpu = json.loads(command(["lscpu", "-J"]))["lscpu"]
     keys = {"Architecture:", "CPU(s):", "Model name:", "Thread(s) per core:",
             "Core(s) per socket:", "Socket(s):", "Hypervisor vendor:", "Virtualization type:"}

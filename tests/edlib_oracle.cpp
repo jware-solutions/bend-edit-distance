@@ -1,7 +1,7 @@
 // Structured oracle against the pinned, vendored Edlib implementation.
 #include "edlib.h"
 #define BEND_EDLIB_ORACLE
-#include "../transport.c"
+#include "../src/transport.c"
 
 #include <climits>
 #include <cstdio>

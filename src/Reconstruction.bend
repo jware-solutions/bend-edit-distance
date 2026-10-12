@@ -1,5 +1,5 @@
 import Base
-import ./EdlibTypes.bend as E
+import ../EdlibTypes.bend as E
 import ./DistanceDP.bend as DP
 
 # Global reconstruction of one already selected target interval. Small DP

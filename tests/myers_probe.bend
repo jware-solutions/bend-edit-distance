@@ -1,7 +1,7 @@
 import Base
-import ../main.bend as M
+import ../src/Myers.bend as M
 import ../EdlibTypes.bend as E
-import ../AlignmentCli.bend as AC
+import ../src/Cli.bend as AC
 
 # Test-only observability. All masks, transitions and decoded cells come from
 # production defs; Python compares them with a scalar DP column, not a second

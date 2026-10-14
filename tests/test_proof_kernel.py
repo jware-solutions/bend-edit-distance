@@ -11,7 +11,7 @@ from tests.helpers import ROOT, execute
 
 @pytest.fixture
 def toolchain(tmp_path):
-    (tmp_path / ".bend-version").write_text("2.0.36\n")
+    (tmp_path / ".bend-version").write_text("2.0.37\n")
     (tmp_path / ".lean-version").write_text("4.34.0\n")
     source = tmp_path / "build" / "tools" / "bend" / "bend2" / "bendtt.lean"
     source.parent.mkdir(parents=True)

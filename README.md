@@ -8,7 +8,7 @@ A Bend implementation of Edlib's edit-distance and alignment features.
 
 ## Setup
 
-Install Bend 2.0.36 or newer. On Windows, use WSL. On Linux or WSL, the official installer is:
+Install Bend 2.0.37 or newer. On Windows, use WSL. On Linux or WSL, the official installer is:
 
 ```bash
 curl -fsSL https://bend-lang.com/install.sh | sh

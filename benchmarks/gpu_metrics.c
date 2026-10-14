@@ -1,4 +1,4 @@
-// Validation-only Bend 2.0.36 ABI. gpu_runner.py adds a counter AFTER the
+// Validation-only Bend 2.0.37 ABI. gpu_runner.py adds a counter AFTER the
 // runtime's gpu_pass returns (including its successful synchronization).
 // CPU fallback cannot increment this counter. Keep production code untouched.
 #include <inttypes.h>

@@ -16,7 +16,7 @@ import ./GpuBatch.bend as G
 # Device execution is a runtime claim: --gpu on AND completed device passes
 # are required. CPU fallback, a .gpu file, and successful output alone are
 # never evidence of device execution. CUDA requires concurrent managed access;
-# Bend 2.0.36 rejects WSL CUDA without it. Metrics are outside these proofs.
+# Bend 2.0.37 rejects WSL CUDA without it. Metrics are outside these proofs.
 law gpu_execution_values:
   for plan: B.Plan
   {G.execute(plan) == B.execute(plan) : List<&2, B.IndexedResult>}
@@ -149,6 +149,9 @@ def initial_carry(sign: CarrySign, matches: Bool) -> Myers.Carry:
 # benchmark-only foreign effects; their measurements are runtime observations,
 # outside these laws. Keep the 256-entry table/eight-step lookup unchanged until
 # benchmarks/corpus.json and the phase/lookup probes have measured their costs.
+# Toolchain comparisons retain identical plans, input order and full-result
+# checksums at 1/2/4 CPU threads, including an uneven batch and a delayed fork.
+# Scheduler throughput is a runtime observation, outside the proof kernel.
 
 # NW boundary conditions: deleting or inserting a whole sequence costs its
 # length. These quantify over every string, rather than selected examples.

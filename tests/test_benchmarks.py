@@ -64,3 +64,69 @@ def test_summary_keeps_dispersion_and_uses_nearest_rank_p95():
     report = summarize([{"work_ns": n, "peak_rss_kib": n * 2, "checksum": 7} for n in (10, 20, 100)])
     assert report["work_ns"] == {"median": 20, "min": 10, "max": 100, "p95": 100}
     assert "checksum" not in report
+
+
+@pytest.mark.parametrize("baseline,candidate", [
+    ("bend 2.0.35", "bend 2.0.38"),
+    ("bend 3.0.0-rc.1", "bend 3.1.0+custom"),
+    ("bend 2.0.37", "bend 2.0.37"),
+])
+def test_toolchain_comparison_accepts_arbitrary_bend_versions(monkeypatch, baseline, candidate):
+    from benchmarks import compare_toolchains as comparison
+
+    compilers = {"baseline": ROOT / "baseline/bend", "candidate": ROOT / "candidate/bend"}
+    outputs = {compilers["baseline"]: baseline, compilers["candidate"]: candidate}
+    monkeypatch.setattr(comparison, "command", lambda argv: outputs[argv[0]])
+    assert comparison.compiler_versions(compilers) == {"baseline": baseline, "candidate": candidate}
+
+
+@pytest.mark.parametrize("invalid", ["", "bend", "bend ", "clang version 21.1.8"])
+def test_toolchain_comparison_rejects_invalid_compiler_versions(monkeypatch, invalid):
+    from benchmarks import compare_toolchains as comparison
+
+    monkeypatch.setattr(comparison, "command", lambda argv: invalid)
+    with pytest.raises(ValueError, match="Unexpected Bend compiler versions"):
+        comparison.compiler_versions({"baseline": ROOT / "not-bend"})
+
+
+def test_toolchain_comparison_checks_locations_even_when_distance_matches(monkeypatch):
+    from dataclasses import replace
+    from types import SimpleNamespace
+
+    from alignment import AlignConfig, AlignResult, Position
+    from benchmarks import compare_toolchains as comparison
+
+    expected = AlignResult.from_edlib({"status": 0, "edit_distance": 1,
+                                      "end_locations": [0], "start_locations": None,
+                                      "alignment": None, "cigar": None})
+    wrong = replace(expected, end_locations=(Position(1),))
+    workload = {"name": "location-regression", "mode": "demand",
+                "jobs": [("A", "C", AlignConfig())], "distances": [1]}
+    affinity = []
+    monkeypatch.setattr(comparison.os, "sched_getaffinity", lambda pid: {0, 1})
+    monkeypatch.setattr(comparison.os, "sched_setaffinity", lambda pid, cpus: affinity.append(set(cpus)))
+    monkeypatch.setattr(comparison.subprocess, "run", lambda *a, **kw: SimpleNamespace(
+        returncode=0, stdout=b"response", stderr=b""))
+    monkeypatch.setattr(comparison, "decode_batch", lambda output, count: [wrong])
+    with pytest.raises(RuntimeError, match="Full ordered result mismatch"):
+        comparison.measure(ROOT / "unused", workload, 1, [0, 1], [expected], 1)
+    assert affinity == [{0}, {0, 1}]
+
+
+def test_toolchain_comparison_restores_affinity_after_timeout(monkeypatch):
+    import subprocess
+
+    from benchmarks import compare_toolchains as comparison
+
+    affinity = []
+    monkeypatch.setattr(comparison.os, "sched_getaffinity", lambda pid: {0, 1})
+    monkeypatch.setattr(comparison.os, "sched_setaffinity", lambda pid, cpus: affinity.append(set(cpus)))
+
+    def timeout(*args, **kwargs):
+        raise subprocess.TimeoutExpired("probe", 1)
+
+    monkeypatch.setattr(comparison.subprocess, "run", timeout)
+    workload = {"mode": "demand", "jobs": []}
+    with pytest.raises(subprocess.TimeoutExpired):
+        comparison.measure(ROOT / "unused", workload, 1, [0, 1], [], 1)
+    assert affinity == [{0}, {0, 1}]

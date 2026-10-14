@@ -1,4 +1,5 @@
 import Base
+import ./Sequence.bend as S
 import ../EdlibTypes.bend as E
 import ./DistanceDP.bend as DP
 
@@ -108,7 +109,7 @@ def dp_trace(matrix: List<&2, List<&2, TraceCell>>, query_length: Nat,
         target_length, target_length, Nil{})
 
 def dp(+query: String, +target: String, pairs: List<&2, E.EqualityPair>) -> List<&2, E.Operation>:
-  qn +tn = String.length(query) String.length(target)
+  qn +tn = S.length(query) S.length(target)
   +boundary = dp_initial(target, 0)
   dp_trace(dp_rows(query, target, boundary, 1, pairs,
     [List.reverse(&2, TraceCell, boundary)]), qn, tn)
@@ -119,7 +120,7 @@ def small_matrix(query_length: Nat, +target_length: Nat) -> Bool:
   Nat.is_le(1n+query_length, Nat.div(4096n, 1n+target_length))
 
 def score_row(query: String, +target: String, pairs: List<&2, E.EqualityPair>) -> List<U32>:
-  DP.final_row(query, target, DP.initial_row(String.length(target), 0), 1, pairs)
+  DP.final_row(query, target, DP.initial_row(S.length(target), 0), 1, pairs)
 
 type Split is Data:
   Split{index: Nat, score: U32}
@@ -224,7 +225,7 @@ def reconstruct_order(query: String, target: String, +query_length: Nat,
 
 def reconstruct(+query: String, +target: String, pairs: List<&2, E.EqualityPair>) ->
                   List<&2, E.Operation>:
-  +qn +tn = String.length(query) String.length(target)
+  +qn +tn = S.length(query) S.length(target)
   reconstruct_order(query, target, qn, tn, pairs, small_matrix(qn, tn), Nat.is_ge(qn, tn))
 
 # Edlib codes: Match=0 consumes both, Insert=1 consumes query only,

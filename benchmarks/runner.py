@@ -178,7 +178,7 @@ def environment(version, cxx, builds, args):
     sources = [
         "main.bend", "worker.bend", "gpu_batch.bend", "lib.bend", "EdlibTypes.bend", "GpuBatch.bend",
         "src/Myers.bend", "src/Alignment.bend", "src/Reconstruction.bend", "src/DistanceDP.bend",
-        "src/Batch.bend", "src/Cli.bend", "src/ByteProtocol.bend", "src/Transport.bend", "src/transport.c",
+        "src/Sequence.bend", "src/Batch.bend", "src/Cli.bend", "src/ByteProtocol.bend", "src/Transport.bend", "src/transport.c",
         ".bend-version", "run_benchmarks.py", "benchmarks/bend.bend", "benchmarks/timer.bend",
         "benchmarks/timer.c", "benchmarks/edlib.cpp", "benchmarks/launch.c", "benchmarks/runner.py",
         "benchmarks/generate.py", "vendor/edlib/edlib/src/edlib.cpp", "vendor/edlib/edlib/include/edlib.h",

@@ -1,4 +1,5 @@
 import Base
+import ./Sequence.bend as S
 import ../EdlibTypes.bend as E
 import ./Reconstruction.bend as R
 
@@ -55,7 +56,7 @@ def location_valid(target: String, location: Location) -> Bool:
     case Location{E.BeforeStart{}, start}:
       Nat.is_eq(start, 0n)
     case Location{E.Position{+end}, start}:
-      Bool.and(Nat.is_lt(end, String.length(target)), Nat.is_le(start, 1n+end))
+      Bool.and(Nat.is_lt(end, S.length(target)), Nat.is_le(start, 1n+end))
 
 def path_checked(score: U32, locations: List<&2, Location>, format: E.CigarFormat,
                   operations: List<&2, E.Operation>, valid: Bool) -> E.AlignResult:
@@ -99,12 +100,12 @@ def result(query: String, target: String, task: E.Task,
 def empty_result(query: String, target: String, config: E.AlignConfig) -> E.AlignResult:
   match query target config:
     case SNil{} +t E.AlignConfig{E.NW{}, _, _, _, _}:
-      +length = String.length(t)
+      +length = S.length(t)
       E.distance_result(length, E.end_coordinate(length), True{})
     case SNil{} _ _:
       E.distance_result(0n, E.BeforeStart{}, True{})
     case SCon{_, qt} SNil{} _:
-      E.distance_result(1n+String.length(qt), E.BeforeStart{}, True{})
+      E.distance_result(1n+S.length(qt), E.BeforeStart{}, True{})
     # Internal precondition: Myers calls this only when one input is empty.
     case _ _ _:
       E.AlignResult{E.Error{}, E.NotFound{}, Nil{}, None{}, None{}, None{}}

@@ -7,9 +7,31 @@ import pytest
 
 from alignment import AlignConfig
 from benchmarks.gpu_runner import (HOOK, PREFIX, crossover, decode_batch, instrument,
-                                   measure, parse_metrics, require_gpu_build)
+                                   measure, parse_metrics, prerequisites, require_gpu_build)
 from tests.test_batches import mixed_jobs, singles
 from transport import encode_request
+
+
+def test_cuda_discovery_supports_system_toolkit_and_respects_override(monkeypatch):
+    from pathlib import Path
+    monkeypatch.delenv("CUDA_HOME", raising=False)
+    monkeypatch.setattr(Path, "is_file", lambda path: str(path) in
+                        ("/usr/include/cuda.h", "/usr/include/nvrtc.h"))
+    monkeypatch.setattr("benchmarks.gpu_runner.command", lambda argv: "Ubuntu clang version 19.1.7")
+    cuda, _, problems = prerequisites(["clang"])
+    assert cuda == Path("/usr") and problems == []
+    monkeypatch.setenv("CUDA_HOME", "/missing-toolkit")
+    cuda, _, problems = prerequisites(["clang"])
+    assert cuda == Path("/missing-toolkit") and any("missing" in p for p in problems)
+
+
+def test_missing_compiler_is_a_reportable_prerequisite(monkeypatch):
+    def missing(argv):
+        raise FileNotFoundError("clang")
+    monkeypatch.setattr("benchmarks.gpu_runner.command", missing)
+    _, version, problems = prerequisites(["clang"])
+    assert version == "unavailable"
+    assert any("Cannot run C compiler" in p for p in problems)
 
 
 def metrics(**patch):
@@ -64,6 +86,15 @@ def test_crossover_reports_only_measured_wins():
     assert result["gpu_winning_batch_sizes"] == [3]
     records[3]["summary"]["end_to_end_ns"]["median"] = 31
     assert crossover(records, ["example"], [1, 3, 7])["example"]["first_measured_gpu_win"] is None
+
+
+def test_crossover_compares_edlib_without_treating_it_as_cpu():
+    records = [{"case": "example", "backend": backend, "transfer": "demand", "batch_size": 16,
+                "summary": {"end_to_end_ns": {"median": value}}}
+               for backend, value in [("cpu", 100), ("cuda", 50), ("edlib", 10)]]
+    result = crossover(records, ["example"], [16])["example"]
+    assert result["first_measured_gpu_win"] == 16
+    assert result["first_measured_gpu_win_vs_edlib"] is None
 
 
 @pytest.mark.parametrize("count", [0, 1, 3, 17])
@@ -135,3 +166,21 @@ def test_genuine_device_matches_cpu_all_fields(gpu_device_probe, bend_binary):
             assert evidence["managed_heap_bytes"] > 0
             if prefetch:
                 assert evidence["prefetch_in_ns"] > 0 and evidence["prefetch_out_ns"] > 0
+
+
+@pytest.mark.gpu
+def test_long_distance_inputs_do_not_exhaust_device_length_stack(gpu_device_probe, bend_binary):
+    from benchmarks.runner import ROOT, load_corpus
+    case = next(c for c in load_corpus(ROOT / "benchmarks/corpus.json")["cases"]
+                if c["name"] == "dna-random-4096")
+    jobs = [(case["query"], case["target"], AlignConfig()),
+            ("", case["target"], AlignConfig()),
+            (case["query"], "", AlignConfig()),
+            (case["query"], "ACG", AlignConfig())]
+    expected = singles(jobs, bend_binary)
+    for prefetch in (False, True):
+        values, evidence = measure(gpu_device_probe, jobs, device=True,
+                                   prefetch=prefetch, threads=4)
+        assert values == expected
+        assert values[0].require_distance() == case["distance"]
+        assert evidence["device_passes"] > 0

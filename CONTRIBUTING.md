@@ -314,8 +314,10 @@ The following features and checks are still missing from this repository:
   speedup claim. Ordinary NW/DISTANCE uses threshold bands,
   early rejection and adaptive retries. `lib.align_batch` runs independent
   CPU jobs in a tree grouped by estimated work, in addition to parallel
-  preprocessing and HW start searches within a pair. There is no GPU entry
-  point or genuine-device test. Tests with multiple CPU threads check correctness only.
+  preprocessing and HW start searches within a pair. The opt-in `GpuBatch.bend`
+  module and strict CUDA harness below validate completed device execution.
+  Tests with multiple CPU threads check correctness only; benchmark timings
+  are required to assess scaling.
 - **Library and release readiness:** `lib.bend` provides a stable Bend import
   surface for the current distance and configured-alignment APIs. Its first
   BendHub name/version is prepared in the documentation but has not been
@@ -684,6 +686,15 @@ retain their separate startup/argv instrumentation.
 
 ## GPU batches and genuine-device validation
 
+`src/Sequence.bend` counts characters with a tail-recursive accumulator. Bend
+2.0.36's `Base.String.length` adds a continuation per character on the device's
+2048-word lane stack and failed on the 4096-character benchmark. Myers,
+alignment results and reconstruction use the flat traversal; `PROOF.bend`
+proves it equal to `String.length` for every string and preserves the existing
+empty-input laws. The genuine-device regression includes the 4096-byte corpus
+case and long empty/unequal inputs. This does not remove other device stack
+limits, particularly for deep PATH reconstruction or very large result lists.
+
 `GpuBatch.bend` exports `align_batch(jobs)` with the same typed inputs and
 complete ordered results as the CPU batch API. It prepares `Batch.Plan` on the
 host, calls `Batch.execute!(plan)` once, then sorts indexed results on the host.
@@ -714,7 +725,8 @@ no device exists, so this project's build test removes stale sidecars and also
 requires a freshly generated, nonempty `.gpu` artifact.
 
 The CUDA validation environment needs **Clang 19+** as `clang`, CUDA headers and
-NVRTC/libraries at `/usr/local/cuda` (the probe also accepts `CUDA_HOME`), a
+NVRTC/libraries at `/usr/local/cuda` or the Ubuntu/Debian `/usr` layout (an
+explicit `CUDA_HOME` takes precedence), a
 working NVIDIA driver, and concurrent managed-memory access on device zero.
 Bend 2.0.36 explicitly rejects devices without that capability, including WSL2
 CUDA environments that lack it. These commands forward Windows to WSL; if WSL
@@ -722,6 +734,11 @@ cannot supply the capability, run validation on a supported native Linux CUDA
 host. The hardware workflow expects such a runner with preinstalled tools.
 CPU tests require no CUDA installation. Metal device validation is not supplied
 by this CUDA harness.
+
+The runner passes its detected `CUDA_HOME` to Bend's production builder and
+supports toolkit libraries in either `lib64` or `lib`. A missing compiler is
+recorded in the failure report. Choose a fresh `--output` directory for each
+run so earlier measurements are preserved.
 
 ```bash
 python3 run_tests.py tests/test_gpu.py -v                # CPU controls and fallback rejection
@@ -750,7 +767,7 @@ satisfy it. The value laws in `LAWS.bend` prove scheduling-independent semantics
 they make no device/timing claims.
 
 The benchmark writes `build/gpu/results/results.json` and `REPORT.md`. It sweeps
-the committed corpus with configurable batch sizes, interleaves CPU/GPU order,
+the committed corpus with configurable batch sizes, rotates CPU/CUDA/Edlib order,
 discards warm-ups, retains raw samples and dispersion, and checks complete
 results and the corpus distance on every invocation. Benchmark CPU runs use a
 separate CPU-only executable of the same prepared `Batch.Plan`, execution and
@@ -760,9 +777,14 @@ performance baseline. Fallback remains a separate correctness control. Every sam
 starts a fresh process, so end-to-end includes device initialization, framing,
 host planning, synchronized execution, ordering and response writes. Compile
 time and Python payload encoding are excluded. The first measured GPU win is
-reported per workload using end-to-end demand-mode medians; all winning sizes
+reported per workload against both Bend CPU and Edlib using end-to-end demand-mode medians; all winning sizes
 are retained because a crossover need not be monotonic. No win in the range is
 reported explicitly. Extend `--batch-sizes` to establish a wider boundary.
+
+The Edlib control reuses the pinned C++ oracle with `-O2 -DNDEBUG`, one thread
+and the same binary request/response frames. Each batch must match the complete
+NW/DISTANCE results of both Bend backends. Edlib's internal work phase is not
+instrumented in this harness; use `run_benchmarks.py` for phase comparisons.
 
 CUDA uses managed memory, so demand-run scheduler wall time includes implicit
 migration and launch overhead. A second controlled experiment uses synchronized

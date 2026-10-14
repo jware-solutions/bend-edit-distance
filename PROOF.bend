@@ -3,6 +3,38 @@ import ./LAWS.bend as Laws
 import ./src/DistanceDP.bend as DP
 import ./src/Myers.bend as Myers
 import ./EdlibTypes.bend as E
+import ./src/Sequence.bend as S
+
+# The accumulator traversal preserves the existing String.length contracts.
+def add_successor(+a: Nat, +b: Nat) ->
+    {Nat.add(a, 1n+b) == 1n+Nat.add(a, b) : Nat}:
+  match a:
+    case 0n:
+      {==}
+    case 1n+p:
+      Equal.cong(Nat, Nat, n => 1n+n, Nat.add(p, 1n+b), 1n+Nat.add(p, b), add_successor(p, b))
+
+def add_zero_right(a: Nat) -> {Nat.add(a, 0n) == a : Nat}:
+  match a:
+    case 0n:
+      {==}
+    case 1n+p:
+      Equal.cong(Nat, Nat, n => 1n+n, Nat.add(p, 0n), p, add_zero_right(p))
+
+def length_from_correct(+sequence: String, +count: Nat) ->
+    {S.length_from(sequence, count) == Nat.add(String.length(sequence), count) : Nat}:
+  match sequence:
+    case SNil{}:
+      {==}
+    case SCon{_, +tail}:
+      Equal.trans(Nat, S.length_from(tail, 1n+count),
+        Nat.add(String.length(tail), 1n+count), 1n+Nat.add(String.length(tail), count),
+        length_from_correct(tail, 1n+count), add_successor(String.length(tail), count))
+
+def sequence_length_correct(+sequence: String) ->
+    {S.length(sequence) == String.length(sequence) : Nat}:
+  Equal.trans(Nat, S.length(sequence), Nat.add(String.length(sequence), 0n),
+    String.length(sequence), length_from_correct(sequence, 0n), add_zero_right(String.length(sequence)))
 
 def Laws.gpu_execution_values(plan):
   {==}
@@ -201,23 +233,32 @@ def Laws.empty_target_threshold_mode(query, mode, task, threshold):
     case SNil{} E.HW{} E.Path{}:
       {==}
     case SCon{h, t} E.NW{} E.Distance{}:
-      {==}
+      Equal.cong(Nat, E.AlignResult, n => E.distance_result(1n+n, E.BeforeStart{}, True{}),
+        S.length(t), String.length(t), sequence_length_correct(t))
     case SCon{h, t} E.NW{} E.Locations{}:
-      {==}
+      Equal.cong(Nat, E.AlignResult, n => E.distance_result(1n+n, E.BeforeStart{}, True{}),
+        S.length(t), String.length(t), sequence_length_correct(t))
     case SCon{h, t} E.NW{} E.Path{}:
-      {==}
+      Equal.cong(Nat, E.AlignResult, n => E.distance_result(1n+n, E.BeforeStart{}, True{}),
+        S.length(t), String.length(t), sequence_length_correct(t))
     case SCon{h, t} E.SHW{} E.Distance{}:
-      {==}
+      Equal.cong(Nat, E.AlignResult, n => E.distance_result(1n+n, E.BeforeStart{}, True{}),
+        S.length(t), String.length(t), sequence_length_correct(t))
     case SCon{h, t} E.SHW{} E.Locations{}:
-      {==}
+      Equal.cong(Nat, E.AlignResult, n => E.distance_result(1n+n, E.BeforeStart{}, True{}),
+        S.length(t), String.length(t), sequence_length_correct(t))
     case SCon{h, t} E.SHW{} E.Path{}:
-      {==}
+      Equal.cong(Nat, E.AlignResult, n => E.distance_result(1n+n, E.BeforeStart{}, True{}),
+        S.length(t), String.length(t), sequence_length_correct(t))
     case SCon{h, t} E.HW{} E.Distance{}:
-      {==}
+      Equal.cong(Nat, E.AlignResult, n => E.distance_result(1n+n, E.BeforeStart{}, True{}),
+        S.length(t), String.length(t), sequence_length_correct(t))
     case SCon{h, t} E.HW{} E.Locations{}:
-      {==}
+      Equal.cong(Nat, E.AlignResult, n => E.distance_result(1n+n, E.BeforeStart{}, True{}),
+        S.length(t), String.length(t), sequence_length_correct(t))
     case SCon{h, t} E.HW{} E.Path{}:
-      {==}
+      Equal.cong(Nat, E.AlignResult, n => E.distance_result(1n+n, E.BeforeStart{}, True{}),
+        S.length(t), String.length(t), sequence_length_correct(t))
 
 def Laws.negative_cli_threshold():
   {==}
@@ -234,11 +275,14 @@ def Laws.empty_nw_threshold_task(target, task, threshold):
     case SNil{} E.Path{}:
       {==}
     case SCon{h, t} E.Distance{}:
-      {==}
+      Equal.cong(Nat, E.AlignResult, +n => E.distance_result(n, E.end_coordinate(n), True{}),
+        S.length(SCon{h, t}), String.length(SCon{h, t}), sequence_length_correct(SCon{h, t}))
     case SCon{h, t} E.Locations{}:
-      {==}
+      Equal.cong(Nat, E.AlignResult, +n => E.distance_result(n, E.end_coordinate(n), True{}),
+        S.length(SCon{h, t}), String.length(SCon{h, t}), sequence_length_correct(SCon{h, t}))
     case SCon{h, t} E.Path{}:
-      {==}
+      Equal.cong(Nat, E.AlignResult, +n => E.distance_result(n, E.end_coordinate(n), True{}),
+        S.length(SCon{h, t}), String.length(SCon{h, t}), sequence_length_correct(SCon{h, t}))
 
 def Laws.empty_shw_threshold_task(target, task, threshold):
   match target task:
@@ -555,14 +599,14 @@ def Laws.small_ascii_identity(sequence):
       {==}
 
 def Laws.empty_query(target):
-  {==}
+  sequence_length_correct(target)
 
 def Laws.empty_target(query):
   match query:
     case SNil{}:
       {==}
     case SCon{h, t}:
-      {==}
+      Equal.cong(Nat, Nat, n => 1n+n, S.length(t), String.length(t), sequence_length_correct(t))
 
 def Laws.wildcard_padding(symbol):
   {==}

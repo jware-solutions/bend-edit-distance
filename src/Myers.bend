@@ -1,4 +1,5 @@
 import Base
+import ./Sequence.bend as S
 import ../EdlibTypes.bend as E
 import ./Alignment.bend as A
 
@@ -632,7 +633,7 @@ def configured_found(task: E.Task, mode: E.Mode, +query: String, +target: String
     case E.Distance{} _ _:
       A.result(query, target, task, pairs, format, best, True{})
     case _ E.HW{} A.Best{+score, +locations}:
-      +qn +tn = String.length(query) String.length(target)
+      +qn +tn = S.length(query) S.length(target)
       rq rt = String.reverse(query) String.reverse(target)
       resolved = hw_locations(List.length(&2, A.Location, locations), locations,
         rt, tn, build_peq(ceil_div(qn, 32n), rq, pairs), qn, U32.to_nat(score))
@@ -660,7 +661,7 @@ def configured_finish(query: String, target: String, mode: E.Mode, task: E.Task,
 def semiglobal_align(+query: String, +target: String, +mode: E.Mode, task: E.Task,
                        +threshold: E.Threshold, +pairs: List<&2, E.EqualityPair>,
                        format: E.CigarFormat) -> E.AlignResult:
-  +length = String.length(query)
+  +length = S.length(query)
   configured_finish(query, target, mode, task, threshold, pairs, format,
     semiglobal_best(target, build_peq(ceil_div(length, 32n), query, pairs),
       length, semiglobal_maximum(threshold, length), mode))
@@ -685,13 +686,13 @@ def align_shorter(query: String, target: String, query_length: Nat,
 def distance(query: String, target: String) -> Nat:
   match query target:
     case SNil{} _:
-      String.length(target)
+      S.length(target)
     case SCon{h, t} SNil{}:
-      1n+String.length(t)
+      1n+S.length(t)
     case SCon{qh, qt} SCon{th, tt}:
       +q = {SCon{qh, qt} : String}
       +t = {SCon{th, tt} : String}
-      +qn +tn = String.length(q) String.length(t)
+      +qn +tn = S.length(q) S.length(t)
       align_shorter(q, t, qn, tn, Nat.is_le(qn, tn))
 
 def nw_result(query: String, target: String, task: E.Task,
@@ -711,7 +712,7 @@ def edlib_align(query: String, target: String, config: E.AlignConfig) -> E.Align
     case SCon{h, t} SNil{} _:
       A.empty_result(SCon{h, t}, "", config)
     case +q +t E.AlignConfig{E.NW{}, task, threshold, +pairs, format}:
-      +qn +tn = String.length(q) String.length(t)
+      +qn +tn = S.length(q) S.length(t)
       nw_result(q, t, task, pairs, format, E.end_coordinate(tn),
         search_distance(search_shorter(q, t, qn, tn, threshold, Nat.is_le(qn, tn), pairs)))
     case +q +t E.AlignConfig{mode, task, threshold, pairs, format}:

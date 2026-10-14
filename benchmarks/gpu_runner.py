@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import platform
@@ -64,10 +65,19 @@ def instrument(source, *, bang_required=True):
 
 def prerequisites(cc):
     problems = []
-    cuda = Path(os.environ.get("CUDA_HOME", "/usr/local/cuda"))
+    # Debian/Ubuntu's nvidia-cuda-toolkit installs headers under /usr/include.
+    # An explicit CUDA_HOME is authoritative; never hide a broken override.
+    override = os.environ.get("CUDA_HOME")
+    candidates = [Path(override)] if override else [Path("/usr/local/cuda"), Path("/usr")]
+    cuda = next((path for path in candidates if all(
+        (path / "include" / header).is_file() for header in ("cuda.h", "nvrtc.h"))), candidates[0])
     if not (cuda / "include/cuda.h").is_file() or not (cuda / "include/nvrtc.h").is_file():
         problems.append(f"CUDA headers/NVRTC missing at {cuda}")
-    version = command([*cc, "--version"])
+    try:
+        version = command([*cc, "--version"])
+    except (OSError, RuntimeError, subprocess.SubprocessError) as error:
+        version = "unavailable"
+        problems.append(f"Cannot run C compiler: {error}")
     match = re.search(r"clang version (\d+)", version)
     if not match or int(match[1]) < 19:
         problems.append("GPU build requires Clang 19 or newer")
@@ -92,8 +102,13 @@ def build_probe(*, cuda_enabled=False, cpu_control=False, cc=None):
         cuda, _, problems = prerequisites(cc)
         if problems:
             raise RuntimeError("; ".join(problems))
-        argv += ["-DBEND_CUDA=1", "-I", cuda / "include", "-L", cuda / "lib64",
-                 f"-Wl,-rpath,{cuda / 'lib64'}", "-lcuda", "-lnvrtc"]
+        # System linker paths already include /usr/lib/<multiarch>. Toolkit
+        # distributions may use lib64 or lib; support both, as Bend does.
+        argv += ["-DBEND_CUDA=1", "-I", cuda / "include"]
+        for directory in (cuda / "lib64", cuda / "lib"):
+            if directory.is_dir():
+                argv += ["-L", directory, f"-Wl,-rpath,{directory}"]
+        argv += ["-lcuda", "-lnvrtc"]
     command(argv)
     return binary
 
@@ -121,6 +136,27 @@ def decode_batch(output, count):
     if len(values) != count:
         raise RuntimeError(f"Expected {count} results, received {len(values)}")
     return values
+
+
+def build_edlib_reference():
+    """Reuse the pinned C++ oracle's identical byte framing, single threaded."""
+    cxx = shlex.split(os.environ.get("CXX", "g++"))
+    source = ROOT / "vendor/edlib/edlib"
+    binary = BUILD / "edlib-reference"
+    command([*cxx, "-std=c++14", "-O2", "-DNDEBUG", "-I", source / "include",
+             ROOT / "tests/edlib_oracle.cpp", source / "src/edlib.cpp", "-o", binary])
+    return binary, command([*cxx, "--version"]).splitlines()[0]
+
+
+def measure_edlib(binary, jobs, *, timeout=180):
+    payload = b"".join(encode_request(*job) for job in jobs)
+    started = time.monotonic_ns()
+    result = subprocess.run([str(binary), "--worker"], cwd=ROOT, input=payload,
+                            capture_output=True, timeout=timeout)
+    ended = time.monotonic_ns()
+    if result.returncode:
+        raise RuntimeError(f"Edlib reference exited {result.returncode}: {result.stderr.decode(errors='replace')}")
+    return decode_batch(result.stdout, len(jobs)), {"end_to_end_ns": ended - started}
 
 
 def parse_metrics(stderr, *, device):
@@ -164,7 +200,10 @@ def measure(binary, jobs, *, device, threads=1, heap="1GB", prefetch=False, time
     result = subprocess.run(argv, cwd=ROOT, input=payload, capture_output=True, timeout=timeout)
     ended = time.monotonic_ns()
     if result.returncode:
-        raise RuntimeError(f"GPU probe exited {result.returncode}: {result.stderr.decode(errors='replace')}")
+        backend = "CUDA" if device else "CPU"
+        raise RuntimeError(f"{backend} probe {binary.name}, batch {len(jobs)}, "
+                           f"prefetch={prefetch}, exited {result.returncode}: "
+                           f"{result.stderr.decode(errors='replace')}")
     metrics = parse_metrics(result.stderr.decode(errors="replace"), device=device)
     metrics["end_to_end_ns"] = ended - started
     return decode_batch(result.stdout, len(jobs)), metrics
@@ -179,14 +218,19 @@ def crossover(records, cases, sizes):
         result[case] = {"first_measured_gpu_win": wins[0] if wins else None,
                         "gpu_winning_batch_sizes": wins,
                         "tested_batch_sizes": sorted(sizes)}
+        if all(("edlib", n) in times for n in sizes):
+            wins = [n for n in sorted(sizes) if times[("cuda", n)] < times[("edlib", n)]]
+            result[case].update(first_measured_gpu_win_vs_edlib=wins[0] if wins else None,
+                                gpu_winning_batch_sizes_vs_edlib=wins)
     return result
 
 
 def report(document):
     lines = ["# GPU batch measurements", "", "Every CUDA sample passed forced-device execution, completed-dispatch evidence, and full ordered CPU/GPU result equality.", "",
-             "Times are median fresh-process samples with interleaved CPU/GPU order. End-to-end includes process/device initialization, input framing, host planning, execution, ordering and response framing. Payload encoding in Python and compilation are excluded. Warm-ups are discarded.", "",
+             "Times are median fresh-process samples with rotated CPU/CUDA/Edlib order. End-to-end includes process/device initialization, input framing, host planning, execution, ordering and response framing. Payload encoding in Python and compilation are excluded. Warm-ups are discarded.", "",
              "`device_pass_ns` is synchronized scheduler wall time, including implicit migration and launch overhead; it is not pure kernel time. The prefetch experiment requests migration of scheduler metadata, allocated arena pages (including freed pages), and occupied allocator-bank entries before and after execution. The requested byte counts are recorded; they are not measured PCIe traffic. This is a controlled transfer cost, not the implicit migration cost of the demand run. Do not subtract separate runs to estimate transfer time.", "",
              "VRAM is device-wide used memory sampled before/after scheduler passes and prefetch, including the baseline and other processes. It is an observed lower bound on peak residency, not exact per-process peak VRAM. Use an otherwise idle GPU. Managed heap bytes are reserved address space, not resident VRAM.", "",
+             "Edlib uses the pinned C++ oracle, one thread, the same binary request/response protocol and fresh processes. Full NW/DISTANCE results are checked against both Bend backends. Its end-to-end time includes parsing and serialization; internal work time is not instrumented here. CPU/CUDA/Edlib demand sample order rotates between repetitions.", "",
              "| Case | Batch | Backend | Transfer | End-to-end ms | Work ms | Prefetch in/out ms | Observed used VRAM MiB |",
              "| --- | ---: | --- | --- | ---: | ---: | ---: | ---: |"]
     for r in document["records"]:
@@ -194,12 +238,16 @@ def report(document):
         peak = statistics.median(x["device_used_peak_sample_bytes"] for x in r["samples"]) if r["backend"] == "cuda" else None
         transfers = f"{s['prefetch_in_ns']['median']/1e6:.3f}/{s['prefetch_out_ns']['median']/1e6:.3f}" if peak is not None else "—"
         memory = f"{peak/2**20:.1f}" if peak is not None else "—"
+        work = f"{s['work_ns']['median']/1e6:.3f}" if "work_ns" in s else "—"
         lines.append(f"| {r['case']} | {r['batch_size']} | {r['backend']} | {r['transfer']} | "
-                     f"{s['end_to_end_ns']['median']/1e6:.3f} | {s['work_ns']['median']/1e6:.3f} | {transfers} | {memory} |")
+                     f"{s['end_to_end_ns']['median']/1e6:.3f} | {work} | {transfers} | {memory} |")
     lines += ["", "Crossover uses demand-mode end-to-end medians against a separate CPU-only executable of the same prepared Batch plan and result restoration, preserving Bend's CPU scheduler optimizations. The CPU thread count is recorded. It is workload/machine specific; a first measured win does not imply all larger batches win.", ""]
     for name, value in document["break_even"].items():
         first = value["first_measured_gpu_win"]
         lines.append(f"- {name}: " + (f"first measured GPU win at batch {first}; winning sizes {value['gpu_winning_batch_sizes']}." if first else "no GPU win in the tested range."))
+        if "first_measured_gpu_win_vs_edlib" in value:
+            first = value["first_measured_gpu_win_vs_edlib"]
+            lines.append(f"  Against Edlib: " + (f"first measured GPU win at batch {first}; winning sizes {value['gpu_winning_batch_sizes_vs_edlib']}." if first else "no GPU win in the tested range."))
     return "\n".join(lines) + "\n"
 
 
@@ -218,7 +266,7 @@ def main(argv=None):
     args = parser.parse_args(argv)
     if platform.system() != "Linux":
         parser.error("Run this CUDA harness in Linux, or use run_gpu_benchmarks.py to forward Windows to WSL")
-    if args.repeats < 1 or args.warmups < 0 or not 1 <= args.threads <= 128 or args.timeout <= 0 or any(n < 1 for n in args.batch_sizes):
+    if args.repeats < 1 or args.warmups < 0 or not 1 <= args.threads <= 128 or not math.isfinite(args.timeout) or args.timeout <= 0 or any(n < 1 for n in args.batch_sizes):
         parser.error("Invalid repeat, warmup, thread, timeout or batch count")
     if not re.fullmatch(r"[1-9][0-9]*(?:MB|GB)", args.heap):
         parser.error("--heap must be a positive integer followed by MB or GB")
@@ -227,6 +275,8 @@ def main(argv=None):
     if not cases or args.cases and set(args.cases) - {c["name"] for c in cases}:
         parser.error("Unknown or empty case selection")
     args.output.mkdir(parents=True, exist_ok=True)
+    if any((args.output / name).exists() for name in ("results.json", "REPORT.md")):
+        parser.error("Output already contains a result; choose a fresh --output directory")
     BUILD.mkdir(parents=True, exist_ok=True)
     cc = shlex.split(os.environ.get("CC", "clang"))
     cuda, cc_version, problems = prerequisites(cc)
@@ -234,7 +284,11 @@ def main(argv=None):
         "platform": platform.platform(), "compiler": cc_version, "bend": command(["bend", "version"]),
         "cuda_home": str(cuda), "threads": args.threads, "heap": args.heap,
         "corpus_sha256": hashlib.sha256(args.corpus.read_bytes()).hexdigest()},
-        "options": {"repeats": args.repeats, "warmups": args.warmups}, "records": [], "break_even": {}}
+        "created_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "options": {"repeats": args.repeats, "warmups": args.warmups,
+                    "batch_sizes": args.batch_sizes, "cases": [c["name"] for c in cases],
+                    "timeout": args.timeout, "check_build": args.check_build},
+        "records": [], "break_even": {}}
     document["environment"]["cpu_affinity"] = sorted(os.sched_getaffinity(0))
     document["environment"]["sources_sha256"] = {str(path.relative_to(ROOT)): hashlib.sha256(path.read_bytes()).hexdigest()
         for path in sorted(
@@ -243,6 +297,8 @@ def main(argv=None):
                 ROOT / "src/transport.c", ROOT / "benchmarks/cpu_batch_probe.bend",
                 ROOT / "benchmarks/runner.py", ROOT / "run_gpu_benchmarks.py",
                 ROOT / "alignment.py", ROOT / "transport.py", ROOT / ".bend-version",
+                ROOT / "tests/edlib_oracle.cpp", ROOT / "vendor/edlib/edlib/src/edlib.cpp",
+                ROOT / "vendor/edlib/edlib/include/edlib.h",
             ])}
     cpuinfo = Path("/proc/cpuinfo").read_text()
     document["environment"]["cpu_model"] = next((line.split(":", 1)[1].strip() for line in cpuinfo.splitlines() if line.startswith("model name")), platform.machine())
@@ -253,6 +309,8 @@ def main(argv=None):
     try:
         if problems:
             raise RuntimeError("; ".join(problems))
+        # Bend's production builder uses the same toolkit root as the probe.
+        os.environ["CUDA_HOME"] = str(cuda)
         print("Building GPU batch CLI and instrumented probe...", flush=True)
         command(["bend", ROOT / "gpu_batch.bend", "-o", BUILD / "gpu-batch"], timeout=300)
         document["production_device_program"] = require_gpu_build(BUILD / "gpu-batch")
@@ -267,29 +325,38 @@ def main(argv=None):
             raise RuntimeError("Device smoke result differs from CPU/known distance")
         document["device_smoke"] = evidence
         if not args.check_build:
+            edlib_binary, document["environment"]["cxx"] = build_edlib_reference()
+            document["environment"]["edlib_binary_sha256"] = hashlib.sha256(edlib_binary.read_bytes()).hexdigest()
             sizes = sorted(set(args.batch_sizes))
             for case in cases:
                 for count in sizes:
                     jobs = [(case["query"], case["target"], AlignConfig())] * count
-                    samples = {"cpu": [], "cuda": [], "prefetch": []}
+                    samples = {"cpu": [], "cuda": [], "edlib": [], "prefetch": []}
                     for repeat in range(args.warmups + args.repeats):
                         pair = {}
-                        for device in ([False, True] if repeat % 2 == 0 else [True, False]):
-                            backend = "cuda" if device else "cpu"
-                            values, metrics = measure(binary if device else cpu_binary, jobs, device=device, threads=args.threads, heap=args.heap, timeout=args.timeout)
+                        backends = ["cpu", "cuda", "edlib"]
+                        offset = repeat % len(backends)
+                        for backend in backends[offset:] + backends[:offset]:
+                            if backend == "edlib":
+                                values, metrics = measure_edlib(edlib_binary, jobs, timeout=args.timeout)
+                            else:
+                                device = backend == "cuda"
+                                values, metrics = measure(binary if device else cpu_binary, jobs, device=device, threads=args.threads, heap=args.heap, timeout=args.timeout)
                             if any(v.require_distance() != case["distance"] for v in values):
                                 raise RuntimeError(f"Corpus distance mismatch: {case['name']}")
                             pair[backend] = values
                             if repeat >= args.warmups: samples[backend].append(metrics)
                         if pair["cpu"] != pair["cuda"]:
                             raise RuntimeError(f"Full result mismatch: {case['name']} batch {count}")
+                        if pair["edlib"] != pair["cpu"]:
+                            raise RuntimeError(f"Edlib result mismatch: {case['name']} batch {count}")
                         values, metrics = measure(binary, jobs, device=True, prefetch=True, threads=args.threads, heap=args.heap, timeout=args.timeout)
                         if values != pair["cpu"]:
                             raise RuntimeError("Prefetch result mismatch")
                         if repeat >= args.warmups: samples["prefetch"].append(metrics)
                     for kind, values in samples.items():
                         document["records"].append({"case": case["name"], "batch_size": count,
-                            "backend": "cpu" if kind == "cpu" else "cuda",
+                            "backend": "cuda" if kind == "prefetch" else kind,
                             "transfer": "prefetch" if kind == "prefetch" else "demand",
                             "samples": values, "summary": summarize(values)})
                     print(f"Validated {case['name']} batch {count}", flush=True)

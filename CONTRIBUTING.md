@@ -929,23 +929,27 @@ Keep generated reports and raw measurements in ignored directories (`build/`
 or `benchmarks/results/`). Do not force-add benchmark output to Git. Summarize
 observations in the pull request and retain CI output as workflow artifacts.
 
-### Comparing Bend 2.0.36 and 2.0.37
+### Comparing Bend toolchains
 
-Keep the old compiler in a separate directory and run on Linux or WSL:
+Keep the baseline and candidate compilers in separate directories and run on
+Linux or WSL. The candidate defaults to the project-local compiler; use
+`--candidate` to select any other Bend installation.
 
 ```bash
 export PATH="$PWD/build/tools/bend/bin:$PATH"
 python3 -m benchmarks.compare_toolchains \
-  --baseline /path/to/bend-2.0.36/bin/bend \
-  --candidate build/tools/bend/bin/bend \
+  --baseline /path/to/baseline/bin/bend \
+  --candidate /path/to/candidate/bin/bend \
   --threads 1 2 4 --cpus 0,1,2,3 --warmups 2 --repeats 7 \
-  --output build/benchmarks/bend-2.0.37-comparison
+  --output build/benchmarks/toolchain-comparison
 ```
 
 Choose available physical CPUs using `lscpu -e=CPU,CORE,SOCKET`. This runner
 builds both versions of the existing CPU batch probe with the same Clang flags,
-without changing the project pin or either compiler installation. It measures
-32-job homogeneous batches from the fixed corpus, an uneven 32-job batch, and
+without changing the project pin or either compiler installation. Both compilers
+must support the CPU batch probe and its runtime instrumentation; incompatible
+releases fail the build. Workloads include 32-job homogeneous batches from the
+fixed corpus, an uneven 32-job batch, and
 a late-fork control: one large alignment delays a ready 64-job plan while its
 tiny outer sibling completes. The control preserves the input job order and
 uses production `Batch.execute`; it does not change the public batch planner.

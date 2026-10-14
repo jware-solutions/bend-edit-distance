@@ -54,6 +54,14 @@ def build(compiler, directory, cc):
     return binary, [[str(arg) for arg in argv] for argv in commands]
 
 
+def compiler_versions(compilers):
+    versions = {name: command([path, "version"]) for name, path in compilers.items()}
+    if any(not version.startswith("bend ") or not version[5:].strip()
+           for version in versions.values()):
+        raise ValueError(f"Unexpected Bend compiler versions: {versions}")
+    return versions
+
+
 def measure(binary, workload, threads, cpus, expected, timeout):
     payload = b"".join(encode_request(*job) for job in workload["jobs"])
     argv = [str(binary), "--threads", str(threads), "--gpu", "off", "--",
@@ -84,7 +92,8 @@ def write_report(output, document):
     output.mkdir(parents=True, exist_ok=False)
     (output / "results.json").write_text(json.dumps(document, indent=2) + "\n")
     rows = []
-    lines = ["# Bend CPU scheduler comparison", "",
+    lines = ["# Bend CPU toolchain comparison", "",
+             f"Baseline: `{document['versions']['baseline']}`. Candidate: `{document['versions']['candidate']}`.", "",
              "Every warmup and measured sample matched all ordered result fields from pinned Edlib "
              "and the corpus's independent DP distances. Output SHA-256 checksums also match across releases and thread counts.", "",
              "Fresh processes run sequentially with alternating compiler order, discarded warmups, "
@@ -123,8 +132,9 @@ def write_report(output, document):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--baseline", required=True, type=Path, help="Bend 2.0.36 executable")
-    parser.add_argument("--candidate", type=Path, default=ROOT / "build/tools/bend/bin/bend")
+    parser.add_argument("--baseline", required=True, type=Path, help="Baseline Bend executable")
+    parser.add_argument("--candidate", type=Path, default=ROOT / "build/tools/bend/bin/bend",
+                        help="Candidate Bend executable (default: project-local compiler)")
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--threads", nargs="+", type=int, choices=(1, 2, 4), default=[1, 2, 4])
     parser.add_argument("--cpus", help="Ordered comma-separated logical CPUs; choose physical cores deliberately")
@@ -142,9 +152,10 @@ def main():
     if output.exists():
         parser.error("Output already exists; choose a fresh directory")
     compilers = {"baseline": args.baseline.resolve(), "candidate": args.candidate.resolve()}
-    versions = {name: command([path, "version"]) for name, path in compilers.items()}
-    if versions != {"baseline": "bend 2.0.36", "candidate": "bend " + (ROOT / ".bend-version").read_text().strip()}:
-        parser.error(f"Unexpected compilers: {versions}")
+    try:
+        versions = compiler_versions(compilers)
+    except ValueError as error:
+        parser.error(str(error))
     cc, cxx = shlex.split(os.environ.get("CC", "clang")), shlex.split(os.environ.get("CXX", "g++"))
     build_root = ROOT / "build/benchmarks/toolchains"
     binaries, builds = {}, {}

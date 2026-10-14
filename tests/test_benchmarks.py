@@ -66,6 +66,29 @@ def test_summary_keeps_dispersion_and_uses_nearest_rank_p95():
     assert "checksum" not in report
 
 
+@pytest.mark.parametrize("baseline,candidate", [
+    ("bend 2.0.35", "bend 2.0.38"),
+    ("bend 3.0.0-rc.1", "bend 3.1.0+custom"),
+    ("bend 2.0.37", "bend 2.0.37"),
+])
+def test_toolchain_comparison_accepts_arbitrary_bend_versions(monkeypatch, baseline, candidate):
+    from benchmarks import compare_toolchains as comparison
+
+    compilers = {"baseline": ROOT / "baseline/bend", "candidate": ROOT / "candidate/bend"}
+    outputs = {compilers["baseline"]: baseline, compilers["candidate"]: candidate}
+    monkeypatch.setattr(comparison, "command", lambda argv: outputs[argv[0]])
+    assert comparison.compiler_versions(compilers) == {"baseline": baseline, "candidate": candidate}
+
+
+@pytest.mark.parametrize("invalid", ["", "bend", "bend ", "clang version 21.1.8"])
+def test_toolchain_comparison_rejects_invalid_compiler_versions(monkeypatch, invalid):
+    from benchmarks import compare_toolchains as comparison
+
+    monkeypatch.setattr(comparison, "command", lambda argv: invalid)
+    with pytest.raises(ValueError, match="Unexpected Bend compiler versions"):
+        comparison.compiler_versions({"baseline": ROOT / "not-bend"})
+
+
 def test_toolchain_comparison_checks_locations_even_when_distance_matches(monkeypatch):
     from dataclasses import replace
     from types import SimpleNamespace

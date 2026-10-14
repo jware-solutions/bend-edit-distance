@@ -142,6 +142,20 @@ def test_cpu_benchmark_control_matches_public_batch_api(cpu_batch_control, bend_
         assert evidence["device_passes"] == 0 and evidence["backend"] == "cpu"
 
 
+@pytest.mark.parametrize("count", [0, 1, 2, 3, 17])
+def test_late_cpu_control_preserves_complete_ordered_results(cpu_batch_control, bend_binary, count):
+    jobs = mixed_jobs()[:count]
+    expected = singles(jobs, bend_binary)
+    for threads in (1, 2, 4):
+        result = subprocess.run(
+            [str(cpu_batch_control), "--threads", str(threads), "--gpu", "off", "--", "late", str(count)],
+            input=b"".join(encode_request(*job) for job in jobs), capture_output=True, timeout=60,
+        )
+        assert result.returncode == 0, result.stderr.decode(errors="replace")
+        assert decode_batch(result.stdout, count) == expected
+        assert parse_metrics(result.stderr.decode(), device=False)["device_passes"] == 0
+
+
 @pytest.mark.gpu
 def test_gpu_production_device_build(gpu_binary):
     sidecar = require_gpu_build(gpu_binary)

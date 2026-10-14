@@ -21,7 +21,7 @@ downloads the exact Bend and Lean releases, builds a fresh BendTT proof kernel,
 and creates `build/test-venv` with the pinned Python dependencies. Internet access
 and permission to install apt packages are required for full setup.
 
-The compiler is pinned to **Bend 2.0.36** in `.bend-version`, its proof toolchain
+The compiler is pinned to **Bend 2.0.37** in `.bend-version`, its proof toolchain
 to **Lean 4.34.0** in `.lean-version`, and pytest, Hypothesis and their transitive
 dependencies in `requirements-test.txt`. Linux x86_64 and aarch64 downloads are
 verified against the committed `scripts/tools.sha256` before extraction. When
@@ -325,7 +325,7 @@ The following features and checks are still missing from this repository:
   CI, clean-checkout tool setup and versioned source
   releases are automated as described below.
 
-There are also constraints in the pinned **Bend 2.0.36** and current WSL setup:
+There are also constraints in the pinned **Bend 2.0.37** and current WSL setup:
 
 1. **GPU execution falls back to the CPU under stock Bend on WSL2.** The runtime
    requires concurrent managed-memory access that WSL2 GPUs do not provide.
@@ -343,24 +343,25 @@ There are also constraints in the pinned **Bend 2.0.36** and current WSL setup:
    Longer inputs use multiple blocks; this does not limit sequences to 32
    characters or prevent implementing the remaining Edlib features. Emulating
    64-bit operations would require extra code. See
-   [Bend's version-pinned limits](https://github.com/bendlang/bend/blob/v2.0.36/WONTFIX.txt).
+   [Bend's version-pinned limits](https://github.com/bendlang/bend/blob/v2.0.37/WONTFIX.txt).
 4. **Native Windows execution is unsupported.** Run Bend and the compiled
    executable inside WSL on Windows. A native Windows binary is not a supported
    release target. See
-   [Bend's platform limits](https://github.com/bendlang/bend/blob/v2.0.36/WONTFIX.txt#L71-L80).
-5. **Parallel work must be balanced and respect memory ownership.** Bend's
-   scheduler splits and joins work without redistributing tasks between cores.
+   [Bend's platform limits](https://github.com/bendlang/bend/blob/v2.0.37/WONTFIX.txt#L71-L80).
+5. **Parallel work must be balanced and respect memory ownership.** Bend 2.0.37
+   can hand slow-growing forks to idle CPU threads. This does not make arbitrary
+   workloads balanced or remove sequential alignment dependencies.
    Ordinary arrays have one owner; experimental arrays shared through atomic
    operations require `@unsafe`. Independent alignments can run in parallel,
    but arbitrary recursion or a shared mutable alignment matrix will not
    automatically scale safely. See the
-   [parallelism and array guide](https://github.com/bendlang/bend/blob/v2.0.36/guide/GUIDE.md#parallelism)
-   and [atomic-array limitation](https://github.com/bendlang/bend/blob/v2.0.36/README.md#limitations).
+   [parallelism and array guide](https://github.com/bendlang/bend/blob/v2.0.37/guide/GUIDE.md#parallelism)
+   and [atomic-array limitation](https://github.com/bendlang/bend/blob/v2.0.37/README.md#limitations).
 6. **Proofs do not certify the whole compiled executable.** `--verdict` checks
    translated terms through a proof kernel; the parser, translation and
    native/GPU backends are outside that guarantee. Stronger alignment proofs
    are possible, but runtime comparisons against Edlib are still needed. See
-   [Bend's verification limits](https://github.com/bendlang/bend/blob/v2.0.36/README.md#limitations)
+   [Bend's verification limits](https://github.com/bendlang/bend/blob/v2.0.37/README.md#limitations)
    and the [native-library verification scope](https://github.com/bendlang/bend/issues/813).
 
 Persistent [byte workers](TRANSPORT.md) support NUL and all 256 byte values,
@@ -687,8 +688,9 @@ retain their separate startup/argv instrumentation.
 ## GPU batches and genuine-device validation
 
 `src/Sequence.bend` counts characters with a tail-recursive accumulator. Bend
-2.0.36's `Base.String.length` adds a continuation per character on the device's
-2048-word lane stack and failed on the 4096-character benchmark. Myers,
+2.0.37's `Base.String.length` still adds a continuation per character on the
+device's 2048-word lane stack. This shape caused the 4096-character device
+regression that motivated the flat traversal. Myers,
 alignment results and reconstruction use the flat traversal; `PROOF.bend`
 proves it equal to `String.length` for every string and preserves the existing
 empty-input laws. The genuine-device regression includes the 4096-byte corpus
@@ -728,7 +730,7 @@ The CUDA validation environment needs **Clang 19+** as `clang`, CUDA headers and
 NVRTC/libraries at `/usr/local/cuda` or the Ubuntu/Debian `/usr` layout (an
 explicit `CUDA_HOME` takes precedence), a
 working NVIDIA driver, and concurrent managed-memory access on device zero.
-Bend 2.0.36 explicitly rejects devices without that capability, including WSL2
+Bend 2.0.37 explicitly rejects devices without that capability, including WSL2
 CUDA environments that lack it. These commands forward Windows to WSL; if WSL
 cannot supply the capability, run validation on a supported native Linux CUDA
 host. The hardware workflow expects such a runner with preinstalled tools.
@@ -809,9 +811,7 @@ NVIDIA device/driver information are saved with the results.
 
 On an unsupported environment the benchmark exits nonzero and saves a failure
 report. It cannot produce a GPU-equivalence, transfer, VRAM or crossover verdict
-by falling back. The local WSL preflight is recorded in
-[gpu-wsl-2026-10-12](benchmarks/results/gpu-wsl-2026-10-12/REPORT.md);
-it has no hardware performance measurements.
+by falling back. Keep preflight failure reports in the ignored output directory.
 
 ## Reproducible performance benchmarks
 
@@ -925,10 +925,40 @@ python run_benchmarks.py --case dna-random-512 --case dna-random-4096 --repeats 
 ```
 
 Use `--warmups 2`, `--timeout 180` or `--cpus 0,2,4,6` as appropriate for the host.
-The checked-in [WSL observation](benchmarks/results/wsl-2026-10-09/REPORT.md)
-includes its raw JSON and CSV alongside [interpretation of table/lookup costs](benchmarks/results/wsl-2026-10-09/NOTES.md).
-It predates threshold banding and is one reproducible observation, not a
-measurement of the current banded implementation or a portable performance guarantee.
+Keep generated reports and raw measurements in ignored directories (`build/`
+or `benchmarks/results/`). Do not force-add benchmark output to Git. Summarize
+observations in the pull request and retain CI output as workflow artifacts.
+
+### Comparing Bend 2.0.36 and 2.0.37
+
+Keep the old compiler in a separate directory and run on Linux or WSL:
+
+```bash
+export PATH="$PWD/build/tools/bend/bin:$PATH"
+python3 -m benchmarks.compare_toolchains \
+  --baseline /path/to/bend-2.0.36/bin/bend \
+  --candidate build/tools/bend/bin/bend \
+  --threads 1 2 4 --cpus 0,1,2,3 --warmups 2 --repeats 7 \
+  --output build/benchmarks/bend-2.0.37-comparison
+```
+
+Choose available physical CPUs using `lscpu -e=CPU,CORE,SOCKET`. This runner
+builds both versions of the existing CPU batch probe with the same Clang flags,
+without changing the project pin or either compiler installation. It measures
+32-job homogeneous batches from the fixed corpus, an uneven 32-job batch, and
+a late-fork control: one large alignment delays a ready 64-job plan while its
+tiny outer sibling completes. The control preserves the input job order and
+uses production `Batch.execute`; it does not change the public batch planner.
+
+Each warmup and sample checks every ordered result field against pinned Edlib
+and distances against the independent DP corpus, and requires identical output
+SHA-256 hashes across compilers and thread counts. Runs alternate compiler
+order and execute sequentially. `results.json` retains raw timings, dispersion,
+source/compiler/binary hashes, build commands, topology and affinity;
+`summary.csv` and `REPORT.md` compare execution and end-to-end throughput.
+Execution timing excludes host planning and result ordering; end-to-end includes
+both, input/output and process startup. Keep the host otherwise idle during a
+comparison. No timing result is a test threshold.
 
 The CLI convention follows the installed `bend guide`; see also the official
 [Bend guide](https://github.com/bendlang/bend/blob/main/guide/GUIDE.md) and

@@ -26,7 +26,7 @@ if (( system )); then
   if (( EUID != 0 )); then elevate=(sudo); fi
   "${elevate[@]}" apt-get update
   "${elevate[@]}" apt-get install -y --no-install-recommends \
-    ca-certificates curl git clang g++ libc6-dev python3 python3-venv zstd
+    ca-certificates curl git clang-19 g++ libc6-dev python3 python3-venv zstd
 fi
 
 # The gitlink, rather than the submodule's latest branch, determines Edlib.
@@ -45,6 +45,12 @@ lean_version=$(tr -d '\r\n' < .lean-version)
 tools="$root/build/tools"
 mkdir -p "$tools" "$root/build/downloads"
 export BEND_NO_TELEMETRY=1
+export BENDRTS=
+# Clang 14+ suffices for CPU code; the suite also builds programs with ! (19+).
+export CC=${CC:-clang-19}
+"$CC" --version | grep -E 'clang version (19|[2-9][0-9])\.' >/dev/null || {
+  echo 'Setup requires a valid Clang 19+ in CC (the suite includes ! programs).' >&2; exit 2;
+}
 
 install_archive() {
   local project=$1 version=$2 asset=$3 destination=$4 expected staging
@@ -97,7 +103,8 @@ build/test-venv/bin/python -m pip check
 
 {
   bend version
-  clang --version
+  printf 'CC=%s\n' "$CC"
+  "$CC" --version
   g++ --version
   build/test-venv/bin/python --version
   build/test-venv/bin/python -m pip freeze

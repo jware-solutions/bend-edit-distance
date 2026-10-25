@@ -1,9 +1,9 @@
-"""Ordered independent CPU jobs, work balancing and deterministic full results."""
+"""Ordered batch alignment results and comparisons against Edlib."""
+
+from bend_runtime import runtime_prefix
 
 from dataclasses import replace
 import itertools
-import json
-import math
 import random
 import subprocess
 
@@ -15,15 +15,13 @@ from tests.helpers import ROOT, assert_valid_path, bend_align, cpp_edlib_align
 from transport import LENGTH, decode_response, encode_request
 
 
-def invoke(binary, jobs, threads, mode="batch"):
+def invoke(binary, jobs, threads):
     result = subprocess.run(
-        [str(binary), "--threads", str(threads), "--", mode, str(len(jobs))],
+        [str(binary), *runtime_prefix(threads=threads), "batch", str(len(jobs))],
         cwd=ROOT, input=b"".join(encode_request(*job) for job in jobs),
         capture_output=True, timeout=60,
     )
     assert result.returncode == 0, result.stderr.decode(errors="replace")
-    if mode == "plan":
-        return json.loads(result.stdout)
     output = result.stdout
     results = []
     while output:
@@ -90,37 +88,6 @@ def test_mixed_jobs_full_results_and_thread_determinism(batch_probe, bend_binary
     random.Random(20261012).shuffle(order)
     for threads in (1, 2, 4):
         assert invoke(batch_probe, [jobs[i] for i in order], threads) == [expected[i] for i in order]
-
-
-def leaves(plan):
-    if plan is None:
-        return []
-    if isinstance(plan, dict):
-        assert math.isfinite(plan["work"]) and plan["work"] > 0
-        return [plan]
-    assert isinstance(plan, list) and len(plan) == 2
-    left, right = map(leaves, plan)
-    assert left and right
-    assert abs(len(left) - len(right)) <= 1
-    return left + right
-
-
-@pytest.mark.parametrize("count", [0, 1, 2, 3, 17, 65, 129])
-def test_plans_are_bounded_and_keep_each_job(batch_probe, count):
-    jobs = [(b"A" * (i % 65), b"A" * (i % 129), AlignConfig()) for i in range(count)]
-    plan = invoke(batch_probe, jobs, 1, "plan")
-    assert sorted(leaf["index"] for leaf in leaves(plan)) == list(range(count))
-    for threads in (2, 4):
-        assert invoke(batch_probe, jobs, threads, "plan") == plan
-
-
-def test_work_grouping_separates_clustered_heavy_jobs(batch_probe):
-    jobs = [(b"A" * n, b"C" * n, AlignConfig()) for n in [512] * 4 + [1] * 4]
-    plan = invoke(batch_probe, jobs, 1, "plan")
-    left, right = map(leaves, plan)
-    assert sum(item["index"] < 4 for item in left) == 2
-    assert sum(item["index"] < 4 for item in right) == 2
-    assert sum(item["work"] for item in left) == sum(item["work"] for item in right)
 
 
 @settings(max_examples=20, deadline=None, derandomize=True)

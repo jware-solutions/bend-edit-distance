@@ -5,6 +5,8 @@ import os
 import subprocess
 import sys
 
+from bend_runtime import configure_toolchain
+
 ROOT = Path(__file__).resolve().parent
 
 
@@ -15,8 +17,7 @@ def main():
         return subprocess.call(["wsl.exe", "--cd", root, "--exec", "python3",
                                 f"{root}/run_benchmarks.py", *sys.argv[1:]])
     os.chdir(ROOT)
-    os.environ["PATH"] = str(ROOT / "build/tools/bend/bin") + os.pathsep + os.environ["PATH"]
-    os.environ["BEND_NO_TELEMETRY"] = "1"
+    configure_toolchain(ROOT)
     from benchmarks.runner import main as run
     return run()
 

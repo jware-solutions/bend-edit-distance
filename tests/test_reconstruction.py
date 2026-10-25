@@ -1,5 +1,7 @@
 """Path semantics, explicit DP ties, and independent Hirschberg reconstruction."""
 
+from bend_runtime import runtime_prefix
+
 from dataclasses import replace
 import itertools
 
@@ -13,7 +15,7 @@ from transport import cached_worker
 
 def probe_align(binary, algorithm, query, target, config, threads=1):
     worker = cached_worker(
-        [binary, "--threads", str(threads), "--", algorithm, "--worker"], cwd=ROOT,
+        [binary, *runtime_prefix(threads=threads), algorithm, "--worker"], cwd=ROOT,
     )
     return worker.align(query, target, config, timeout=30)
 

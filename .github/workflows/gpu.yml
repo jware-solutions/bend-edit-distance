@@ -19,6 +19,8 @@ permissions:
 
 env:
   BEND_NO_TELEMETRY: '1'
+  BENDRTS: ''
+  CC: clang-19
 
 jobs:
   gpu:

@@ -10,6 +10,8 @@ import sys
 
 from scripts.proof_kernel import require_kernel
 
+from bend_runtime import configure_toolchain
+
 ROOT = Path(__file__).resolve().parent
 TEST_PYTHON = ROOT / "build" / "test-venv" / "bin" / "python"
 
@@ -35,14 +37,9 @@ def main() -> int:
             "bash", str(ROOT / "scripts" / "setup.sh"),
         ], check=True)
 
-    # Prefer the downloaded compiler and explicitly built proof kernel.
-    tools = ROOT / "build" / "tools"
-    os.environ["PATH"] = os.pathsep.join([
-        str(tools / "bend" / "bin"), os.environ.get("PATH", ""),
-    ])
-    os.environ["BEND_NO_TELEMETRY"] = "1"
     if "--verdict" in args:
         os.environ["BENDTT"] = str(require_kernel(ROOT))
+    configure_toolchain(ROOT)
 
     # Prefer the project environment without requiring shell activation.
     if TEST_PYTHON.exists() and Path(sys.prefix) != TEST_PYTHON.parents[1]:

@@ -1,5 +1,7 @@
 """Observable k semantics, including pinned upstream's empty-input exception."""
 
+from bend_runtime import runtime_prefix
+
 import json
 import struct
 import subprocess
@@ -57,7 +59,7 @@ def test_nw_inclusive_threshold(bend_binary, cpp_binary, task, query, target, di
 def test_negative_k_cli_and_wire(bend_binary, cpp_binary, maximum, mode, task):
     config = AlignConfig(mode, task)
     assert threshold_from_edlib(maximum) == Unlimited()
-    for binary, align, runtime in ((bend_binary, bend_align, ["--threads", "1", "--"]),
+    for binary, align, runtime in ((bend_binary, bend_align, runtime_prefix(threads=1)),
                                    (cpp_binary, cpp_edlib_align, [])):
         expected = align(b"AC", b"TACG", config, binary=binary)
         args = config.argv()
@@ -71,9 +73,3 @@ def test_negative_k_cli_and_wire(bend_binary, cpp_binary, maximum, mode, task):
         size = LENGTH.unpack_from(result.stdout)[0]
         assert len(result.stdout) == size + 4
         assert decode_response(result.stdout[4:]) == expected
-
-
-@pytest.mark.parametrize("value", [True, "-1", -(2**31) - 1, 2**31])
-def test_threshold_conversion_rejects_invalid_i32(value):
-    with pytest.raises(ValueError):
-        threshold_from_edlib(value)

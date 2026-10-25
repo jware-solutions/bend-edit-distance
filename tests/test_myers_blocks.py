@@ -1,5 +1,7 @@
 """Inspect production masks, carries, columns and padding against scalar cells."""
 
+from bend_runtime import runtime_prefix
+
 from hypothesis import example, given, settings, strategies as st
 import pytest
 
@@ -10,7 +12,7 @@ WORD = 32
 
 
 def probe_rows(binary, mode, *sequences, threads=1):
-    result = execute([binary, "--threads", str(threads), "--", mode, *sequences])
+    result = execute([binary, *runtime_prefix(threads=threads), mode, *sequences])
     assert result.stderr == ""
     return [line.split(",") for line in result.stdout.splitlines() if line]
 

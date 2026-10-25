@@ -747,6 +747,13 @@ def Laws.equality_without_pairs(a, b):
 def Laws.equality_literal_with_pairs():
   {==}
 
+def Laws.equality_literal_any_pairs(pairs):
+  match pairs:
+    case Nil{}:
+      {==}
+    case pair <> tail:
+      {==}
+
 def Laws.equality_duplicate_reverse_pairs():
   {==}
 

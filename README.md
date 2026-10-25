@@ -8,22 +8,28 @@ A Bend implementation of Edlib's edit-distance and alignment features.
 
 ## Setup
 
-Install Bend 2.0.37 or newer. On Windows, use WSL. On Linux or WSL, the official installer is:
+Use the pinned Bend 2.0.39. The setup script provisions Debian/Ubuntu development environments:
 
 ```bash
-curl -fsSL https://bend-lang.com/install.sh | sh
+bash scripts/setup.sh
+export PATH="$PWD/build/tools/bend/bin:$PATH"
+export CC=clang-19 BENDRTS=
 ```
+
+Setup verifies the release checksums, installs Lean 4.34.0, builds the project
+proof kernel and provisions Clang 19+ for programs with `!`. The Python runners
+select and check the project compiler automatically.
 
 ## Usage
 
 ### Command line
 
-From the repository root in Linux or WSL, compile and run the CLI:
+From the repository root, compile and run the CLI:
 
 ```bash
 mkdir -p build
 bend worker.bend -o build/bend-edit-distance
-build/bend-edit-distance --threads 1 -- ACGT ACG
+build/bend-edit-distance +RTS --threads 1 -RTS --RTS ACGT ACG
 ```
 
 The command prints the global edit distance (`1` for this example).
@@ -32,7 +38,7 @@ For JSON results, specify mode, task, threshold (any negative value for unlimite
 concatenated equality pairs and CIGAR format:
 
 ```bash
-build/bend-edit-distance --threads 1 -- --config HW PATH -1 '' EXTENDED AC TACGAC
+build/bend-edit-distance +RTS --threads 1 -RTS --RTS --config HW PATH -1 '' EXTENDED AC TACGAC
 ```
 
 DISTANCE includes end locations; LOC adds starts; PATH adds operation codes and
@@ -62,7 +68,7 @@ The text CLI accepts non-NUL ASCII sequences up to 4,096 characters.
 The [persistent byte workers](TRANSPORT.md) accept NUL and all 256 byte values,
 use explicit sequence lengths, and process many requests in one executable.
 Python adapters reuse these workers throughout a pytest session. See the
-[typed API](CONTRIBUTING.md#typed-alignment-api) for the complete result contract.
+[typed API](CONTRIBUTING.md#library-and-executable-interfaces) for the complete result contract.
 
 ### From another Bend file
 
@@ -86,16 +92,16 @@ an empty operation list produces `""` in either format.
 target, config}` values on CPU in a tree grouped by estimated work. It returns
 one complete result per job in input order, including for mixed sizes and
 configurations. Compile [examples/batch_usage.bend](examples/batch_usage.bend)
-and run with `--threads 1`, `2` or `4`. See the
-[batch API details](CONTRIBUTING.md#independent-cpu-alignment-batches).
+and run with `+RTS --threads 1 -RTS --RTS` (or 2/4 threads). See the
+[batch API details](CONTRIBUTING.md#architecture).
 
 For GPU batches, import `./GpuBatch.bend` and call `align_batch(jobs)`; see
 [examples/gpu_batch_usage.bend](examples/gpu_batch_usage.bend). The separate
 module keeps CPU consumers independent of the GPU toolchain. It prepares the
 plan on CPU, executes one `!` call, and restores result order on CPU.
 `gpu_batch.bend` also accepts a count and binary requests on stdin.
-Force `--gpu on` when requiring hardware execution: Bend's default can fall
-back to CPU. [GPU validation and benchmarks](CONTRIBUTING.md#gpu-batches-and-genuine-device-validation)
+Force `+RTS --gpu on -RTS` when requiring hardware execution: Bend's default can fall
+back to CPU. [GPU validation and benchmarks](CONTRIBUTING.md#benchmarks)
 require completed device dispatches, compare complete CPU/GPU results, and
 measure transfers, observed VRAM and the batch-size crossover.
 
@@ -107,7 +113,7 @@ The public CPU API is [lib.bend](lib.bend), with canonical types and constructor
 in [EdlibTypes.bend](EdlibTypes.bend). [GpuBatch.bend](GpuBatch.bend) is the explicit
 GPU API. The compatible `main.bend`, `worker.bend` and `gpu_batch.bend` entries
 delegate to the flat implementation modules in `src/`. See the
-[source layout and preserved contracts](docs/SIMPLIFICATION.md).
+[source layout and preserved contracts](CONTRIBUTING.md#architecture).
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, implementation notes, testing and proof commands, benchmarks, and CI/release information.
 

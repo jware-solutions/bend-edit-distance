@@ -11,12 +11,17 @@ import sys
 
 def fingerprint(root: Path) -> dict[str, str]:
     tools = root / "build" / "tools"
+    source = (tools / "bend" / "bend2" / "bendtt.lean").read_bytes()
+    compiled_source = (tools / "kernel" / "bendtt.lean").read_bytes()
+    if source != compiled_source:
+        raise ValueError("kernel provenance: compiled source differs from pinned Bend source")
     return {
         "bend": (root / ".bend-version").read_text().strip(),
         "lean": (root / ".lean-version").read_text().strip(),
         "source_sha256": hashlib.sha256(
-            (tools / "bend" / "bend2" / "bendtt.lean").read_bytes(),
+            source,
         ).hexdigest(),
+        "compiled_source_sha256": hashlib.sha256(compiled_source).hexdigest(),
         "kernel_sha256": hashlib.sha256(
             (tools / "kernel" / "bendtt").read_bytes(),
         ).hexdigest(),

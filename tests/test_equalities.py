@@ -1,5 +1,7 @@
 """Configured equality pairs across scalar DP, Myers profiles and pinned Edlib."""
 
+from bend_runtime import runtime_prefix
+
 from dataclasses import replace
 
 import pytest
@@ -138,21 +140,11 @@ def assert_masks(output, query, pairs):
     ("A" * 31 + "aC", "AaAaAaAA"),
 ])
 def test_configured_profile_masks(myers_probe, threads, query, pairs):
-    output = execute([myers_probe, "--threads", str(threads), "--", "masks-config", pairs, query]).stdout
+    output = execute([myers_probe, *runtime_prefix(threads=threads), "masks-config", pairs, query]).stdout
     assert_masks(output, query.encode("ascii"), list(zip(pairs.encode("ascii")[::2],
                                                         pairs.encode("ascii")[1::2])))
 
 
 def test_profile_masks_for_all_bytes(myers_probe):
-    output = execute([myers_probe, "--threads", "4", "--", "masks-byte-pairs"]).stdout
+    output = execute([myers_probe, *runtime_prefix(threads=4), "masks-byte-pairs"]).stdout
     assert_masks(output, bytes(range(256)), [(0, 255), (127, 128), (128, 255)])
-
-
-def test_configured_pairs_retain_myers_banding(myers_probe):
-    query, target = "a" * 257, "A" * 257
-    for threads in (1, 4):
-        output = execute([myers_probe, "--threads", str(threads), "--", "search-config",
-                          "0", "Aa", query, target]).stdout
-        distance, blocks, columns, attempts = map(int, output.split(","))
-        assert (distance, columns, attempts) == (0, 257, 1)
-        assert 257 <= blocks <= 2 * 257

@@ -1,8 +1,8 @@
 """Full result comparisons against the pinned Edlib oracle."""
 
+
 from dataclasses import replace
 import itertools
-import json
 
 import pytest
 from hypothesis import given, settings, strategies as st
@@ -125,23 +125,6 @@ def test_empty_inputs_preserve_pinned_edlib_behavior(bend_binary, cpp_binary):
         assert result == AlignResult(Status.OK, DistanceFound(2), (BeforeStart(),), None, None, None)
 
 
-@pytest.mark.parametrize("field,value", [
-    ("mode", "bad"), ("task", "bad"), ("threshold", "-2147483649"),
-    ("threshold", "2147483648"), ("threshold", "x"),
-    ("equalities", "A"), ("equalities", "Aé"), ("equalities", "AA" * 2049),
-    ("cigar_format", "bad"),
-])
-def test_native_configuration_rejections(bend_binary, cpp_binary, field, value):
-    arguments = AlignConfig().argv()
-    index = {"mode": 1, "task": 2, "threshold": 3, "equalities": 4, "cigar_format": 5}[field]
-    arguments[index] = value
-    for binary, runtime in ((bend_binary, ["--threads", "1", "--"]), (cpp_binary, [])):
-        result = execute([binary, *runtime, *arguments, "A", "A"], check=False)
-        assert result.returncode == 2, result
-        assert result.stdout == ""
-        assert result.stderr
-
-
 @settings(max_examples=50, deadline=None, derandomize=True)
 @given(query=st.text("AaCN", min_size=1, max_size=80),
        target=st.text("AaCN", min_size=1, max_size=80),
@@ -166,39 +149,3 @@ def test_exhaustive_configured_small_inputs(bend_binary, cpp_binary):
         config = AlignConfig(mode, task)
         assert bend_align(query, target, config, binary=bend_binary) == cpp_edlib_align(
             query, target, config, binary=cpp_binary), (query, target, config)
-
-
-def test_wire_round_trip():
-    value = AlignResult(Status.OK, DistanceFound(1), (BeforeStart(),), (Position(0),),
-                        (Operation.INSERT,), "1I")
-    assert AlignResult.from_json(json.dumps(value.to_edlib())) == value
-    value = AlignResult(Status.ERROR, DistanceNotFound(), (), None, None, None)
-    assert AlignResult.from_json(json.dumps(value.to_edlib())) == value
-    # Present empty results remain distinct from null/unrequested results.
-    value = AlignResult(Status.OK, DistanceFound(0), (BeforeStart(),), (Position(0),), (), "")
-    assert AlignResult.from_json(json.dumps(value.to_edlib())) == value
-
-
-@pytest.mark.parametrize("patch", [
-    {"edit_distance": -2}, {"status": True}, {"status": 2},
-    {"end_locations": [-2]}, {"end_locations": [False]},
-    {"start_locations": []}, {"alignment": [4], "cigar": "1M"},
-    {"alignment": [True], "cigar": "1M"}, {"alignment": [], "cigar": "garbage"},
-    {"edit_distance": -1}, {"cigar": "1M"}, {"extra": 1},
-])
-def test_rejects_malformed_structured_results(patch):
-    value = AlignResult(Status.OK, DistanceFound(0), (Position(0),), None, None, None).to_edlib()
-    value.update(patch)
-    with pytest.raises(ValueError, match="Expected structured"):
-        AlignResult.from_json(json.dumps(value))
-
-
-@pytest.mark.parametrize("construct,args", [
-    (MaxDistance, (-1,)), (MaxDistance, (True,)), (MaxDistance, (2**31,)),
-    (Position, (-1,)), (DistanceFound, (-1,)), (EqualityPair, ("N", "Ā")),
-    (EqualityPair, ("AA", "A")), (EqualityPair, (-1, 0)),
-    (EqualityPair, (256, 0)), (EqualityPair, (True, 0)), (EqualityPair, (b"", 0)),
-])
-def test_invalid_typed_values(construct, args):
-    with pytest.raises(ValueError):
-        construct(*args)

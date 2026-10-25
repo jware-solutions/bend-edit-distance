@@ -2,8 +2,6 @@ import Base
 import ../GpuBatch.bend as G
 import ../EdlibTypes.bend as E
 
-# Build and run in WSL/Linux. --gpu on requires genuine supported hardware;
-# --gpu off exercises the same bang on the CPU for equivalence checks.
 def main() -> IO(Unit):
   results = G.align_batch([
     E.AlignJob{"kitten", "sitting", E.default_config()},

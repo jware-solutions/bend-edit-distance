@@ -15,6 +15,7 @@ import statistics
 import subprocess
 import time
 
+from bend_runtime import runtime_prefix, reproducible_env
 from alignment import AlignConfig
 from benchmarks.runner import command, load_corpus, summarize
 from transport import LENGTH, decode_response, encode_request
@@ -23,11 +24,12 @@ ROOT = Path(__file__).resolve().parents[1]
 BUILD = ROOT / "build/gpu"
 PREFIX = "BEND_GPU_METRICS "
 
-# These hooks observe ONLY successfully synchronized device scheduler passes.
-# Fail closed when the pinned runtime's structure changes. The pure library
-# and the production executable are never patched.
+# Instrument the reviewed 2.0.39 CUDA scheduler, failing closed on changes.
+# A gpu_pass(H) drains an entire bang; CUDA syncs batches of submitted rounds.
+# Submitted rounds may be no-ops after the frontier empties; they are NOT work.
 HOOK = """
-static uint64_t bend_device_passes, bend_device_ns;
+static uint64_t bend_completed_bangs, bend_scheduler_ns;
+static uint64_t bend_sync_batches, bend_rounds_submitted;
 static uint64_t bend_device_used_peak, bend_device_used_baseline;
 static uint64_t bend_device_now(void) {
   struct timespec ts;
@@ -46,31 +48,65 @@ static void bend_device_memory(void) {
 #endif
 }
 """
-PASS = """bend_device_memory();
-      uint64_t bend_pass_started = bend_device_now();
-      gpu_pass(f);
-      bend_device_ns += bend_device_now() - bend_pass_started;
-      bend_device_passes += 1;
-      bend_device_memory();"""
+CUDA_PASS = """static void gpu_pass(u64* H) {
+  for (u32 n = 1; H[H_FRONT] != 0; n = n < 32 ? 2 * n : 64) {
+    for (u32 i = 0; i < n; i += 1) {
+      gpu_run();
+    }
+    if (cuCtxSynchronize() != CUDA_SUCCESS) {
+      err_fail("device fault");
+    }
+  }
+}"""
+GPU_RUN = """static void gpu_run(void) {
+  for (u32 i = 0; i < 5; i += 1) {
+    gpu_kernel((u32[]){ 0, 0, 1, 3, 2 }[i], i);
+  }
+}"""
+CUDA_KERNEL = """static void gpu_kernel(u32 pass, u32 at) {
+  void* args[] = { &CORPUS, &pass, &at };
+  if (cuLaunchKernel(gpu_pso, TURN_ROWS(at), 1, 1, CUBE_T, 1, 1, 0, NULL,
+    args, NULL) != CUDA_SUCCESS) {
+    err_fail("device launch failed");
+  }
+}"""
+BRANCH = """    if (gpu) {
+      gpu_pass(H);
+      f = (u32)H[H_FRONT];
+    } else {"""
+COMPLETED = """    if (gpu) {
+      bend_device_memory();
+      uint64_t bend_started = bend_device_now();
+      gpu_pass(H);
+      bend_scheduler_ns += bend_device_now() - bend_started;
+      if (H[H_FRONT] != 0 || !root_done(H)) err_fail("incomplete device bang");
+      bend_completed_bangs += 1;
+      bend_device_memory();
+      f = (u32)H[H_FRONT];
+    } else {"""
 
 
 def instrument(source, *, bang_required=True):
-    anchor = "static void cube_run(u64* H, bool gpu) {"
-    if source.count(anchor) != 1 or source.count("      gpu_pass(f);") != 1:
+    anchor = "#if BEND_METAL || BEND_CUDA\n\nstatic void gpu_kernel(u32 pass, u32 at);"
+    regions = (anchor, CUDA_PASS, GPU_RUN, CUDA_KERNEL, BRANCH)
+    if any(source.count(region) != 1 for region in regions):
+        raise RuntimeError("Pinned Bend runtime changed; review GPU instrumentation")
+    if source.count("static void cube_run(u64* H, bool gpu) {") != 1:
         raise RuntimeError("Pinned Bend runtime changed; review GPU instrumentation")
     if not re.search(r"#define BANGS\s+" + ("1" if bang_required else "0") + r"\b", source):
         raise RuntimeError("Probe has an unexpected reachable-bang setting")
-    return source.replace(anchor, HOOK + "\n" + anchor).replace("      gpu_pass(f);", "      " + PASS)
+    counted = CUDA_PASS.replace('      err_fail("device fault");\n    }',
+        '      err_fail("device fault");\n    }\n'
+        '    bend_sync_batches += 1;\n    bend_rounds_submitted += n;')
+    return (source.replace(anchor, HOOK + "\n" + anchor)
+            .replace(CUDA_PASS, counted).replace(BRANCH, COMPLETED))
 
 
 def prerequisites(cc):
     problems = []
-    # Debian/Ubuntu's nvidia-cuda-toolkit installs headers under /usr/include.
-    # An explicit CUDA_HOME is authoritative; never hide a broken override.
-    override = os.environ.get("CUDA_HOME")
-    candidates = [Path(override)] if override else [Path("/usr/local/cuda"), Path("/usr")]
-    cuda = next((path for path in candidates if all(
-        (path / "include" / header).is_file() for header in ("cuda.h", "nvrtc.h"))), candidates[0])
+    candidates = [Path(p) for p in (os.environ.get("CUDA_HOME"), os.environ.get("CUDA_PATH"),
+                                    "/usr/local/cuda", "/opt/cuda") if p]
+    cuda = next((p for p in candidates if (p / "include/nvrtc.h").is_file()), candidates[0])
     if not (cuda / "include/cuda.h").is_file() or not (cuda / "include/nvrtc.h").is_file():
         problems.append(f"CUDA headers/NVRTC missing at {cuda}")
     try:
@@ -85,7 +121,7 @@ def prerequisites(cc):
 
 
 def build_probe(*, cuda_enabled=False, cpu_control=False, cc=None):
-    cc = cc or shlex.split(os.environ.get("CC", "clang"))
+    cc = cc or shlex.split(os.environ.get("CC", "clang-19"))
     version = command(["bend", "version"])
     if version != "bend " + (ROOT / ".bend-version").read_text().strip():
         raise RuntimeError(f"Unexpected Bend compiler: {version}")
@@ -102,13 +138,9 @@ def build_probe(*, cuda_enabled=False, cpu_control=False, cc=None):
         cuda, _, problems = prerequisites(cc)
         if problems:
             raise RuntimeError("; ".join(problems))
-        # System linker paths already include /usr/lib/<multiarch>. Toolkit
-        # distributions may use lib64 or lib; support both, as Bend does.
-        argv += ["-DBEND_CUDA=1", "-I", cuda / "include"]
-        for directory in (cuda / "lib64", cuda / "lib"):
-            if directory.is_dir():
-                argv += ["-L", directory, f"-Wl,-rpath,{directory}"]
-        argv += ["-lcuda", "-lnvrtc"]
+        cuda_lib = cuda / ("lib64" if (cuda / "lib64").is_dir() else "lib")
+        argv += ["-DBEND_CUDA=1", "-I", cuda / "include", "-L", cuda_lib,
+                 f"-Wl,-rpath,{cuda_lib}", "-lcuda", "-lnvrtc"]
     command(argv)
     return binary
 
@@ -116,7 +148,7 @@ def build_probe(*, cuda_enabled=False, cpu_control=False, cc=None):
 def require_gpu_build(binary):
     sidecar = Path(str(binary) + ".gpu")
     sidecar.unlink(missing_ok=True)  # No stale artifact may satisfy this test.
-    command([binary, "--gpu-build"], timeout=300)
+    command([binary, *runtime_prefix(gpu_build=True)], timeout=300)
     if not sidecar.is_file() or sidecar.stat().st_size <= 8:
         raise RuntimeError("--gpu-build produced no device program (CPU-only build or unusable device)")
     return {"path": str(sidecar), "bytes": sidecar.stat().st_size,
@@ -169,23 +201,25 @@ def parse_metrics(stderr, *, device):
         raise RuntimeError("Malformed GPU metrics JSON") from error
     if not isinstance(metrics, dict):
         raise RuntimeError("Malformed GPU metrics object")
-    integers = ("device_passes", "device_pass_ns", "work_ns", "restore_write_ns",
+    integers = ("device_completed_bangs", "device_sync_batches", "device_rounds_submitted", "device_scheduler_ns", "work_ns", "restore_write_ns",
                 "prefetch_in_ns", "prefetch_out_ns", "prefetch_in_requested_bytes",
                 "prefetch_out_requested_bytes", "managed_heap_bytes")
-    if metrics.get("schema") != 1 or any(type(metrics.get(k)) is not int or metrics[k] < 0 for k in integers):
+    if metrics.get("schema") != 2 or any(type(metrics.get(k)) is not int or metrics[k] < 0 for k in integers):
         raise RuntimeError("Malformed GPU metrics")
     if device:
-        if metrics.get("backend") != "cuda" or metrics["device_passes"] < 1 or metrics["device_pass_ns"] < 1:
+        if metrics.get("backend") != "cuda" or metrics["device_completed_bangs"] < 1 or metrics["device_scheduler_ns"] < 1:
             raise RuntimeError("CPU fallback is not device validation")
-        if metrics["device_pass_ns"] > metrics["work_ns"]:
-            raise RuntimeError("Device passes exceed the measured execution interval")
+        if not 1 <= metrics["device_completed_bangs"] <= metrics["device_sync_batches"] <= metrics["device_rounds_submitted"] <= 64 * metrics["device_sync_batches"]:
+            raise RuntimeError("Invalid synchronized CUDA scheduler evidence")
+        if metrics["device_scheduler_ns"] > metrics["work_ns"]:
+            raise RuntimeError("Device scheduler exceeds the measured execution interval")
         for key in ("device_used_peak_sample_bytes", "device_used_baseline_bytes"):
             if type(metrics.get(key)) is not int or metrics[key] < 0:
                 raise RuntimeError("Missing device VRAM measurement")
         if metrics["managed_heap_bytes"] <= 0 or metrics["device_used_peak_sample_bytes"] < metrics["device_used_baseline_bytes"]:
             raise RuntimeError("Invalid device memory measurement")
     else:
-        if metrics.get("backend") != "cpu" or metrics["device_passes"] != 0 or metrics["device_pass_ns"] != 0:
+        if metrics.get("backend") != "cpu" or metrics["device_completed_bangs"] != 0 or metrics["device_scheduler_ns"] != 0 or metrics["device_sync_batches"] != 0 or metrics["device_rounds_submitted"] != 0:
             raise RuntimeError("CPU control unexpectedly executed on a device")
         if metrics.get("device_used_peak_sample_bytes") is not None or metrics.get("device_used_baseline_bytes") is not None or metrics["managed_heap_bytes"] != 0:
             raise RuntimeError("CPU control must not report GPU memory")
@@ -194,10 +228,9 @@ def parse_metrics(stderr, *, device):
 
 def measure(binary, jobs, *, device, threads=1, heap="1GB", prefetch=False, timeout=180):
     payload = b"".join(encode_request(*job) for job in jobs)
-    argv = [str(binary), "--threads", str(threads), "--gpu", heap if device else "off",
-            "--", "prefetch" if prefetch else "demand", str(len(jobs))]
+    argv = [str(binary), *runtime_prefix(threads=threads, gpu=heap if device else "off"), "prefetch" if prefetch else "demand", str(len(jobs))]
     started = time.monotonic_ns()
-    result = subprocess.run(argv, cwd=ROOT, input=payload, capture_output=True, timeout=timeout)
+    result = subprocess.run(argv, cwd=ROOT, input=payload, capture_output=True, timeout=timeout, env=reproducible_env())
     ended = time.monotonic_ns()
     if result.returncode:
         backend = "CUDA" if device else "CPU"
@@ -226,11 +259,10 @@ def crossover(records, cases, sizes):
 
 
 def report(document):
-    lines = ["# GPU batch measurements", "", "Every CUDA sample passed forced-device execution, completed-dispatch evidence, and full ordered CPU/GPU result equality.", "",
-             "Times are median fresh-process samples with rotated CPU/CUDA/Edlib order. End-to-end includes process/device initialization, input framing, host planning, execution, ordering and response framing. Payload encoding in Python and compilation are excluded. Warm-ups are discarded.", "",
-             "`device_pass_ns` is synchronized scheduler wall time, including implicit migration and launch overhead; it is not pure kernel time. The prefetch experiment requests migration of scheduler metadata, allocated arena pages (including freed pages), and occupied allocator-bank entries before and after execution. The requested byte counts are recorded; they are not measured PCIe traffic. This is a controlled transfer cost, not the implicit migration cost of the demand run. Do not subtract separate runs to estimate transfer time.", "",
-             "VRAM is device-wide used memory sampled before/after scheduler passes and prefetch, including the baseline and other processes. It is an observed lower bound on peak residency, not exact per-process peak VRAM. Use an otherwise idle GPU. Managed heap bytes are reserved address space, not resident VRAM.", "",
-             "Edlib uses the pinned C++ oracle, one thread, the same binary request/response protocol and fresh processes. Full NW/DISTANCE results are checked against both Bend backends. Its end-to-end time includes parsing and serialization; internal work time is not instrumented here. CPU/CUDA/Edlib demand sample order rotates between repetitions.", "",
+    lines = ["# GPU batch measurements", "", "Every CUDA sample passed forced-device execution, completed-bang and synchronized-batch evidence, and full ordered CPU/GPU result equality.", "",
+             "Times are median fresh-process samples with interleaved CPU/GPU order. End-to-end includes process/device initialization, input framing, host planning, execution, ordering and response framing. Payload encoding in Python and compilation are excluded. Warm-ups are discarded.", "",
+             "`device_scheduler_ns` is synchronized scheduler wall time, including implicit migration and launch overhead; it is not pure kernel time. The prefetch experiment requests migration of scheduler metadata, allocated arena pages (including freed pages), and occupied allocator-bank entries before and after execution. The requested byte counts are recorded; they are not measured PCIe traffic. This is a controlled transfer cost, not the implicit migration cost of the demand run. Do not subtract separate runs to estimate transfer time.", "",
+             "VRAM is device-wide used memory sampled before/after completed bangs and prefetch, including the baseline and other processes. It is an observed lower bound on peak residency, not exact per-process peak VRAM. Use an otherwise idle GPU. Managed heap bytes are reserved address space, not resident VRAM.", "",
              "| Case | Batch | Backend | Transfer | End-to-end ms | Work ms | Prefetch in/out ms | Observed used VRAM MiB |",
              "| --- | ---: | --- | --- | ---: | ---: | ---: | ---: |"]
     for r in document["records"]:
@@ -274,13 +306,15 @@ def main(argv=None):
     cases = [c for c in corpus["cases"] if not args.cases or c["name"] in args.cases]
     if not cases or args.cases and set(args.cases) - {c["name"] for c in cases}:
         parser.error("Unknown or empty case selection")
+    if (args.output / "results.json").exists() or (args.output / "REPORT.md").exists():
+        parser.error("Output already contains a result; choose a fresh --output directory")
     args.output.mkdir(parents=True, exist_ok=True)
     if any((args.output / name).exists() for name in ("results.json", "REPORT.md")):
         parser.error("Output already contains a result; choose a fresh --output directory")
     BUILD.mkdir(parents=True, exist_ok=True)
     cc = shlex.split(os.environ.get("CC", "clang"))
     cuda, cc_version, problems = prerequisites(cc)
-    document = {"schema": 1, "status": "unvalidated", "environment": {
+    document = {"schema": 2, "status": "unvalidated", "environment": {
         "platform": platform.platform(), "compiler": cc_version, "bend": command(["bend", "version"]),
         "cuda_home": str(cuda), "threads": args.threads, "heap": args.heap,
         "corpus_sha256": hashlib.sha256(args.corpus.read_bytes()).hexdigest()},

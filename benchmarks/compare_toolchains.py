@@ -19,6 +19,7 @@ import shlex
 import subprocess
 import time
 
+from bend_runtime import reproducible_env, runtime_prefix
 from alignment import AlignConfig
 from benchmarks.gpu_runner import decode_batch, instrument, parse_metrics
 from benchmarks.runner import ROOT, command, git_command, load_corpus, sha, summarize
@@ -64,13 +65,13 @@ def compiler_versions(compilers):
 
 def measure(binary, workload, threads, cpus, expected, timeout):
     payload = b"".join(encode_request(*job) for job in workload["jobs"])
-    argv = [str(binary), "--threads", str(threads), "--gpu", "off", "--",
+    argv = [str(binary), *runtime_prefix(threads=threads, gpu="off"),
             workload["mode"], str(len(workload["jobs"]))]
     original = os.sched_getaffinity(0)
     try:
         os.sched_setaffinity(0, cpus[:threads])
         started = time.monotonic_ns()
-        result = subprocess.run(argv, cwd=ROOT, input=payload, capture_output=True, timeout=timeout)
+        result = subprocess.run(argv, cwd=ROOT, input=payload, capture_output=True, timeout=timeout, env=reproducible_env())
         wall = time.monotonic_ns() - started
     finally:
         os.sched_setaffinity(0, original)

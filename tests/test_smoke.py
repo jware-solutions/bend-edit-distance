@@ -7,6 +7,7 @@ from tests.helpers import bend_distance, bend_dp_distance, cpp_edlib_distance
     ("ACGT", "ACG"), ("", ""), ("", "ACGT"), ("ACGT", ""),
     ("A", "T"), ("A" * 129, "C" * 65), ("A C", "T\tG\n"),
     ("--threads", "--gpu"), ("--help", "--bend-help"),
+    ("--", "--"), ("+RTS", "-RTS"), ("--RTS", "a b"),
     ("';$(echo x)", '"\\*'),
 ])
 def test_python_bend_integration(bend_binary, dp_binary, cpp_binary, query, target):

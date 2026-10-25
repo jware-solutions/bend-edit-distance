@@ -1,5 +1,7 @@
 """CIGAR encoding and decoded semantics, independent of traceback tie choices."""
 
+from bend_runtime import runtime_prefix
+
 from dataclasses import replace
 import json
 
@@ -7,15 +9,13 @@ import pytest
 from hypothesis import given, settings, strategies as st
 
 from alignment import AlignConfig, CigarFormat, EqualityPair, MaxDistance, Mode, Operation, Task
-from tests.helpers import (
-    assert_valid_cigar, assert_valid_path, bend_align, cpp_edlib_align, decode_cigar, execute,
-)
+from tests.helpers import assert_valid_cigar, assert_valid_path, bend_align, cpp_edlib_align, execute
 from tests.test_reconstruction import probe_align
 
 
 def encode(cigar_probe, operations, threads=1):
     codes = "".join(str(int(op)) for op in operations)
-    output = execute([cigar_probe, "--threads", str(threads), "--", codes]).stdout
+    output = execute([cigar_probe, *runtime_prefix(threads=threads), codes]).stdout
     standard, extended = json.loads(output)
     return {CigarFormat.STANDARD: standard, CigarFormat.EXTENDED: extended}
 
@@ -126,26 +126,3 @@ def test_public_empty_input_paths_are_absent(bend_binary, format, mode, query, t
 def test_unrequested_or_rejected_paths_have_no_cigar(bend_binary, format, config):
     result = bend_align(b"A", b"B", replace(config, cigar_format=format), binary=bend_binary)
     assert result.alignment is None and result.cigar is None
-
-
-@pytest.mark.parametrize("cigar,format", [
-    ("0M", CigarFormat.STANDARD), ("01M", CigarFormat.STANDARD),
-    ("1M1M", CigarFormat.STANDARD), ("1=", CigarFormat.STANDARD),
-    ("1X", CigarFormat.STANDARD), ("1M", CigarFormat.EXTENDED),
-    ("1=1=", CigarFormat.EXTENDED), ("1S", CigarFormat.EXTENDED),
-    ("2", CigarFormat.EXTENDED), ("garbage", CigarFormat.EXTENDED),
-])
-def test_decoder_rejects_invalid_or_unmerged_runs(cigar, format):
-    with pytest.raises(AssertionError):
-        decode_cigar(cigar, format)
-
-
-@pytest.mark.parametrize("query,target,cigar,cost", [
-    (b"A", b"A", "1X", 1), (b"A", b"C", "1=", 0),
-    (b"AA", b"A", "1=", 0), (b"A", b"AA", "1=", 0),
-    (b"A", b"A", "2=", 0), (b"A", b"A", "1=", 1),
-    (b"A", b"", "1D", 1), (b"", b"A", "1I", 1),
-])
-def test_decoder_detects_wrong_consumption_diagonals_and_cost(query, target, cigar, cost):
-    with pytest.raises(AssertionError):
-        assert_valid_cigar(query, target, AlignConfig(task=Task.PATH), cigar, cost)

@@ -1,4 +1,4 @@
-// Benchmark-only Bend 2.0.37 foreign-effect ABI; not part of the alignment API.
+// Benchmark-only Bend 2.0.39 foreign-effect ABI; not part of the alignment API.
 #include <time.h>
 #include <inttypes.h>
 

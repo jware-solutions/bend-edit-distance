@@ -17,6 +17,8 @@ import subprocess
 import tempfile
 import time
 
+from bend_runtime import runtime_prefix, reproducible_env
+
 ROOT = Path(__file__).resolve().parents[1]
 BUILD = ROOT / "build/benchmarks"
 PHASES = {0: "transport", 1: "prepare", 2: "profile", 3: "work", 4: "release"}
@@ -24,7 +26,7 @@ PHASES = {0: "transport", 1: "prepare", 2: "profile", 3: "work", 4: "release"}
 
 def command(argv, *, timeout=180):
     result = subprocess.run([str(x) for x in argv], cwd=ROOT, capture_output=True,
-                            text=True, timeout=timeout)
+                            text=True, timeout=timeout, env=reproducible_env())
     if result.returncode:
         raise RuntimeError(f"{argv!r} exited {result.returncode}\n{result.stdout}\n{result.stderr}")
     return result.stdout.strip()
@@ -118,7 +120,7 @@ def measure(argv, timeout):
     with tempfile.TemporaryFile() as stdout, tempfile.TemporaryFile() as stderr:
         started = time.monotonic_ns()
         process = subprocess.Popen([str(BUILD / "launch"), *map(str, argv)], stdout=stdout,
-                                   stderr=stderr, start_new_session=True)
+                                   stderr=stderr, start_new_session=True, env=reproducible_env())
         signal.setitimer(signal.ITIMER_REAL, timeout)
         try:
             _, status, usage = os.wait4(process.pid, 0)
@@ -318,7 +320,7 @@ def main():
                     os.sched_setaffinity(0, cpus[:thread])
                     argv = [BUILD / algorithm]
                     if algorithm == "bend":
-                        argv += ["--threads", str(thread), "--"]
+                        argv += runtime_prefix(threads=thread)
                     argv += [mode, str(count.bit_length()), case["query"], case["target"]]
                     sample = measure(argv, args.timeout)
                     expected = records[job]["expected_checksum"]

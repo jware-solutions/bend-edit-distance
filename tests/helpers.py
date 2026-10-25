@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from bend_runtime import runtime_prefix, reproducible_env
+
 from pathlib import Path
 import re
 import subprocess
@@ -107,7 +109,7 @@ def execute(
     try:
         result = subprocess.run(
             argv, cwd=ROOT, capture_output=True, text=True, encoding="utf-8",
-            timeout=timeout, check=False,
+            timeout=timeout, check=False, env=reproducible_env(),
         )
     except subprocess.TimeoutExpired as error:
         raise RuntimeError(f"Timed out after {timeout}s: {argv!r}") from error
@@ -140,9 +142,9 @@ def bend_output(
     _validate_sequences(query, target)
     if threads < 1:
         raise ValueError("threads must be positive")
-    # -- preserves empty strings and sequences that look like runtime flags.
+    # --RTS preserves empty strings and sequences that look like runtime flags.
     return execute([
-        binary, "--threads", str(threads), "--", query, target,
+        binary, *runtime_prefix(threads=threads), query, target,
     ], timeout=timeout).stdout.strip()
 
 
@@ -180,7 +182,7 @@ def bend_align(
         raise TypeError("Expected AlignConfig")
     if type(threads) is not int or threads < 1:
         raise ValueError("threads must be positive")
-    worker = cached_worker([binary, "--threads", str(threads), "--", "--worker"], cwd=ROOT)
+    worker = cached_worker([binary, *runtime_prefix(threads=threads), "--worker"], cwd=ROOT)
     return worker.align(query, target, config, timeout=timeout)
 
 

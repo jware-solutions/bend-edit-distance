@@ -1,5 +1,5 @@
-// Validation-only Bend 2.0.37 ABI. gpu_runner.py adds a counter AFTER the
-// runtime's gpu_pass returns (including its successful synchronization).
+// Validation-only Bend 2.0.39 ABI. Count only fully drained device bangs,
+// plus CUDA batches AFTER successful synchronization (not logical rounds).
 // CPU fallback cannot increment this counter. Keep production code untouched.
 #include <inttypes.h>
 
@@ -60,7 +60,8 @@ static uint64_t gpu_measure_move(bool host, uint64_t* requested_bytes) {
 #endif
 
 Term begin_run(Env e, Term* f, IoWork* w) {
-  bend_device_passes = bend_device_ns = 0;
+  bend_completed_bangs = bend_scheduler_ns = 0;
+  bend_sync_batches = bend_rounds_submitted = 0;
   gpu_measure_prefetch = term_aux(f[0]) == CID(True);
   if (gpu_measure_prefetch && !io_gpu) {
     fprintf(stderr, "Prefetch measurement requires a CUDA device\n");
@@ -95,13 +96,14 @@ Term finish_run(Env e, Term* f, IoWork* w) {
 #if BEND_CUDA
   if (io_gpu) backend = "cuda";
 #endif
-  fprintf(stderr, "BEND_GPU_METRICS {\"schema\":1,\"backend\":\"%s\","
-    "\"device_passes\":%" PRIu64 ",\"device_pass_ns\":%" PRIu64 ","
+  fprintf(stderr, "BEND_GPU_METRICS {\"schema\":2,\"backend\":\"%s\","
+    "\"device_completed_bangs\":%" PRIu64 ",\"device_scheduler_ns\":%" PRIu64 ","
+    "\"device_sync_batches\":%" PRIu64 ",\"device_rounds_submitted\":%" PRIu64 ","
     "\"work_ns\":%" PRIu64 ",\"restore_write_ns\":%" PRIu64 ","
     "\"prefetch_in_ns\":%" PRIu64 ",\"prefetch_out_ns\":%" PRIu64 ","
     "\"prefetch_in_requested_bytes\":%" PRIu64 ",\"prefetch_out_requested_bytes\":%" PRIu64 ","
     "\"managed_heap_bytes\":%" PRIu64 ",\"device_used_peak_sample_bytes\":",
-    backend, bend_device_passes, bend_device_ns, gpu_measure_work,
+    backend, bend_completed_bangs, bend_scheduler_ns, bend_sync_batches, bend_rounds_submitted, gpu_measure_work,
     gpu_measure_restore, gpu_measure_in, gpu_measure_out,
     gpu_measure_in_bytes, gpu_measure_out_bytes,
     io_gpu ? (uint64_t)corpus_size : 0);

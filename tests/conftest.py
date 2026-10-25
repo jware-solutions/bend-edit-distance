@@ -10,10 +10,12 @@ from hypothesis.database import DirectoryBasedExampleDatabase
 from scripts.proof_kernel import require_kernel
 from tests.helpers import BEND_BINARY, CPP_BINARY, DP_BINARY, ROOT, execute
 from transport import close_workers
+from bend_runtime import configure_toolchain
 
 
 @pytest.fixture(scope="session", autouse=True)
 def worker_lifetime():
+    configure_toolchain(ROOT)
     close_workers()
     yield
     close_workers()
@@ -102,18 +104,6 @@ def gpu_binary(bend_tool):
     binary.parent.mkdir(parents=True, exist_ok=True)
     execute([bend_tool, ROOT / "gpu_batch.bend", "-o", binary], timeout=180)
     return binary
-
-
-@pytest.fixture(scope="session")
-def gpu_cpu_probe(bend_tool):
-    from benchmarks.gpu_runner import build_probe
-    return build_probe()
-
-
-@pytest.fixture(scope="session")
-def cpu_batch_control(bend_tool):
-    from benchmarks.gpu_runner import build_probe
-    return build_probe(cpu_control=True)
 
 
 @pytest.fixture(scope="session")

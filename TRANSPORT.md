@@ -1,7 +1,7 @@
 # Persistent byte transport (version 1)
 
 Compile `worker.bend` (`bend worker.bend -o build/bend-edit-distance`), then run
-`build/bend-edit-distance --threads 1 -- --worker`.
+`build/bend-edit-distance +RTS --threads 1 -RTS --RTS --worker`.
 The C++ oracle accepts `build/edlib-oracle --worker`. Both read binary requests
 from stdin and flush one binary response to stdout per request, in order, until
 EOF. Stderr contains diagnostics only. The independent DP test executable
@@ -25,7 +25,7 @@ CPU threads for independent work within an alignment.
 ## GPU batch entry point
 
 Compile `gpu_batch.bend` to `build/gpu-batch`, then invoke
-`build/gpu-batch --gpu on -- COUNT`. Send exactly COUNT ordinary BED1 request
+`build/gpu-batch +RTS --threads 4 --gpu on -RTS --RTS COUNT`. Send exactly COUNT ordinary BED1 request
 frames on stdin. The program collects the jobs, prepares a balanced plan on
 CPU, executes the independent alignment tree in one GPU `!` call, and writes
 COUNT BER1 responses in input order. COUNT zero is valid. Missing/truncated
@@ -33,7 +33,7 @@ requests fail before batch evaluation. Additional input after COUNT frames is
 outside this invocation's batch and is not consumed. This is a one-shot batch
 process, with the same byte/configuration/result encoding as the worker.
 
-Keep the compiled `.gpu` program beside the binary. `--gpu off` explicitly runs
+Keep the compiled `.gpu` program beside the binary. `+RTS --gpu off -RTS` explicitly runs
 the same entry point on CPU. Default GPU selection permits fallback; successful
 responses alone do not demonstrate device execution. Use
 `python run_gpu_benchmarks.py --check-build` for forced-device validation with
@@ -99,10 +99,11 @@ requests. Close it with a context manager:
 
 ```python
 from alignment import AlignConfig, EqualityPair, Task
+from bend_runtime import runtime_prefix
 from transport import AlignmentWorker
 
 config = AlignConfig(task=Task.PATH, equalities=(EqualityPair(0, 255),))
-with AlignmentWorker(["build/bend-edit-distance", "--threads", "1", "--", "--worker"]) as worker:
+with AlignmentWorker(["build/bend-edit-distance", *runtime_prefix(threads=1), "--worker"]) as worker:
     for query in (b"A\0C", bytes(range(256))):
         result = worker.align(query, query, config)
         assert result.require_distance() == 0

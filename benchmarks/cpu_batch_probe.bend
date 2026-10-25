@@ -11,7 +11,7 @@ type Work is Type:
   BatchLate{first: E.AlignJob, sibling: E.AlignJob, plan: B.Plan}
 
 # Benchmark control only: a costly first alignment delays a wide ready tree
-# while the other outer branch finishes. No production planning is changed.
+# while the other outer branch finishes.
 def prepare(mode: String, jobs: List<&2, E.AlignJob>) -> Work:
   match mode jobs:
     case "late" first <> sibling <> tail:

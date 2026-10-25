@@ -70,12 +70,28 @@ def pair_matches(pair: EqualityPair, +a: Char, +b: Char) -> Bool:
       Bool.or(Bool.and(Char.is_eq(a, first), Char.is_eq(b, second)),
         Bool.and(Char.is_eq(a, second), Char.is_eq(b, first)))
 
+# Literal matches do not depend on the configured equality pairs.
+def equal.scan(pairs: List<&2, EqualityPair>, +a: Char, +b: Char) -> Bool:
+  match pairs:
+    case Nil{}:
+      Char.is_eq(a, b)
+    case pair <> tail:
+      Bool.or(pair_matches(pair, a, b), equal.scan(tail, a, b))
+
+def equal.literal(pair: EqualityPair, tail: List<&2, EqualityPair>,
+                  +a: Char, +b: Char, same: Bool) -> Bool:
+  match same:
+    case True{}:
+      True{}
+    case False{}:
+      Bool.or(pair_matches(pair, a, b), equal.scan(tail, a, b))
+
 def equal(pairs: List<&2, EqualityPair>, +a: Char, +b: Char) -> Bool:
   match pairs:
     case Nil{}:
       Char.is_eq(a, b)
     case pair <> tail:
-      Bool.or(pair_matches(pair, a, b), equal(tail, a, b))
+      equal.literal(pair, tail, a, b, Char.is_eq(a, b))
 
 def end_coordinate(length: Nat) -> Coordinate:
   match length:

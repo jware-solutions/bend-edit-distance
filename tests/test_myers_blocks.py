@@ -126,3 +126,18 @@ def test_directional_columns_and_padding(myers_probe, mode, length):
 @example(query="A" * 65, target="C" * 65)
 def test_reachable_block_states_with_shrinking(myers_probe, query, target):
     assert_trace(myers_probe, query, target)
+
+
+@pytest.mark.parametrize("query", MASK_QUERIES)
+def test_compact_masks_match_reference(myers_probe, query):
+    rows = probe_rows(myers_probe, "compact", query)
+    assert len(rows) == ((len(query) + 31) // 32) * 256
+    for tag, block, code, direct, compact in rows:
+        assert tag == "M"
+        assert direct == compact, (query, block, code, direct, compact)
+
+
+def test_compact_all_bytes_and_nontransitive_pairs(myers_probe):
+    rows = probe_rows(myers_probe, "compact-byte-pairs")
+    assert len(rows) == 8 * 256
+    assert all(direct == compact for _, _, _, direct, compact in rows)

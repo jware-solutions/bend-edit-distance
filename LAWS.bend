@@ -1,3 +1,5 @@
+import ./src/Profile.bend as P
+import ./src/BitVector.bend as V
 import Base
 import ./src/Myers.bend as Myers
 import ./src/DistanceDP.bend as DP
@@ -110,14 +112,14 @@ type CarrySign is Data:
   ZeroCarry{}
   PositiveCarry{}
 
-def carry(sign: CarrySign) -> Myers.Carry:
+def carry(sign: CarrySign) -> V.Carry:
   match sign:
     case NegativeCarry{}:
-      Myers.Carry{0, 1}
+      V.Carry{0, 1}
     case ZeroCarry{}:
-      Myers.Carry{0, 0}
+      V.Carry{0, 0}
     case PositiveCarry{}:
-      Myers.Carry{1, 0}
+      V.Carry{1, 0}
 
 def uniform_eq(matches: Bool) -> U32:
   match matches:
@@ -126,18 +128,18 @@ def uniform_eq(matches: Bool) -> U32:
     case True{}:
       4294967295
 
-def initial_carry(sign: CarrySign, matches: Bool) -> Myers.Carry:
+def initial_carry(sign: CarrySign, matches: Bool) -> V.Carry:
   match sign matches:
     case NegativeCarry{} _:
-      Myers.Carry{0, 1}
+      V.Carry{0, 1}
     case ZeroCarry{} False{}:
-      Myers.Carry{0, 0}
+      V.Carry{0, 0}
     case PositiveCarry{} False{}:
-      Myers.Carry{0, 0}
+      V.Carry{0, 0}
     case ZeroCarry{} True{}:
-      Myers.Carry{0, 1}
+      V.Carry{0, 1}
     case PositiveCarry{} True{}:
-      Myers.Carry{0, 1}
+      V.Carry{0, 1}
 
 # NW boundary conditions: deleting or inserting a whole sequence costs its
 # length. These quantify over every string, rather than selected examples.
@@ -152,7 +154,7 @@ law empty_target:
 # Query-profile padding must match every symbol, including a full empty word.
 law wildcard_padding:
   for symbol: Char
-  {Myers.build_peq_word("", symbol, 1, Nil{}) == 4294967295 : U32}
+  {V.build_peq_word("", symbol, 1, Nil{}) == 4294967295 : U32}
 
 # Structural invariants quantify over all Bend Strings (including Unicode)
 # and unbounded Nat sizes. They make no alphabet or distance claim.
@@ -163,18 +165,18 @@ def rejoin(parts: String & String) -> String:
 law split_rejoins:
   for size: Nat
   for query: String
-  {rejoin(Myers.split_query(size, query)) == query : String}
+  {rejoin(V.split_query(size, query)) == query : String}
 
 law split_prefix_length:
   for size: Nat
   for query: String
-  {String.length(Pair.fst(String, String, Myers.split_query(size, query))) ==
+  {String.length(Pair.fst(String, String, V.split_query(size, query))) ==
     Nat.min(size, String.length(query)) : Nat}
 
 law initial_block_count:
   for count: Nat
   for bottom: U32
-  {List.length(&1, Myers.Block, Myers.init_blocks(count, bottom)) == count : Nat}
+  {List.length(&1, V.Block, V.init_blocks(count, bottom)) == count : Nat}
 
 # With no padding, decoding preserves every U32 score, even for unreachable
 # bit-vector states. This does not assert nonwrapping arithmetic or optimality.
@@ -182,7 +184,7 @@ law decode_no_padding:
   for positive: U32
   for negative: U32
   for score: U32
-  {Myers.get_block_cell_value(0n, positive, negative, score) == score : U32}
+  {V.get_block_cell_value(0n, positive, negative, score) == score : U32}
 
 # Outgoing carries depend only on the equality/vertical masks and incoming
 # carry. Every U32 score is allowed, including wraparound values. This states
@@ -191,13 +193,13 @@ law carry_score_independent:
   for positive: U32
   for negative: U32
   for eq: U32
-  for incoming: Myers.Carry
+  for incoming: V.Carry
   for first_score: U32
   for second_score: U32
-  {Pair.snd(Myers.Block, Myers.Carry,
-    Myers.calculate_block(Myers.Block{positive, negative, first_score}, eq, incoming)) ==
-    Pair.snd(Myers.Block, Myers.Carry,
-      Myers.calculate_block(Myers.Block{positive, negative, second_score}, eq, incoming)) : Myers.Carry}
+  {Pair.snd(V.Block, V.Carry,
+    V.calculate_block(V.Block{positive, negative, first_score}, eq, incoming)) ==
+    Pair.snd(V.Block, V.Carry,
+      V.calculate_block(V.Block{positive, negative, second_score}, eq, incoming)) : V.Carry}
 
 # Carry propagation families: every U32 score, all three incoming signs, and
 # a uniform equality word (all 32 positions match, or all mismatch). The first
@@ -208,17 +210,17 @@ law initial_uniform_carry:
   for score: U32
   for incoming: CarrySign
   for matches: Bool
-  {Pair.snd(Myers.Block, Myers.Carry,
-    Myers.calculate_block(Myers.Block{4294967295, 0, score},
-      uniform_eq(matches), carry(incoming))) == initial_carry(incoming, matches) : Myers.Carry}
+  {Pair.snd(V.Block, V.Carry,
+    V.calculate_block(V.Block{4294967295, 0, score},
+      uniform_eq(matches), carry(incoming))) == initial_carry(incoming, matches) : V.Carry}
 
 law finished_uniform_carry:
   for score: U32
   for incoming: CarrySign
   for matches: Bool
-  {Pair.snd(Myers.Block, Myers.Carry,
-    Myers.calculate_block(Myers.Block{0, 4294967295, score},
-      uniform_eq(matches), carry(incoming))) == Myers.Carry{1, 0} : Myers.Carry}
+  {Pair.snd(V.Block, V.Carry,
+    V.calculate_block(V.Block{0, 4294967295, score},
+      uniform_eq(matches), carry(incoming))) == V.Carry{1, 0} : V.Carry}
 
 law small_ascii_supported:
   for sequence: SmallAscii
@@ -237,35 +239,35 @@ law small_ascii_equivalence:
 # Ordinary equality is case-sensitive; padding alone is a wildcard. Bit 31
 # remains a real query position when the word is full (no wildcard high bits).
 law mask_case_sensitive:
-  {Myers.build_peq_word("aA", 'A', 1, Nil{}) == 4294967294 : U32}
+  {V.build_peq_word("aA", 'A', 1, Nil{}) == 4294967294 : U32}
 
 law mask_full_word_high_bit:
-  {Myers.build_peq_word("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAC", 'C', 1, Nil{}) == 2147483648 : U32}
+  {V.build_peq_word("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAC", 'C', 1, Nil{}) == 2147483648 : U32}
 
 # The table lookup follows low bits first and preserves case/padding.
 law table_lookup_ascii:
-  {Myers.peq_get(Myers.build_peq_table(8n, "aA", 0, 1, Nil{}), 65, True{}) == 4294967294 : U32}
+  {V.peq_get(V.build_peq_table(8n, "aA", 0, 1, Nil{}), 65, True{}) == 4294967294 : U32}
 
 law table_lookup_missing:
-  {Myers.peq_get(Myers.build_peq_table(8n, "aA", 0, 1, Nil{}), 128, False{}) == 4294967292 : U32}
+  {V.peq_get(V.build_peq_table(8n, "aA", 0, 1, Nil{}), 128, False{}) == 4294967292 : U32}
 
 # Reachable first-column states distinguish a negative carry from zero.
 law block_match_carry:
-  {Myers.calculate_block(Myers.Block{4294967295, 0, 32}, 4294967295, Myers.Carry{1, 0}) ==
-    (Myers.Block{4294967294, 1, 31}, Myers.Carry{0, 1}) : Myers.Block & Myers.Carry}
+  {V.calculate_block(V.Block{4294967295, 0, 32}, 4294967295, V.Carry{1, 0}) ==
+    (V.Block{4294967294, 1, 31}, V.Carry{0, 1}) : V.Block & V.Carry}
 
 law block_mismatch_carry:
-  {Myers.calculate_block(Myers.Block{4294967295, 0, 32}, 0, Myers.Carry{1, 0}) ==
-    (Myers.Block{4294967294, 0, 32}, Myers.Carry{0, 0}) : Myers.Block & Myers.Carry}
+  {V.calculate_block(V.Block{4294967295, 0, 32}, 0, V.Carry{1, 0}) ==
+    (V.Block{4294967294, 0, 32}, V.Carry{0, 0}) : V.Block & V.Carry}
 
 # After a full matching column sequence, a trailing mismatch inserts one more
 # target character and produces a positive horizontal carry.
 law block_positive_carry:
-  {Myers.calculate_block(Myers.Block{0, 4294967295, 0}, 0, Myers.Carry{1, 0}) ==
-    (Myers.Block{0, 4294967295, 1}, Myers.Carry{1, 0}) : Myers.Block & Myers.Carry}
+  {V.calculate_block(V.Block{0, 4294967295, 0}, 0, V.Carry{1, 0}) ==
+    (V.Block{0, 4294967295, 1}, V.Carry{1, 0}) : V.Block & V.Carry}
 
 law block_decode_high_bit:
-  {Myers.get_block_cell_value(31n, 4294967294, 1, 31) == 0 : U32}
+  {V.get_block_cell_value(31n, 4294967294, 1, 31) == 0 : U32}
 
 law distance_empty:
   {Myers.response("", "") == "0" : String}
@@ -488,10 +490,10 @@ law dp_hw_top_boundary:
   {List.head(&1, U32, DP.initial_semiglobal_row(length, column, E.HW{})) == Some{0} : Maybe<U32>}
 
 law shw_horizontal_boundary:
-  {Myers.semiglobal_carry(E.SHW{}) == Myers.Carry{1, 0} : Myers.Carry}
+  {Myers.semiglobal_carry(E.SHW{}) == V.Carry{1, 0} : V.Carry}
 
 law hw_horizontal_boundary:
-  {Myers.semiglobal_carry(E.HW{}) == Myers.Carry{0, 0} : Myers.Carry}
+  {Myers.semiglobal_carry(E.HW{}) == V.Carry{0, 0} : V.Carry}
 
 law dp_shw_free_suffix:
   {DP.semiglobal("AC", "ACT", E.SHW{}, Nil{}) == DP.Best{0, [E.Position{1n}]} : DP.Best}
@@ -573,7 +575,7 @@ law distance_task_fields:
 law hw_before_start_location:
   for reverse_target: String
   for target_length: Nat
-  for profiles: List<&2, Myers.Peq>
+  for profiles: List<&2, V.Peq>
   for query_length: Nat
   for maximum: Nat
   {Myers.hw_location(A.Location{E.BeforeStart{}, 0n}, reverse_target, target_length,
@@ -630,17 +632,17 @@ law equality_zero_high_byte:
 law configured_wildcard_padding:
   for symbol: Char
   for pairs: List<&2, E.EqualityPair>
-  {Myers.build_peq_word("", symbol, 1, pairs) == 4294967295 : U32}
+  {V.build_peq_word("", symbol, 1, pairs) == 4294967295 : U32}
 
 law configured_mask_case_insensitive:
-  {Myers.build_peq_word("aA", 'A', 1, [E.EqualityPair{'a', 'A'}]) == 4294967295 : U32}
+  {V.build_peq_word("aA", 'A', 1, [E.EqualityPair{'a', 'A'}]) == 4294967295 : U32}
 
 law configured_mask_nontransitive:
-  {Myers.build_peq_word("ACN", 'C', 1,
+  {V.build_peq_word("ACN", 'C', 1,
     [E.EqualityPair{'N', 'A'}, E.EqualityPair{'N', 'C'}]) == 4294967294 : U32}
 
 law configured_table_zero_high_byte:
-  {Myers.peq_get(Myers.build_peq_table(8n, SCon{Chr{0}, ""}, 0, 1,
+  {V.peq_get(V.build_peq_table(8n, SCon{Chr{0}, ""}, 0, 1,
     [E.EqualityPair{Chr{0}, Chr{255}}]), 255, True{}) == 4294967295 : U32}
 
 law configured_dp_case_insensitive:
@@ -790,3 +792,20 @@ law library_align_matches_main:
 # Pinned Edlib skips threshold filtering and starts/path on empty inputs.
 # Generic configured DP is not a threshold-band optimization; it filters the
 # final optimum. These laws do not prove general alignment optimality.
+
+# Compact profiles preserve wildcard padding independently of alphabet rows.
+law compact_missing_mask:
+  for masks: Array<U32>
+  for index: U32
+  {P.mask_at(masks, index, False{}) == (masks, 0) : Array<U32> & U32}
+
+law compact_padding_full_word:
+  for last: Bool
+  {P.padding_mask(0, last) == 0 : U32}
+
+law compact_padding_nonfinal:
+  for used: U32
+  {P.padding_mask(used, False{}) == 0 : U32}
+
+law compact_padding_one:
+  {P.padding_mask(1, True{}) == V.build_peq_word("A", 'X', 1, Nil{}) : U32}

@@ -1,3 +1,4 @@
+import ./BitVector.bend as V
 import Base
 import ../EdlibTypes.bend as E
 import ./Myers.bend as M
@@ -45,7 +46,7 @@ def estimate_axes(+mode: E.Mode, task: E.Task, pairs: List<&2, E.EqualityPair>,
   (+length, columns) = sizes
   +l = F32.from_nat(length)
   +c = F32.from_nat(columns)
-  +blocks = F32.from_nat(M.ceil_div(length, 32n))
+  +blocks = F32.from_nat(V.ceil_div(length, 32n))
   +p = (1.0 + F32.from_nat(List.length(&2, E.EqualityPair, pairs)) : F32)
   (1.0 + l + c + 256.0 * l * p + blocks * c +
     extra_work(mode, task, l, c, blocks, p) : F32)

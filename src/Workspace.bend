@@ -90,7 +90,7 @@ def column(profile: P.Profile, workspace: Workspace, symbol: U32,
 def last_score.result(padding: Nat, result: Workspace & V.Block) -> Workspace & U32:
   (workspace, block) = result
   V.Block{pv, mv, score} = block
-  (workspace, V.get_block_cell_value(padding, pv, mv, score))
+  (workspace, V.decode_word(padding, pv, mv, score))
 
 def last_score(workspace: Workspace, padding: Nat) -> Workspace & U32:
   Workspace{data, capacity, first, +last} = workspace

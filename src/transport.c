@@ -127,6 +127,7 @@ static void be_write_frame(const unsigned char *data, uint64_t size) {
 // The compiler splices this source into its generated C translation unit.
 
 
+#ifdef CID(read_request)
 Term read_request_run(Env e, Term *f, IoWork *w) {
     BeRequest r;
     int state = be_read_request(&r);
@@ -192,6 +193,9 @@ Term read_request_run(Env e, Term *f, IoWork *w) {
     return term_ctr(CID(Bytes), fields);
 }
 
+#endif
+
+#ifdef CID(write_response)
 Term write_response_run(Env e, Term *f, IoWork *w) {
     u64 size;
     char *bytes = io_cbuf(e, f[0], &size, CID(Con));
@@ -200,9 +204,15 @@ Term write_response_run(Env e, Term *f, IoWork *w) {
     return term_pak(CID(Unit), 0);
 }
 
+#endif
+
 static void __attribute__((constructor)) byte_transport_effects(void) {
+#ifdef CID(read_request)
     io_eff(CID(read_request), read_request_run);
+#endif
+#ifdef CID(write_response)
     io_eff(CID(write_response), write_response_run);
+#endif
 }
 
 #endif

@@ -1,7 +1,7 @@
+import ./Frontier.bend as F
 import Base
 import ./Sequence.bend as S
 import ../EdlibTypes.bend as E
-import ./DistanceDP.bend as DP
 
 # Global reconstruction of one already selected target interval. Small DP
 # stores a score and predecessor operation per cell, never path prefixes.
@@ -120,7 +120,7 @@ def small_matrix(query_length: Nat, +target_length: Nat) -> Bool:
   Nat.is_le(1n+query_length, Nat.div(4096n, 1n+target_length))
 
 def score_row(query: String, +target: String, pairs: List<&2, E.EqualityPair>) -> List<U32>:
-  DP.final_row(query, target, DP.initial_row(S.length(target), 0), 1, pairs)
+  F.row(query, target, pairs)
 
 type Split is Data:
   Split{index: Nat, score: U32}
@@ -165,9 +165,9 @@ def midpoint(left: String, right: String, +target: String,
   # inside its second call drains the frontier in the pinned native runtime.
   reverse_query = String.reverse(right)
   reverse_target = String.reverse(target)
-  forward backward =
-    score_row(left, target, pairs)
-    score_row(reverse_query, reverse_target, pairs)
+  forward_args = F.prepare(left, target, pairs)
+  backward_args = F.prepare(reverse_query, reverse_target, pairs)
+  forward backward = F.run(forward_args) F.run(backward_args)
   split_column(forward, List.reverse(&1, U32, backward), 0n, 0n, 4294967295)
 
 # The fuel is the initial row length; every nonbase call halves that length.

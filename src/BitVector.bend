@@ -144,3 +144,19 @@ def last_block_score(blocks: List<Block>, +padding: Nat) -> Nat:
     case _ <> rest:
       last_block_score(rest, padding)
 
+
+# SWAR population count keeps padded-cell decoding independent of padding size.
+# Arithmetic wraps at U32, including the final byte-sum multiplication.
+def count_ones(+bits: U32) -> U32:
+  +a = U32.sub(bits, U32.and(U32.shr(bits), 1431655765))
+  +b = U32.add(U32.and(a, 858993459), U32.and(U32.shrn(a, 2n), 858993459))
+  c = U32.and(U32.add(b, U32.shrn(b, 4n)), 252645135)
+  U32.shrn(U32.mul(c, 16843009), 24n)
+
+def decode_word(padding: Nat, pv: U32, mv: U32, score: U32) -> U32:
+  match padding:
+    case 0n:
+      score
+    case 1n+p:
+      +shift = Nat.sub(31n, p)
+      U32.add(U32.sub(score, count_ones(U32.shrn(pv, shift))), count_ones(U32.shrn(mv, shift)))

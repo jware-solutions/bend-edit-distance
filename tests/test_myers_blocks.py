@@ -141,3 +141,15 @@ def test_compact_all_bytes_and_nontransitive_pairs(myers_probe):
     rows = probe_rows(myers_probe, "compact-byte-pairs")
     assert len(rows) == 8 * 256
     assert all(direct == compact for _, _, _, direct, compact in rows)
+
+
+@settings(max_examples=150, deadline=None)
+@given(padding=st.integers(0, 64), pv=st.integers(0, 2**32 - 1),
+       mv=st.integers(0, 2**32 - 1), score=st.integers(0, 2**32 - 1))
+@example(padding=31, pv=2**32 - 1, mv=0, score=0)
+@example(padding=32, pv=2**32 - 1, mv=0, score=0)
+def test_constant_time_padding_decoder(myers_probe, padding, pv, mv, score):
+    result = execute([myers_probe, *runtime_prefix(threads=1), "decode", *map(str, (padding, pv, mv, score))])
+    expected = (score - (pv >> max(0, 32 - padding)).bit_count() +
+                (mv >> max(0, 32 - padding)).bit_count()) & (2**32 - 1)
+    assert tuple(map(int, result.stdout.split(","))) == (expected, expected)

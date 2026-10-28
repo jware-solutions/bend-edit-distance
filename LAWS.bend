@@ -1,3 +1,5 @@
+import ./src/Sequence.bend as S
+import ./src/Frontier.bend as F
 import ./Prepared.bend as Q
 import ./src/SearchKernel.bend as K
 import ./src/Workspace.bend as W
@@ -860,3 +862,43 @@ law batch_gather_permutation:
   {B.gather([B.IndexedResult{1n, E.not_found()},
     B.IndexedResult{0n, E.distance_result(3n, E.BeforeStart{}, True{})}], 2n) ==
     Some{[E.distance_result(3n, E.BeforeStart{}, True{}), E.not_found()]} : Maybe<&2, List<&2, E.AlignResult>>}
+
+
+law frontier_empty_query:
+  for target: String
+  for pairs: List<&2, E.EqualityPair>
+  {F.row("", target, pairs) == DP.initial_row(S.length(target), 0) : List<U32>}
+
+law frontier_empty_prefix:
+  {F.row("ANC", "", [E.EqualityPair{'A', 'N'}, E.EqualityPair{'N', 'C'}]) == [3] : List<U32>}
+
+law frontier_nontransitive:
+  {F.row("A", "C", [E.EqualityPair{'A', 'N'}, E.EqualityPair{'N', 'C'}]) == [1, 1] : List<U32>}
+
+law frontier_word_boundary:
+  {F.row("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAC", "A", Nil{}) == [33, 32] : List<U32>}
+
+law frontier_generic_fallback:
+  {F.row(SCon{Chr{256}, ""}, SCon{Chr{256}, ""}, Nil{}) == [1, 0] : List<U32>}
+
+law frontier_small_equivalence:
+  for query: SmallAscii
+  for target: SmallAscii
+  {F.row(small_ascii(query), small_ascii(target), Nil{}) ==
+    DP.final_row(small_ascii(query), small_ascii(target),
+      DP.initial_row(String.length(small_ascii(target)), 0), 1, Nil{}) : List<U32>}
+
+law word_population_count:
+  {V.count_ones(4294967295) == 32 : U32}
+
+law word_population_alternating:
+  {V.count_ones(2863311530) == 16 : U32}
+
+law fast_decode_no_padding:
+  for positive: U32
+  for negative: U32
+  for score: U32
+  {V.decode_word(0n, positive, negative, score) == score : U32}
+
+law fast_decode_wraps:
+  {V.decode_word(32n, 4294967295, 0, 0) == 4294967264 : U32}

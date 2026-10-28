@@ -76,8 +76,10 @@ Preserve these Edlib semantics:
   Block carries and successive columns are sequential.
 - `Prepared.bend`: fixed query masks, per-call options and explicit owned clones.
 - `src/DistanceDP.bend`: independent unit-cost dynamic programming reference.
-- `src/Reconstruction.bend`: DP traceback and Hirschberg. Forward/reverse rows
-  are independent; subpaths run sequentially to bound memory.
+- `src/Reconstruction.bend`: small-matrix DP traceback and Hirschberg.
+  `src/Frontier.bend` supplies exact unbanded bit-parallel prefix scores;
+  forward/reverse workspaces are prepared before their parallel calls.
+  Subpaths run sequentially to bound memory.
 - `src/Batch.bend`: cached job lengths, contiguous homogeneous plans, weighted
   mixed plans, serial leaves and checked indexed result gathering.
 - `GpuBatch.bend`: one bang around execution of a prepared batch; planning and

@@ -244,8 +244,18 @@ def profiled_search(+query: String, +target: String, threshold: Maybe<&2, E.Thre
     case Some{k}:
       IO.print(search_show(M.search_shorter(query, target, String.length(query), String.length(target), k, True{}, Nil{})))
 
+def decoded(padding: Maybe<&2, U32>, pv: Maybe<&2, U32>, mv: Maybe<&2, U32>, score: Maybe<&2, U32>) -> IO(Unit):
+  match padding pv mv score:
+    case Some{+pad} Some{+positive} Some{+negative} Some{+bottom}:
+      IO.print(U32.show(V.get_block_cell_value(U32.to_nat(pad), positive, negative, bottom)) ++ "," ++
+        U32.show(V.decode_word(U32.to_nat(pad), positive, negative, bottom)))
+    case _ _ _ _:
+      IO.die(Unit, 2, "Invalid decoder values")
+
 def run(args: List<String>) -> IO(Unit):
   match args:
+    case _ <> "decode" <> pad <> positive <> negative <> bottom <> Nil{}:
+      decoded(U32.read(pad), U32.read(positive), U32.read(negative), U32.read(bottom))
     case _ <> "compact" <> +query <> Nil{}:
       IO.print(compact_words(V.ceil_div(String.length(query), 32n), query, Nil{}, 0,
         P.build(query, String.length(query), Nil{})))

@@ -1,3 +1,4 @@
+import ./Reconstruction.bend as R
 import ./Profile.bend as P
 import ./BitVector.bend as V
 import Base
@@ -30,29 +31,36 @@ def axes(mode: E.Mode, +qn: Nat, +tn: Nat) -> Nat & Nat:
     case _:
       (qn, tn)
 
+def path_work(q: F32, +t: F32, blocks: F32, pairs: F32, small: Bool) -> F32:
+  match small:
+    case True{}:
+      (q * t * pairs : F32)
+    case False{}:
+      (2.0 * blocks * t + 32.0 * (q + t) * pairs : F32)
+
 def extra_work(mode: E.Mode, task: E.Task, +q: F32, +t: F32,
-               +blocks: F32, pairs: F32) -> F32:
+               +blocks: F32, +pairs: F32, small: Bool) -> F32:
   match mode task:
     case _ E.Distance{}:
       0.0
     case E.HW{} E.Path{}:
-      (blocks * t * t + q * t * pairs : F32)
+      (blocks * t * t + path_work(q, t, blocks, pairs, small) : F32)
     case E.HW{} _:
       (blocks * t * t : F32)
     case _ E.Path{}:
-      (q * t * pairs : F32)
+      path_work(q, t, blocks, pairs, small)
     case _ _:
       0.0
 
 def estimate_axes(+mode: E.Mode, task: E.Task, pairs: List<&2, E.EqualityPair>,
                   sizes: Nat & Nat) -> F32:
-  (+length, columns) = sizes
+  (+length, +columns) = sizes
   +l = F32.from_nat(length)
   +c = F32.from_nat(columns)
   +blocks = F32.from_nat(V.ceil_div(length, 32n))
   +p = (1.0 + F32.from_nat(List.length(&2, E.EqualityPair, pairs)) : F32)
   (257.0 + l + c + l * p + F32.min(256.0, l) * blocks + blocks * c +
-    extra_work(mode, task, l, c, blocks, p) : F32)
+    extra_work(mode, task, l, c, blocks, p, R.small_matrix(length, columns)) : F32)
 
 # Scheduling estimates compact profile preparation, full Myers columns,
 # worst-case HW start searches and PATH DP; similarity remains unknown.

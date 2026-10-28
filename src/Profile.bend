@@ -174,3 +174,23 @@ def mask(profile: Profile, +row: U32, +block: U32) -> Profile & U32:
   mask.result(lookup, stride, rows, blocks, used, block,
     mask_at(masks, U32.add(U32.mul(row, stride), block),
       Bool.and(U32.is_lt(row, rows), U32.is_lt(block, blocks))))
+
+def clone.masks(lookup: Array<U32>, other_lookup: Array<U32>, +stride: U32, +rows: U32,
+                   +blocks: U32, +used: U32, result: Array<U32> & Array<U32>) -> Profile & Profile:
+  (masks, other_masks) = result
+  (Profile{lookup, masks, stride, rows, blocks, used},
+    Profile{other_lookup, other_masks, stride, rows, blocks, used})
+
+def clone.lookup(masks: Array<U32>, stride: U32, rows: U32, blocks: U32, used: U32,
+                    result: Array<U32> & Array<U32>) -> Profile & Profile:
+  (lookup, other_lookup) = result
+  clone.masks(lookup, other_lookup, stride, rows, blocks, used, Array.clone(U32, masks))
+
+def clone(profile: Profile) -> Profile & Profile:
+  Profile{lookup, masks, stride, rows, blocks, used} = profile
+  clone.lookup(masks, stride, rows, blocks, used, Array.clone(U32, lookup))
+
+def retained_bytes(profile: Profile) -> Profile & Nat:
+  Profile{lookup, masks, +stride, +rows, blocks, used} = profile
+  (Profile{lookup, masks, stride, rows, blocks, used},
+    Nat.add(1024n, Nat.mul(4n, Nat.mul(U32.to_nat(stride), Nat.pow(2n, depth(U32.to_nat(rows)))))))

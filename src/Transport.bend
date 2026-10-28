@@ -8,6 +8,12 @@ type Request is Type:
   Invalid{}
   Bytes{mode: U32, task: U32, threshold: U32, format: U32,
     query: List<U32>, target: List<U32>, equalities: List<U32>}
+  PrepareRequest{query: List<U32>, equalities: List<U32>}
+  PreparedRequest{handle: U32, mode: U32, task: U32, threshold: U32, format: U32, target: List<U32>}
+  ReleaseRequest{handle: U32}
+  BatchRequest{count: U32}
+  PreparedBatchRequest{handle: U32, mode: U32, task: U32, threshold: U32, format: U32, targets: List<List<U32>>}
+  InvalidControl{operation: U32}
 
 def read_request() -> IO(Request):
   import "./transport.c"
@@ -29,6 +35,10 @@ def respond(~align: String -> String -> E.AlignConfig -> E.AlignResult,
       do IO<Bool>:
         write_response(P.encode(align(query, target,
           E.AlignConfig{P.mode(m), P.task(t), P.threshold(k), P.pairs(eq), P.format(f)})))
+        return True{}
+    case _:
+      do IO<Bool>:
+        write_response(P.encode(E.AlignResult{E.Error{}, E.NotFound{}, Nil{}, None{}, None{}, None{}}))
         return True{}
 
 # Count down a very large Nat so the server remains termination-checked.

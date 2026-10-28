@@ -1,3 +1,4 @@
+import ./Prepared.bend as Q
 import ./src/BitVector.bend as V
 import Base
 import ./LAWS.bend as Laws
@@ -814,4 +815,21 @@ def Laws.nw_orientation_square():
   {==}
 
 def Laws.nw_orientation_conservative():
+  {==}
+
+def Laws.prepared_empty_target(prepared, options):
+  match prepared options:
+    case Q.Prepared{SNil{}, pairs, length, None{}, workspace} Q.Options{mode, task, threshold, format}:
+      {==}
+    case Q.Prepared{SNil{}, pairs, length, Some{profile}, workspace} Q.Options{mode, task, threshold, format}:
+      {==}
+    case Q.Prepared{SCon{h, t}, pairs, length, None{}, workspace} Q.Options{mode, task, threshold, format}:
+      {==}
+    case Q.Prepared{SCon{h, t}, pairs, length, Some{profile}, workspace} Q.Options{mode, task, threshold, format}:
+      {==}
+
+def Laws.prepared_nw_equivalence():
+  {==}
+
+def Laws.prepared_nontransitive_equivalence():
   {==}

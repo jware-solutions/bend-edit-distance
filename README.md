@@ -95,6 +95,14 @@ configurations. Compile [examples/batch_usage.bend](examples/batch_usage.bend)
 and run with `+RTS --threads 1 -RTS --RTS` (or 2/4 threads). See the
 [batch API details](CONTRIBUTING.md#architecture).
 
+The local `lib.bend` also exposes `prepare(query, equalities)`,
+`align_prepared(prepared, target, options) -> (prepared, result)`,
+`align_prepared_batch`, and `clone_prepared`. Options use `Prepared.Options`
+from `Prepared.bend`, or `default_prepared_options()`. Keep the returned owner
+for the next call. Preparation fixes the profiled query, equalities and word
+width; concurrent shards require independent owners. The Python worker offers
+[prepared handles and batches](TRANSPORT.md#prepared-queries-and-batches-bed2).
+
 For GPU batches, import `./GpuBatch.bend` and call `align_batch(jobs)`; see
 [examples/gpu_batch_usage.bend](examples/gpu_batch_usage.bend). The separate
 module keeps CPU consumers independent of the GPU toolchain. It prepares the

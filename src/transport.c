@@ -1,4 +1,4 @@
-// Version 1 byte protocol shared by the native Bend bridge and Edlib worker.
+// BED1 compatibility plus BED2 prepared/batch controls for the Bend worker.
 // All integers are little endian. See TRANSPORT.md for the wire contract.
 #ifndef BEND_EDLIB_TRANSPORT_H
 #define BEND_EDLIB_TRANSPORT_H
@@ -15,7 +15,7 @@
 typedef struct {
     unsigned char *data;
     uint32_t size, query_length, target_length, pair_count, threshold;
-    unsigned mode, task, format;
+    unsigned mode, task, format, version, operation;
     const unsigned char *query, *target, *pairs;
 } BeRequest;
 
@@ -58,24 +58,58 @@ static int be_read_request(BeRequest *r) {
     if (r->size < BE_REQUEST_SIZE || r->size > INT_MAX)
         be_die("invalid request frame length");
     be_read_exact(header, BE_REQUEST_SIZE, 0);
-    if (memcmp(header, "BED1", 4)) be_die("unsupported request version");
+    r->version = !memcmp(header, "BED1", 4) ? 1 : !memcmp(header, "BED2", 4) ? 2 : 0;
+    if (!r->version) be_die("unsupported request version");
+#ifdef BEND_EDLIB_ORACLE
+    if (r->version != 1) be_die("unsupported request version");
+#endif
     r->mode = header[4]; r->task = header[5]; r->format = header[6];
+    r->operation = r->version == 2 ? header[7] : 0;
     r->threshold = be_u32(header + 8);
     r->query_length = be_u32(header + 12);
     r->target_length = be_u32(header + 16);
     r->pair_count = be_u32(header + 20);
-    uint64_t expected = BE_REQUEST_SIZE + (uint64_t)r->query_length +
-                        r->target_length + 2ull * r->pair_count;
+    uint64_t expected = BE_REQUEST_SIZE;
+    if (r->version == 1 || r->operation == 1)
+        expected += (uint64_t)r->query_length + r->target_length + 2ull * r->pair_count;
+    else if (r->operation == 2) expected += r->target_length;
+    else if (r->operation == 5) expected += r->pair_count;
+    else if (r->operation != 3 && r->operation != 4) expected = r->size;
     if (expected != r->size) be_die("inconsistent request lengths");
     size_t body_size = r->size - BE_REQUEST_SIZE;
     r->data = (unsigned char *)malloc(body_size ? body_size : 1);
     if (!r->data) be_die("request allocation failed");
     be_read_exact(r->data, body_size, 0);
-    r->query = r->data;
-    r->target = r->query + r->query_length;
-    r->pairs = r->target + r->target_length;
-    // Every i32 k is valid: all negative values request adaptive search.
-    return r->mode <= 2 && r->task <= 2 && r->format <= 1 && !header[7] ? 1 : 2;
+    r->query = r->target = r->pairs = r->data;
+    if (r->version == 1 || r->operation == 1) {
+        r->target += r->query_length;
+        r->pairs = r->target + r->target_length;
+    }
+    if (r->version == 1)
+        return r->mode <= 2 && r->task <= 2 && r->format <= 1 && !header[7] ? 1 : 2;
+    if (r->operation == 2 || r->operation == 5) {
+        if (r->mode > 2 || r->task > 2 || r->format > 1 ||
+            (r->operation == 2 && r->pair_count)) return 2;
+    } else if (r->mode || r->task || r->format || r->threshold) return 2;
+    switch (r->operation) {
+        case 1: return !r->target_length && r->query_length <= 1048576 && r->pair_count <= 65536 ? 1 : 2;
+        case 2: return 1;
+        case 3: return !r->target_length && !r->pair_count ? 1 : 2;
+        case 4: return !r->target_length && !r->pair_count && r->query_length <= 65536 ? 1 : 2;
+        case 5: {
+            if (r->target_length > 65536) return 2;
+            size_t pos = 0;
+            for (uint32_t i = 0; i < r->target_length; ++i) {
+                if (body_size - pos < 4) be_die("truncated prepared batch");
+                uint32_t n = be_u32(r->data + pos); pos += 4;
+                if (n > body_size - pos) be_die("inconsistent prepared batch lengths");
+                pos += n;
+            }
+            if (pos != body_size) be_die("trailing prepared batch data");
+            return 1;
+        }
+        default: return 2;
+    }
 }
 
 static void be_write_frame(const unsigned char *data, uint64_t size) {
@@ -99,7 +133,47 @@ Term read_request_run(Env e, Term *f, IoWork *w) {
     if (!state) return term_pak(CID(End), 0);
     if (state == 2) {
         free(r.data);
+        if (r.version == 2) {
+            return term_pak(CID(InvalidControl), r.operation);
+        }
         return term_pak(CID(Invalid), 0);
+    }
+    if (r.version == 2) {
+        Term result;
+        if (r.operation == 1) {
+            result = io_node(e, CID(PrepareRequest), io_list(e, (const char *)r.query, r.query_length),
+                             io_list(e, (const char *)r.pairs, 2ull * r.pair_count));
+        } else if (r.operation == 3 || r.operation == 4) {
+            // The pinned compiler packs single U32 constructor fields inline.
+            result = term_pak(r.operation == 3 ? CID(ReleaseRequest) : CID(BatchRequest), r.query_length);
+        } else {
+            Term targets;
+            if (r.operation == 2) {
+                targets = io_list(e, (const char *)r.target, r.target_length);
+            } else {
+                uint32_t *offsets = malloc(((size_t)r.target_length + 1) * sizeof(uint32_t));
+                if (!offsets) be_die("batch offset allocation failed");
+                size_t pos = 0;
+                for (uint32_t i = 0; i < r.target_length; ++i) {
+                    offsets[i] = (uint32_t)pos;
+                    pos += 4ull + be_u32(r.data + pos);
+                }
+                targets = term_pak(CID(Nil), 0);
+                for (uint32_t i = r.target_length; i; --i) {
+                    size_t off = offsets[i - 1];
+                    Term bytes = io_list(e, (const char *)r.data + off + 4, be_u32(r.data + off));
+                    targets = io_node(e, CID(Con), bytes, targets);
+                }
+                free(offsets);
+            }
+            u64 fields = heap_alloc(e, cls_fit(6));
+            e.mem[fields] = r.query_length; e.mem[fields + 1] = r.mode;
+            e.mem[fields + 2] = r.task; e.mem[fields + 3] = r.threshold;
+            e.mem[fields + 4] = r.format; e.mem[fields + 5] = targets;
+            result = term_ctr(r.operation == 2 ? CID(PreparedRequest) : CID(PreparedBatchRequest), fields);
+        }
+        free(r.data);
+        return result;
     }
     Term query = io_list(e, (const char *)r.query, r.query_length);
     Term target = io_list(e, (const char *)r.target, r.target_length);

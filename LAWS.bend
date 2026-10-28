@@ -1,3 +1,4 @@
+import ./Prepared.bend as Q
 import ./src/SearchKernel.bend as K
 import ./src/Workspace.bend as W
 import ./src/Profile.bend as P
@@ -831,3 +832,16 @@ law nw_orientation_square:
 
 law nw_orientation_conservative:
   {Myers.profile_query(512n, 1024n) == True{} : Bool}
+
+law prepared_empty_target:
+  for prepared: Q.Prepared
+  for options: Q.Options
+  {Q.result(L.align_prepared(prepared, "", options)) == Q.empty_target(prepared, options) : E.AlignResult}
+
+law prepared_nw_equivalence:
+  {Q.result(L.align_prepared(L.prepare("AC", Nil{}), "AT", Q.default_options())) ==
+    L.align("AC", "AT", E.default_config()) : E.AlignResult}
+
+law prepared_nontransitive_equivalence:
+  {Q.result(L.align_prepared(L.prepare("A", [E.EqualityPair{'A', 'N'}, E.EqualityPair{'N', 'C'}]),
+    "C", Q.default_options())) == E.distance_result(1n, E.Position{0n}, True{}) : E.AlignResult}

@@ -1,0 +1,147 @@
+import Base
+import ../EdlibTypes.bend as E
+import ../Prepared.bend as Q
+import ./Myers.bend as M
+import ./Batch.bend as B
+import ./Transport.bend as T
+import ./ByteProtocol.bend as P
+
+def retain(-A: Type, value: A, bytes: U32) -> IO(U32):
+  import "./prepared_cache.c"
+
+def has(handle: U32) -> IO(Bool):
+  import "./prepared_cache.c"
+
+def take(-A: Type, handle: U32) -> IO(A):
+  import "./prepared_cache.c"
+
+def restore(-A: Type, handle: U32, value: A) -> IO(Unit):
+  import "./prepared_cache.c"
+
+def release(handle: U32) -> IO(Bool):
+  import "./prepared_cache.c"
+
+def cache_bytes() -> IO(U32):
+  import "./prepared_cache.c"
+
+def clear() -> IO(Unit):
+  import "./prepared_cache.c"
+
+def control(+operation: U32, status: U32, handle: U32, count: U32) -> IO(Unit):
+  do IO<Unit>:
+    bytes : U32 <- cache_bytes()
+    T.write_response(P.join([[66, 69, 82, 50], P.u32_bytes(operation), P.u32_bytes(status),
+      P.u32_bytes(handle), P.u32_bytes(bytes), P.u32_bytes(count)]))
+
+def error() -> IO(Unit):
+  T.write_response(P.encode(E.AlignResult{E.Error{}, E.NotFound{}, Nil{}, None{}, None{}, None{}}))
+
+def prepared.saved(handle: U32, saved: Bool) -> IO(Unit):
+  match saved:
+    case True{}:
+      control(1, 0, handle, 1)
+    case False{}:
+      control(1, 1, 0, 0)
+
+def prepared.handle(+handle: U32) -> IO(Unit):
+  prepared.saved(handle, U32.is_ne(handle, 0))
+
+def prepared(result: Q.Prepared & Nat) -> IO(Unit):
+  (query, bytes) = result
+  do IO<Unit>:
+    handle : U32 <- retain(Q.Prepared, query, U32.from_nat(Nat.add(4096n, Nat.mul(bytes, 2n))))
+    prepared.handle(handle)
+
+def aligned(handle: U32, result: Q.Prepared & E.AlignResult) -> IO(Unit):
+  (query, value) = result
+  do IO<Unit>:
+    restore(Q.Prepared, handle, query)
+    T.write_response(P.encode(value))
+
+def align(+handle: U32, target: String, options: Q.Options, exists: Bool) -> IO(Unit):
+  match exists:
+    case False{}:
+      error()
+    case True{}:
+      do IO<Unit>:
+        query : Q.Prepared <- take(Q.Prepared, handle)
+        aligned(handle, Q.align(query, target, options))
+
+def targets(values: List<List<U32>>) -> List<&2, String>:
+  match values:
+    case Nil{}:
+      Nil{}
+    case bytes <> tail:
+      P.byte_string(bytes) <> targets(tail)
+
+def batch_aligned(+handle: U32, result: Q.Prepared & List<&2, E.AlignResult>) -> IO(Unit):
+  (query, +values) = result
+  do IO<Unit>:
+    restore(Q.Prepared, handle, query)
+    control(5, 0, handle, U32.from_nat(List.length(&2, E.AlignResult, values)))
+    T.write_batch(values)
+
+def batch(+handle: U32, values: List<&2, String>, options: Q.Options, exists: Bool) -> IO(Unit):
+  match exists:
+    case False{}:
+      control(5, 1, handle, 0)
+    case True{}:
+      do IO<Unit>:
+        query : Q.Prepared <- take(Q.Prepared, handle)
+        batch_aligned(handle, Q.align_batch(query, values, options))
+
+def released(handle: U32, removed: Bool) -> IO(Unit):
+  control(3, Bool.to_u32(Bool.not(removed)), handle, 0)
+
+def invalid(operation: U32) -> IO(Unit):
+  match operation:
+    case 2:
+      error()
+    case _:
+      control(operation, 1, 0, 0)
+
+def respond(request: T.Request) -> IO(Unit):
+  match request:
+    case T.PrepareRequest{query, pairs}:
+      prepared(Q.retained_bytes(Q.prepare(P.byte_string(query), P.pairs(pairs))))
+    case T.PreparedRequest{+handle, m, t, k, f, target}:
+      do IO<Unit>:
+        exists : Bool <- has(handle)
+        align(handle, P.byte_string(target), Q.Options{P.mode(m), P.task(t), P.threshold(k), P.format(f)}, exists)
+    case T.ReleaseRequest{+handle}:
+      do IO<Unit>:
+        removed : Bool <- release(handle)
+        released(handle, removed)
+    case T.BatchRequest{+count}:
+      do IO<Unit>:
+        jobs : List<&2, E.AlignJob> <- T.read_batch(U32.to_nat(count))
+        +values : List<&2, E.AlignResult> = B.align_batch(jobs)
+        control(4, 0, 0, count)
+        T.write_batch(values)
+    case T.PreparedBatchRequest{+handle, m, t, k, f, values}:
+      do IO<Unit>:
+        exists : Bool <- has(handle)
+        batch(handle, targets(values), Q.Options{P.mode(m), P.task(t), P.threshold(k), P.format(f)}, exists)
+    case T.InvalidControl{operation}:
+      invalid(operation)
+    case _:
+      do IO<Unit>:
+        alive : Bool <- T.respond(~M.edlib_align, request)
+        return Unit{}
+
+def run(fuel: Nat, request: T.Request) -> IO(Unit):
+  match fuel request:
+    case _ T.End{}:
+      clear()
+    case 0n _:
+      clear()
+    case 1n+p _:
+      do IO<Unit>:
+        respond(request)
+        next : T.Request <- T.read_request()
+        run(p, next)
+
+def serve() -> IO(Unit):
+  do IO<Unit>:
+    request : T.Request <- T.read_request()
+    run(4294967295n, request)

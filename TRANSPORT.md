@@ -1,4 +1,4 @@
-# Persistent byte transport (version 1)
+# Persistent byte transport
 
 Compile `worker.bend` (`bend worker.bend -o build/bend-edit-distance`), then run
 `build/bend-edit-distance +RTS --threads 1 -RTS --RTS --worker`.
@@ -122,3 +122,53 @@ with different commands operate independently.
 process ownership. `AlignResult.to_edlib()` / `from_json()` can support an outer
 JSON Lines convenience layer; JSON is not used inside the alignment transport.
 The legacy text CLIs retain their non-NUL ASCII/4,096-character restrictions.
+
+
+## Prepared queries and batches (BED2)
+
+The Bend CPU worker additionally accepts `BED2`; BED1/BER1 remain compatible.
+BED2 uses the same 24-byte request header, with byte 7 holding an operation.
+Mode/task/format/threshold apply to operations 2 and 5; all four fields must be
+zero for other operations. The last three u32 fields are interpreted as follows:
+
+| Operation | Offset 12 | Offset 16 | Offset 20 | Body |
+| --- | --- | --- | --- | --- |
+| 1: prepare | query bytes | 0 | pair count | query, then pairs |
+| 2: align prepared | handle | target bytes | 0 | target |
+| 3: release | handle | 0 | 0 | empty |
+| 4: ordinary batch | job count | 0 | 0 | empty; followed by that many BED1 frames |
+| 5: prepared batch | handle | target count | body bytes | repeated u32 length, then target bytes |
+
+Operation 2 returns BER1. Other operations return a 24-byte BER2 control frame:
+magic `BER2`, operation, status (0 success, 1 rejected), handle, retained cache
+budget bytes, result count; each field after magic is u32. Successful operations
+4 and 5 then return exactly result-count BER1 frames in input order. Empty
+batches are valid. Invalid operation-2 handles/configurations return a BER1
+ERROR; other rejected controls return BER2 with no following results.
+
+Preparation fixes the query, symmetric equality pairs, compact profile layout,
+and 32-bit word width. Mode, task, threshold and CIGAR format remain per-call.
+Prepared NW always profiles the prepared query, including when its target is
+shorter. Empty-input exceptions and PATH coordinates retain ordinary semantics.
+Prepared batches reuse one workspace serially; ordinary batches use CPU forks.
+Use independently prepared workers or explicitly cloned Bend profiles for
+concurrent shards. One worker never shares mutable workspace between calls.
+
+Handles belong to one worker and expire on release or close. The cache admits
+at most 32 entries and a 64 MiB conservative budget (twice buffer/term payload
+bytes plus 4 KiB per entry); this is not process RSS. Prepare requests allow at
+most 1 MiB of query bytes and 65,536 equality pairs. Batches allow at most 65,536
+items. Admission failures preserve existing handles; release allows admission
+again. BED1 sequence sizes retain their existing framing limit.
+
+```python
+with AlignmentWorker(["build/bend-edit-distance", *runtime_prefix(threads=1), "--worker"]) as worker:
+    with worker.prepare(b"ACGT", (EqualityPair("N", "A"),)) as prepared:
+        results = prepared.align_batch([b"ACGT", b"ACG", b"AACGT"])
+        result = prepared.align(b"ACNT", AlignConfig(task=Task.PATH))
+```
+
+`worker.align_batch([(query, target, config), ...])` accepts mixed jobs.
+`worker.retained_entries` and `worker.retained_bytes` expose cache admission
+usage. Per-call equalities may be omitted or must equal the prepared definition.
+Failures and timeouts close the worker and invalidate its handles without retry.

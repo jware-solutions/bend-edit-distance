@@ -1,10 +1,11 @@
+import ./Profile.bend as P
 import ./BitVector.bend as V
 import Base
 import ../EdlibTypes.bend as E
 import ./Myers.bend as M
 
 type WeightedJob is Data:
-  WeightedJob{index: Nat, work: F32, job: E.AlignJob}
+  WeightedJob{index: Nat, work: F32, query_length: Nat, target_length: Nat, job: E.AlignJob}
 
 type Group is Data:
   Group{room: Nat, work: F32, jobs: List<&2, WeightedJob>}
@@ -14,6 +15,8 @@ type Group is Data:
 type Plan is Type:
   Empty{}
   Leaf{index: Nat, job: E.AlignJob}
+  SizedLeaf{index: Nat, query_length: Nat, target_length: Nat, job: E.AlignJob}
+  Ordered{plan: Plan}
   Fork{left: Plan, right: Plan}
   Serial{jobs: List<&2, WeightedJob>}
 
@@ -48,19 +51,28 @@ def estimate_axes(+mode: E.Mode, task: E.Task, pairs: List<&2, E.EqualityPair>,
   +c = F32.from_nat(columns)
   +blocks = F32.from_nat(V.ceil_div(length, 32n))
   +p = (1.0 + F32.from_nat(List.length(&2, E.EqualityPair, pairs)) : F32)
-  (1.0 + l + c + 256.0 * l * p + blocks * c +
+  (257.0 + l + c + l * p + F32.min(256.0, l) * blocks + blocks * c +
     extra_work(mode, task, l, c, blocks, p) : F32)
 
-# A scheduling heuristic, not a timing prediction: input scans, 256-symbol
-# profiles, full Myers columns, worst-case HW start searches and PATH DP.
+# Scheduling estimates compact profile preparation, full Myers columns,
+# worst-case HW start searches and PATH DP; similarity remains unknown.
 # F32 avoids wrapping a U32 product or allocating a quadratic unary Nat.
 # Bands, retries, similarity and the selected interval can change actual work.
+def estimate_nw(+q: Nat, +t: Nat, task: E.Task, pairs: List<&2, E.EqualityPair>, rejected: Bool) -> F32:
+  match rejected:
+    case True{}:
+      1.0
+    case False{}:
+      estimate_axes(E.NW{}, task, pairs, axes(E.NW{}, q, t))
+
 def estimate_sizes(qn: Nat, tn: Nat, config: E.AlignConfig) -> F32:
   match qn tn config:
-    case 0n +t _:
-      (1.0 + F32.from_nat(t) : F32)
-    case +q 0n _:
-      (1.0 + F32.from_nat(q) : F32)
+    case 0n _ _:
+      1.0
+    case _ 0n _:
+      1.0
+    case +q +t E.AlignConfig{E.NW{}, task, E.MaxDistance{maximum}, pairs, _}:
+      estimate_nw(q, t, task, pairs, Nat.is_gt(Nat.max(Nat.sub(q, t), Nat.sub(t, q)), maximum))
     case +q +t E.AlignConfig{+mode, task, _, pairs, _}:
       estimate_axes(mode, task, pairs, axes(mode, q, t))
 
@@ -69,22 +81,27 @@ def estimate(+job: E.AlignJob) -> F32:
   # Scans are sequential here; pairs of arbitrary lengths need not balance.
   estimate_sizes(String.length(query), String.length(target), config)
 
+def indexed.job(index: Nat, +job: E.AlignJob, +qn: Nat, +tn: Nat) -> WeightedJob:
+  E.AlignJob{_, _, config} = job
+  WeightedJob{index, estimate_sizes(qn, tn, config), qn, tn, job}
+
 def indexed(jobs: List<&2, E.AlignJob>, +index: Nat) -> List<&2, WeightedJob>:
   match jobs:
     case Nil{}:
       Nil{}
     case +job <> tail:
-      WeightedJob{index, estimate(job), job} <> indexed(tail, 1n+index)
+      E.AlignJob{query, target, _} = job
+      indexed.job(index, job, String.length(query), String.length(target)) <> indexed(tail, 1n+index)
 
 def heavier(first: WeightedJob, second: WeightedJob) -> Bool:
-  WeightedJob{_, a, _} = first
-  WeightedJob{_, b, _} = second
+  WeightedJob{_, a, _, _, _} = first
+  WeightedJob{_, b, _, _, _} = second
   F32.is_ge(a, b)
 
 def add(group: Group, job: WeightedJob) -> Group:
   Group{room, work, jobs} = group
-  WeightedJob{index, +cost, value} = job
-  Group{Nat.sub(room, 1n), F32.add(work, cost), WeightedJob{index, cost, value} <> jobs}
+  WeightedJob{index, +cost, qn, tn, value} = job
+  Group{Nat.sub(room, 1n), F32.add(work, cost), WeightedJob{index, cost, qn, tn, value} <> jobs}
 
 def choose(left: Group, right: Group) -> Bool:
   match left right:
@@ -121,35 +138,100 @@ def plan_step(groups: Group & Group,
   (left, right) = groups
   next(group_jobs(left), group_jobs(right))
 
-def plan(fuel: Nat, jobs: List<&2, WeightedJob>) -> Plan:
-  match fuel jobs:
-    case _ Nil{}:
+def serial_cutoff() -> F32:
+  4096.0
+
+def small(count: Nat, work: F32) -> Bool:
+  Bool.and(Nat.is_le(count, 4n), F32.is_le(work, serial_cutoff()))
+
+def total_work(jobs: List<&2, WeightedJob>, acc: F32) -> F32:
+  match jobs:
+    case Nil{}:
+      acc
+    case WeightedJob{_, work, _, _, _} <> tail:
+      total_work(tail, F32.add(acc, work))
+
+def homogeneous(jobs: List<&2, WeightedJob>, +work: F32) -> Bool:
+  match jobs:
+    case Nil{}:
+      True{}
+    case WeightedJob{_, cost, _, _, _} <> tail:
+      Bool.and(F32.is_eq(work, cost), homogeneous(tail, work))
+
+def balanced(fuel: Nat, +count: Nat, +work: F32, jobs: List<&2, WeightedJob>, serial: Bool) -> Plan:
+  match fuel jobs serial:
+    case _ Nil{} _:
       Empty{}
-    case _ WeightedJob{index, _, job} <> Nil{}:
-      Leaf{index, job}
-    case 0n values:
-      Serial{values}
-    case Succ{+p} +values:
+    case _ WeightedJob{index, _, qn, tn, job} <> Nil{} _:
+      SizedLeaf{index, qn, tn, job}
+    case 0n _ _:
+      Serial{jobs}
+    case _ _ True{}:
+      Serial{jobs}
+    case Succ{+p} +values False{}:
+      +half = Nat.div(count, 2n)
+      +rest = Nat.sub(count, half)
+      Fork{balanced(p, half, work, List.take(&2, WeightedJob, values, half),
+             small(half, F32.mul(work, F32.from_nat(half)))),
+           balanced(p, rest, work, List.drop(&2, WeightedJob, values, half),
+             small(rest, F32.mul(work, F32.from_nat(rest))))}
+
+def plan(fuel: Nat, jobs: List<&2, WeightedJob>, serial: Bool) -> Plan:
+  match fuel jobs serial:
+    case _ Nil{} _:
+      Empty{}
+    case _ WeightedJob{index, _, qn, tn, job} <> Nil{} _:
+      SizedLeaf{index, qn, tn, job}
+    case 0n _ _:
+      Serial{jobs}
+    case _ _ True{}:
+      Serial{jobs}
+    case Succ{+p} +values False{}:
       +count = List.length(&2, WeightedJob, values)
       +half = Nat.div(count, 2n)
       plan_step(partition(values,
         (Group{half, 0.0, Nil{}}, Group{Nat.sub(count, half), 0.0, Nil{}})),
-        left => right => Fork{plan(p, left), plan(p, right)})
+        +left => +right => Fork{
+          plan(p, left, small(half, total_work(left, 0.0))),
+          plan(p, right, small(Nat.sub(count, half), total_work(right, 0.0)))})
 
-def prepare(+jobs: List<&2, E.AlignJob>) -> Plan:
-  plan(List.length(&2, E.AlignJob, jobs),
-    List.sort(~WeightedJob, ~heavier, indexed(jobs, 0n)))
+def prepare.choose(+jobs: List<&2, WeightedJob>, +count: Nat, +work: F32, same: Bool) -> Plan:
+  match same:
+    case True{}:
+      Ordered{balanced(count, count, work, jobs, small(count, F32.mul(work, F32.from_nat(count))))}
+    case False{}:
+      plan(count, List.sort(~WeightedJob, ~heavier, jobs), small(count, total_work(jobs, 0.0)))
+
+def prepare.indexed(+jobs: List<&2, WeightedJob>) -> Plan:
+  match jobs:
+    case Nil{}:
+      Empty{}
+    case WeightedJob{_, +work, _, _, _} <> tail:
+      prepare.choose(jobs, List.length(&2, WeightedJob, jobs), work, homogeneous(tail, work))
+
+def prepare(jobs: List<&2, E.AlignJob>) -> Plan:
+  match jobs:
+    case Nil{}:
+      Empty{}
+    case job <> Nil{}:
+      Leaf{0n, job}
+    case _:
+      prepare.indexed(indexed(jobs, 0n))
 
 def single(index: Nat, job: E.AlignJob) -> IndexedResult:
   E.AlignJob{query, target, config} = job
   IndexedResult{index, M.edlib_align(query, target, config)}
 
+def single_sized(index: Nat, query_length: Nat, target_length: Nat, job: E.AlignJob) -> IndexedResult:
+  E.AlignJob{query, target, config} = job
+  IndexedResult{index, M.edlib_align_sized(query, target, config, query_length, target_length)}
+
 def serial(jobs: List<&2, WeightedJob>) -> List<&2, IndexedResult>:
   match jobs:
     case Nil{}:
       Nil{}
-    case WeightedJob{index, _, job} <> tail:
-      single(index, job) <> serial(tail)
+    case WeightedJob{index, _, qn, tn, job} <> tail:
+      single_sized(index, qn, tn, job) <> serial(tail)
 
 # Only ready, independent subplans enter parallel calls. A leaf uses the same
 # single-pair implementation; column carries and successive columns stay serial.
@@ -159,6 +241,10 @@ def execute(plan: Plan) -> List<&2, IndexedResult>:
       Nil{}
     case Leaf{index, job}:
       [single(index, job)]
+    case SizedLeaf{index, qn, tn, job}:
+      [single_sized(index, qn, tn, job)]
+    case Ordered{plan}:
+      execute(plan)
     case Serial{jobs}:
       serial(jobs)
     case Fork{left, right}:
@@ -177,8 +263,92 @@ def results(values: List<&2, IndexedResult>) -> List<&2, E.AlignResult>:
     case IndexedResult{_, result} <> tail:
       result <> results(tail)
 
-def ordered(values: List<&2, IndexedResult>) -> List<&2, E.AlignResult>:
-  results(List.sort(~IndexedResult, ~earlier, values))
+type Gathered is Type:
+  Gathered{array: Array<Maybe<&2, E.AlignResult>>, valid: Bool}
+
+def gather.occupied(result: Array<Maybe<&2, E.AlignResult>> & Maybe<&2, E.AlignResult>) -> Gathered:
+  match result:
+    case (array, None{}):
+      Gathered{array, True{}}
+    case (array, Some{_}):
+      Gathered{array, False{}}
+
+def gather.one(array: Array<Maybe<&2, E.AlignResult>>, index: Nat, value: E.AlignResult,
+                  in_bounds: Bool) -> Gathered:
+  match in_bounds:
+    case True{}:
+      gather.occupied(Array.swap(Maybe<&2, E.AlignResult>, array, U32.from_nat(index), Some{value}))
+    case False{}:
+      Gathered{array, False{}}
+
+def gather.store(values: List<&2, IndexedResult>, +count: Nat, state: Gathered) -> Gathered:
+  match values state:
+    case Nil{} _:
+      state
+    case _ Gathered{array, False{}}:
+      Gathered{array, False{}}
+    case IndexedResult{+index, value} <> tail Gathered{array, True{}}:
+      gather.store(tail, count, gather.one(array, index, value, Nat.is_lt(index, count)))
+
+type GatherOutput is Type:
+  GatherOutput{array: Array<Maybe<&2, E.AlignResult>>, values: List<&2, E.AlignResult>, valid: Bool}
+
+def gather.consumed(values: List<&2, E.AlignResult>,
+                       result: Array<Maybe<&2, E.AlignResult>> & Maybe<&2, E.AlignResult>) -> GatherOutput:
+  match result:
+    case (array, Some{value}):
+      GatherOutput{array, value <> values, True{}}
+    case (array, None{}):
+      GatherOutput{array, values, False{}}
+
+def gather.consume(fuel: Nat, +index: U32, state: GatherOutput) -> Maybe<&2, List<&2, E.AlignResult>>:
+  match fuel state:
+    case _ GatherOutput{_, _, False{}}:
+      None{}
+    case 0n GatherOutput{_, values, True{}}:
+      Some{List.reverse(&2, E.AlignResult, values)}
+    case 1n+p GatherOutput{array, values, True{}}:
+      gather.consume(p, U32.inc(index), gather.consumed(values,
+        Array.swap(Maybe<&2, E.AlignResult>, array, index, None{})))
+
+def gather.finish(count: Nat, state: Gathered) -> Maybe<&2, List<&2, E.AlignResult>>:
+  match state:
+    case Gathered{array, True{}}:
+      gather.consume(count, 0, GatherOutput{array, Nil{}, True{}})
+    case Gathered{_, False{}}:
+      None{}
+
+def gather(values: List<&2, IndexedResult>, +count: Nat) -> Maybe<&2, List<&2, E.AlignResult>>:
+  gather.finish(count, gather.store(values, count, Gathered{
+    Array.new(Maybe<&2, E.AlignResult>, P.depth(count), None{}), True{}}))
+
+def ordered.gathered(original: List<&2, IndexedResult>, maybe: Maybe<&2, List<&2, E.AlignResult>>) ->
+                     List<&2, E.AlignResult>:
+  match maybe:
+    case Some{values}:
+      values
+    case None{}:
+      results(List.sort(~IndexedResult, ~earlier, original))
+
+# Indexed gathering wins for larger permutations; validate indexes and occupied
+# slots before accessing wrapping arrays. Preserve sorting for arbitrary indexes.
+def ordered.choose(+values: List<&2, IndexedResult>, count: Nat, use_array: Bool) -> List<&2, E.AlignResult>:
+  match use_array:
+    case True{}:
+      ordered.gathered(values, gather(values, count))
+    case False{}:
+      results(List.sort(~IndexedResult, ~earlier, values))
+
+def ordered(+values: List<&2, IndexedResult>) -> List<&2, E.AlignResult>:
+  +count = List.length(&2, IndexedResult, values)
+  ordered.choose(values, count, Bool.and(Nat.is_ge(count, 256n), Nat.is_le(count, 65536n)))
+
+def align_plan(plan: Plan) -> List<&2, E.AlignResult>:
+  match plan:
+    case Ordered{inner}:
+      results(execute(inner))
+    case _:
+      ordered(execute(plan))
 
 def align_batch(jobs: List<&2, E.AlignJob>) -> List<&2, E.AlignResult>:
   match jobs:
@@ -187,4 +357,4 @@ def align_batch(jobs: List<&2, E.AlignJob>) -> List<&2, E.AlignResult>:
     case E.AlignJob{query, target, config} <> Nil{}:
       [M.edlib_align(query, target, config)]
     case values:
-      ordered(execute(prepare(values)))
+      align_plan(prepare(values))

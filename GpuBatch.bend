@@ -11,7 +11,11 @@ def ordered(values: List<&2, B.IndexedResult>) -> List<&2, E.AlignResult>:
   B.ordered(values)
 
 def align_plan(plan: B.Plan) -> List<&2, E.AlignResult>:
-  ordered(execute(plan))
+  match plan:
+    case B.Ordered{inner}:
+      B.results(execute(inner))
+    case _:
+      ordered(execute(plan))
 
 # Explicit opt-in module: CPU consumers of lib.bend need no GPU toolchain.
 def align_batch(jobs: List<&2, E.AlignJob>) -> List<&2, E.AlignResult>:

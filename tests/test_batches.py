@@ -15,9 +15,9 @@ from tests.helpers import ROOT, assert_valid_path, bend_align, cpp_edlib_align
 from transport import LENGTH, decode_response, encode_request
 
 
-def invoke(binary, jobs, threads):
+def invoke(binary, jobs, threads, mode="batch"):
     result = subprocess.run(
-        [str(binary), *runtime_prefix(threads=threads), "batch", str(len(jobs))],
+        [str(binary), *runtime_prefix(threads=threads), mode, str(len(jobs))],
         cwd=ROOT, input=b"".join(encode_request(*job) for job in jobs),
         capture_output=True, timeout=60,
     )
@@ -38,9 +38,9 @@ def singles(jobs, binary, threads=1):
     return [bend_align(q, t, c, binary=binary, threads=threads) for q, t, c in jobs]
 
 
-@pytest.mark.parametrize("count", [0, 1, 2, 3, 7, 16, 31, 64])
+@pytest.mark.parametrize("count", [0, 1, 2, 3, 7, 16, 31, 64, 256, 257, 511])
 def test_batch_cardinality_and_order(batch_probe, bend_binary, count):
-    jobs = [(bytes([i]) * (i % 9), b"Z" * (i % 13), AlignConfig()) for i in range(count)]
+    jobs = [(bytes([i % 256]) * (i % 9), b"Z" * (i % 13), AlignConfig()) for i in range(count)]
     expected = singles(jobs, bend_binary)
     for threads in (1, 2, 4):
         assert invoke(batch_probe, jobs, threads) == expected
@@ -104,3 +104,11 @@ def test_generated_batches_match_each_single_pair(batch_probe, bend_binary, valu
     expected = singles(jobs, bend_binary)
     for threads in (1, 2, 4):
         assert invoke(batch_probe, jobs, threads) == expected
+
+
+@pytest.mark.parametrize("threads", [1, 2, 4])
+def test_indexed_gather_preserves_sort_fallback(batch_probe, threads):
+    jobs = [(b"A" * (i % 7), b"", AlignConfig()) for i in range(257)]
+    for layout in ("duplicates", "holes"):
+        assert invoke(batch_probe, jobs, threads, "gather-" + layout) == invoke(
+            batch_probe, jobs, threads, "sort-" + layout)

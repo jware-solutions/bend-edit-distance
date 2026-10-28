@@ -833,3 +833,12 @@ def Laws.prepared_nw_equivalence():
 
 def Laws.prepared_nontransitive_equivalence():
   {==}
+
+def Laws.batch_gather_guard(array, index, value):
+  {==}
+
+def Laws.batch_gather_duplicate():
+  {==}
+
+def Laws.batch_gather_permutation():
+  {==}

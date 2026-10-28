@@ -19,12 +19,17 @@ def byte_pairs(pairs: List<&2, E.EqualityPair>) -> Bool:
     case E.EqualityPair{a, b} <> tail:
       Bool.and(Bool.and(U32.is_lt(Char.to_u32(a), 256), U32.is_lt(Char.to_u32(b), 256)), byte_pairs(tail))
 
+def bytes_from(query: String, valid: Bool) -> Bool:
+  match query valid:
+    case SNil{} _:
+      valid
+    case _ False{}:
+      False{}
+    case SCon{h, t} True{}:
+      bytes_from(t, U32.is_lt(Char.to_u32(h), 256))
+
 def bytes(query: String) -> Bool:
-  match query:
-    case SNil{}:
-      True{}
-    case SCon{h, t}:
-      Bool.and(U32.is_lt(Char.to_u32(h), 256), bytes(t))
+  bytes_from(query, True{})
 
 def add_symbol(lookup: Array<U32>, +code: U32, +rows: U32, missing: Bool) -> Array<U32> & U32:
   match missing:

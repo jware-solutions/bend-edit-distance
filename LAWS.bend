@@ -845,3 +845,18 @@ law prepared_nw_equivalence:
 law prepared_nontransitive_equivalence:
   {Q.result(L.align_prepared(L.prepare("A", [E.EqualityPair{'A', 'N'}, E.EqualityPair{'N', 'C'}]),
     "C", Q.default_options())) == E.distance_result(1n, E.Position{0n}, True{}) : E.AlignResult}
+
+law batch_gather_guard:
+  for array: Array<Maybe<&2, E.AlignResult>>
+  for index: Nat
+  for value: E.AlignResult
+  {B.gather.one(array, index, value, False{}) == B.Gathered{array, False{}} : B.Gathered}
+
+law batch_gather_duplicate:
+  {B.gather([B.IndexedResult{0n, E.not_found()}, B.IndexedResult{0n, E.not_found()}], 2n) ==
+    None{} : Maybe<&2, List<&2, E.AlignResult>>}
+
+law batch_gather_permutation:
+  {B.gather([B.IndexedResult{1n, E.not_found()},
+    B.IndexedResult{0n, E.distance_result(3n, E.BeforeStart{}, True{})}], 2n) ==
+    Some{[E.distance_result(3n, E.BeforeStart{}, True{}), E.not_found()]} : Maybe<&2, List<&2, E.AlignResult>>}

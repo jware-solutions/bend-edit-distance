@@ -56,7 +56,7 @@ The text CLI accepts two non-NUL ASCII strings, up to 4096 characters each.
 Configured calls accept mode, task, threshold, concatenated equality pairs,
 CIGAR format, query and target. Invalid calls exit 2 and write to stderr.
 Binary workers support all 256 byte values and explicit lengths; see
-[TRANSPORT.md](TRANSPORT.md) for BED1/BER1 and the Python adapter.
+[TRANSPORT.md](TRANSPORT.md) for BED1/BER1 compatibility, prepared queries, batches and the Python adapter.
 
 Preserve these Edlib semantics:
 
@@ -70,12 +70,16 @@ Preserve these Edlib semantics:
 
 ## Architecture
 
-- `src/Myers.bend`: 32-bit equality profiles, block transitions, banded search
-  and directional alignment. Block carries and successive columns are sequential.
+- `src/Profile.bend`, `src/BitVector.bend`, `src/Workspace.bend` and
+  `src/SearchKernel.bend`: compact byte masks, 32-bit transitions and owned bands.
+  `src/Myers.bend` dispatches modes and retains the general String fallback.
+  Block carries and successive columns are sequential.
+- `Prepared.bend`: fixed query masks, per-call options and explicit owned clones.
 - `src/DistanceDP.bend`: independent unit-cost dynamic programming reference.
 - `src/Reconstruction.bend`: DP traceback and Hirschberg. Forward/reverse rows
   are independent; subpaths run sequentially to bound memory.
-- `src/Batch.bend`: prepare balanced independent jobs and restore input order.
+- `src/Batch.bend`: cached job lengths, contiguous homogeneous plans, weighted
+  mixed plans, serial leaves and checked indexed result gathering.
 - `GpuBatch.bend`: one bang around execution of a prepared batch; planning and
   result ordering remain on the host.
 - `src/Cli.bend`, `src/ByteProtocol.bend`, `src/Transport.bend` and

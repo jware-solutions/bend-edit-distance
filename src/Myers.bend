@@ -606,6 +606,57 @@ def nw_result(query: String, target: String, task: E.Task,
       configured_result(query, target, E.NW{}, task, pairs, format,
         A.Best{U32.from_nat(score), [A.Location{end, 0n}]}, True{})
 
+def sized_nw.oriented(query: String, target: String, +qn: Nat, +tn: Nat,
+                         threshold: E.Threshold, pairs: List<&2, E.EqualityPair>, forward: Bool) -> Search:
+  match forward:
+    case True{}:
+      compact_search_result(K.search(target, P.build(query, qn, pairs), W.new(V.ceil_div(qn, 32n)), qn, tn, threshold))
+    case False{}:
+      compact_search_result(K.search(query, P.build(target, tn, pairs), W.new(V.ceil_div(tn, 32n)), tn, qn, threshold))
+
+def sized_nw.checked(+query: String, +target: String, +qn: Nat, +tn: Nat,
+                        task: E.Task, threshold: E.Threshold, +pairs: List<&2, E.EqualityPair>,
+                        format: E.CigarFormat, bytes: Bool) -> E.AlignResult:
+  match bytes:
+    case True{}:
+      nw_result(query, target, task, pairs, format, E.end_coordinate(tn),
+        search_distance(sized_nw.oriented(query, target, qn, tn, threshold, pairs, profile_query(qn, tn))))
+    case False{}:
+      nw_result(query, target, task, pairs, format, E.end_coordinate(tn),
+        search_distance(search_shorter(query, target, qn, tn, threshold, profile_query(qn, tn), pairs)))
+
+# Balanced domain scans are independent and prepare the two Data inputs before
+# profile construction. Small/skewed jobs retain a serial preparation path.
+def sized_nw(+query: String, +target: String, qn: Nat, +tn: Nat, task: E.Task,
+                threshold: E.Threshold, +pairs: List<&2, E.EqualityPair>,
+                format: E.CigarFormat, parallel: Bool) -> E.AlignResult:
+  match parallel:
+    case True{}:
+      qb tb = P.bytes(query) P.bytes(target)
+      sized_nw.checked(query, target, qn, tn, task, threshold, pairs, format,
+        Bool.and(Bool.and(qb, tb), P.byte_pairs(pairs)))
+    case False{}:
+      nw_result(query, target, task, pairs, format, E.end_coordinate(tn),
+        search_distance(search_nw(query, target, qn, tn, threshold, pairs)))
+
+# Internal batch entry: lengths are computed once during planning.
+def edlib_align_sized(query: String, target: String, config: E.AlignConfig, +qn: Nat, +tn: Nat) -> E.AlignResult:
+  match query target config:
+    case SNil{} _ E.AlignConfig{E.NW{}, _, _, _, _}:
+      E.distance_result(tn, E.end_coordinate(tn), True{})
+    case SNil{} _ _:
+      E.distance_result(0n, E.BeforeStart{}, True{})
+    case _ SNil{} _:
+      E.distance_result(qn, E.BeforeStart{}, True{})
+    case +q +t E.AlignConfig{E.NW{}, task, +threshold, +pairs, format}:
+      sized_nw(q, t, qn, tn, task, threshold, pairs, format,
+        Bool.and(E.within_threshold(threshold, Nat.max(Nat.sub(qn, tn), Nat.sub(tn, qn))),
+          Bool.and(Nat.is_ge(Nat.min(qn, tn), 512n), Nat.is_le(Nat.max(qn, tn), Nat.mul(Nat.min(qn, tn), 2n)))))
+    case +q +t E.AlignConfig{+mode, task, +threshold, +pairs, format}:
+      configured_finish(q, t, mode, task, threshold, pairs, format,
+        semiglobal_query(q, t, qn, semiglobal_maximum(threshold, qn), mode, pairs,
+          Bool.and(P.bytes(q), P.byte_pairs(pairs))))
+
 def edlib_align(query: String, target: String, config: E.AlignConfig) -> E.AlignResult:
   match query target config:
     case SNil{} _ _:

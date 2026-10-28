@@ -46,26 +46,27 @@ def prepared.saved(handle: U32, saved: Bool) -> IO(Unit):
 def prepared.handle(+handle: U32) -> IO(Unit):
   prepared.saved(handle, U32.is_ne(handle, 0))
 
-def prepared(result: Q.Prepared & Nat) -> IO(Unit):
+def prepared(~State: Type, result: State & Nat) -> IO(Unit):
   (query, bytes) = result
   do IO<Unit>:
-    handle : U32 <- retain(Q.Prepared, query, U32.from_nat(Nat.add(4096n, Nat.mul(bytes, 2n))))
+    handle : U32 <- retain(State, query, U32.from_nat(Nat.add(4096n, Nat.mul(bytes, 2n))))
     prepared.handle(handle)
 
-def aligned(handle: U32, result: Q.Prepared & E.AlignResult) -> IO(Unit):
+def aligned(~State: Type, handle: U32, result: State & E.AlignResult) -> IO(Unit):
   (query, value) = result
   do IO<Unit>:
-    restore(Q.Prepared, handle, query)
+    restore(State, handle, query)
     T.write_response(P.encode(value))
 
-def align(+handle: U32, target: String, options: Q.Options, exists: Bool) -> IO(Unit):
+def align(~State: Type, ~run: State -> String -> Q.Options -> (State & E.AlignResult),
+          +handle: U32, target: String, options: Q.Options, exists: Bool) -> IO(Unit):
   match exists:
     case False{}:
       error()
     case True{}:
       do IO<Unit>:
-        query : Q.Prepared <- take(Q.Prepared, handle)
-        aligned(handle, Q.align(query, target, options))
+        query : State <- take(State, handle)
+        aligned(~State, handle, run(query, target, options))
 
 def targets(values: List<List<U32>>) -> List<&2, String>:
   match values:
@@ -74,21 +75,22 @@ def targets(values: List<List<U32>>) -> List<&2, String>:
     case bytes <> tail:
       P.byte_string(bytes) <> targets(tail)
 
-def batch_aligned(+handle: U32, result: Q.Prepared & List<&2, E.AlignResult>) -> IO(Unit):
+def batch_aligned(~State: Type, +handle: U32, result: State & List<&2, E.AlignResult>) -> IO(Unit):
   (query, +values) = result
   do IO<Unit>:
-    restore(Q.Prepared, handle, query)
+    restore(State, handle, query)
     control(5, 0, handle, U32.from_nat(List.length(&2, E.AlignResult, values)))
     T.write_batch(values)
 
-def batch(+handle: U32, values: List<&2, String>, options: Q.Options, exists: Bool) -> IO(Unit):
+def batch(~State: Type, ~run: State -> List<&2, String> -> Q.Options -> (State & List<&2, E.AlignResult>),
+          +handle: U32, values: List<&2, String>, options: Q.Options, exists: Bool) -> IO(Unit):
   match exists:
     case False{}:
       control(5, 1, handle, 0)
     case True{}:
       do IO<Unit>:
-        query : Q.Prepared <- take(Q.Prepared, handle)
-        batch_aligned(handle, Q.align_batch(query, values, options))
+        query : State <- take(State, handle)
+        batch_aligned(~State, handle, run(query, values, options))
 
 def released(handle: U32, removed: Bool) -> IO(Unit):
   control(3, Bool.to_u32(Bool.not(removed)), handle, 0)
@@ -100,14 +102,21 @@ def invalid(operation: U32) -> IO(Unit):
     case _:
       control(operation, 1, 0, 0)
 
-def respond(request: T.Request) -> IO(Unit):
+def respond(~State: Type,
+            ~make: String -> List<&2, E.EqualityPair> -> State,
+            ~size: State -> (State & Nat),
+            ~single: State -> String -> Q.Options -> (State & E.AlignResult),
+            ~many: State -> List<&2, String> -> Q.Options -> (State & List<&2, E.AlignResult>),
+            ~ordinary_single: String -> String -> E.AlignConfig -> E.AlignResult,
+            ~ordinary: List<&2, E.AlignJob> -> List<&2, E.AlignResult>,
+            request: T.Request) -> IO(Unit):
   match request:
     case T.PrepareRequest{query, pairs}:
-      prepared(Q.retained_bytes(Q.prepare(P.byte_string(query), P.pairs(pairs))))
+      prepared(~State, size(make(P.byte_string(query), P.pairs(pairs))))
     case T.PreparedRequest{+handle, m, t, k, f, target}:
       do IO<Unit>:
         exists : Bool <- has(handle)
-        align(handle, P.byte_string(target), Q.Options{P.mode(m), P.task(t), P.threshold(k), P.format(f)}, exists)
+        align(~State, ~single, handle, P.byte_string(target), Q.Options{P.mode(m), P.task(t), P.threshold(k), P.format(f)}, exists)
     case T.ReleaseRequest{+handle}:
       do IO<Unit>:
         removed : Bool <- release(handle)
@@ -115,21 +124,28 @@ def respond(request: T.Request) -> IO(Unit):
     case T.BatchRequest{+count}:
       do IO<Unit>:
         jobs : List<&2, E.AlignJob> <- T.read_batch(U32.to_nat(count))
-        +values : List<&2, E.AlignResult> = B.align_batch(jobs)
+        +values : List<&2, E.AlignResult> = ordinary(jobs)
         control(4, 0, 0, count)
         T.write_batch(values)
     case T.PreparedBatchRequest{+handle, m, t, k, f, values}:
       do IO<Unit>:
         exists : Bool <- has(handle)
-        batch(handle, targets(values), Q.Options{P.mode(m), P.task(t), P.threshold(k), P.format(f)}, exists)
+        batch(~State, ~many, handle, targets(values), Q.Options{P.mode(m), P.task(t), P.threshold(k), P.format(f)}, exists)
     case T.InvalidControl{operation}:
       invalid(operation)
     case _:
       do IO<Unit>:
-        alive : Bool <- T.respond(~M.edlib_align, request)
+        alive : Bool <- T.respond(~ordinary_single, request)
         return Unit{}
 
-def run(fuel: Nat, request: T.Request) -> IO(Unit):
+def run(~State: Type,
+        ~make: String -> List<&2, E.EqualityPair> -> State,
+        ~size: State -> (State & Nat),
+        ~single: State -> String -> Q.Options -> (State & E.AlignResult),
+        ~many: State -> List<&2, String> -> Q.Options -> (State & List<&2, E.AlignResult>),
+        ~ordinary_single: String -> String -> E.AlignConfig -> E.AlignResult,
+        ~ordinary: List<&2, E.AlignJob> -> List<&2, E.AlignResult>,
+        fuel: Nat, request: T.Request) -> IO(Unit):
   match fuel request:
     case _ T.End{}:
       clear()
@@ -137,11 +153,27 @@ def run(fuel: Nat, request: T.Request) -> IO(Unit):
       clear()
     case 1n+p _:
       do IO<Unit>:
-        respond(request)
+        respond(~State, ~make, ~size, ~single, ~many, ~ordinary_single, ~ordinary, request)
         next : T.Request <- T.read_request()
-        run(p, next)
+        run(~State, ~make, ~size, ~single, ~many, ~ordinary_single, ~ordinary, p, next)
 
-def serve() -> IO(Unit):
+def serve_generic(~State: Type,
+                  ~make: String -> List<&2, E.EqualityPair> -> State,
+                  ~size: State -> (State & Nat),
+                  ~single: State -> String -> Q.Options -> (State & E.AlignResult),
+                  ~many: State -> List<&2, String> -> Q.Options -> (State & List<&2, E.AlignResult>),
+                  ~ordinary_single: String -> String -> E.AlignConfig -> E.AlignResult,
+                  ~ordinary: List<&2, E.AlignJob> -> List<&2, E.AlignResult>) -> IO(Unit):
   do IO<Unit>:
     request : T.Request <- T.read_request()
-    run(4294967295n, request)
+    run(~State, ~make, ~size, ~single, ~many, ~ordinary_single, ~ordinary, 4294967295n, request)
+
+def cpu_prepare(query: String, pairs: List<&2, E.EqualityPair>) -> Q.Prepared:
+  Q.prepare(query, pairs)
+
+def cpu_align(query: Q.Prepared, target: String, options: Q.Options) -> Q.Prepared & E.AlignResult:
+  Q.align_cached(query, target, options)
+
+def serve() -> IO(Unit):
+  serve_generic(~Q.Prepared, ~cpu_prepare, ~Q.retained_bytes, ~cpu_align, ~Q.align_batch_cached,
+    ~M.edlib_align, ~B.align_batch)

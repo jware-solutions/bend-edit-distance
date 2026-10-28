@@ -1,5 +1,6 @@
 import ./src/Sequence.bend as S
 import ./src/Frontier.bend as F
+import ./src/PreparedPool.bend as PP
 import ./Prepared.bend as Q
 import ./src/SearchKernel.bend as K
 import ./src/Workspace.bend as W
@@ -23,6 +24,13 @@ import ./GpuBatch.bend as G
 law gpu_execution_values:
   for plan: B.Plan
   {G.execute(plan) == B.execute(plan) : List<&2, B.IndexedResult>}
+
+law gpu_prepared_execution_values:
+  for plan: PP.Plan
+  for options: Q.Options
+  for known_bytes: Bool
+  {G.execute_prepared(plan, options, known_bytes) ==
+    PP.execute(plan, options, known_bytes) : PP.PoolDone}
 
 law gpu_batch_empty:
   {G.align_batch(Nil{}) == Nil{} : List<&2, E.AlignResult>}

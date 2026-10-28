@@ -30,14 +30,24 @@ frames on stdin. The program collects the jobs, prepares a balanced plan on
 CPU, executes the independent alignment tree in one GPU `!` call, and writes
 COUNT BER1 responses in input order. COUNT zero is valid. Missing/truncated
 requests fail before batch evaluation. Additional input after COUNT frames is
-outside this invocation's batch and is not consumed. This is a one-shot batch
-process, with the same byte/configuration/result encoding as the worker.
+outside this invocation's batch and is not consumed.
+
+Pass `--worker` in place of COUNT for a persistent BED1/BED2 session, using the
+same Python `AlignmentWorker` API as the CPU worker. Preparation clones a bounded
+pool of independently owned masks/workspaces once. Successive prepared batches
+reuse those owners, balance targets before the bang, and restore input order
+after it. Waves contain at most 1,024 targets and one target per owner, avoiding
+a pinned-runtime completion failure with serial reuse inside device leaves.
+Cloning targets a 32 MiB pool budget, with at least one owner; the shared
+64 MiB/32-entry cache limit still applies. GPU selection remains explicit.
+Demand migration is the default.
 
 Keep the compiled `.gpu` program beside the binary. `+RTS --gpu off -RTS` explicitly runs
 the same entry point on CPU. Default GPU selection permits fallback; successful
 responses alone do not demonstrate device execution. Use
 `python run_gpu_benchmarks.py --check-build` for forced-device validation with
-completed-dispatch evidence. The pure Bend API is `GpuBatch.align_batch(jobs)`.
+completed-dispatch evidence. The pure Bend APIs include `GpuBatch.align_batch`,
+`prepare_query`, and `align_prepared_batch(pool, targets, options) -> (pool, results)`.
 
 ## Request
 
@@ -126,7 +136,7 @@ The legacy text CLIs retain their non-NUL ASCII/4,096-character restrictions.
 
 ## Prepared queries and batches (BED2)
 
-The Bend CPU worker additionally accepts `BED2`; BED1/BER1 remain compatible.
+The Bend CPU and persistent GPU workers accept `BED2`; BED1/BER1 remain compatible.
 BED2 uses the same 24-byte request header, with byte 7 holding an operation.
 Mode/task/format/threshold apply to operations 2 and 5; all four fields must be
 zero for other operations. The last three u32 fields are interpreted as follows:
@@ -150,7 +160,8 @@ Preparation fixes the query, symmetric equality pairs, compact profile layout,
 and 32-bit word width. Mode, task, threshold and CIGAR format remain per-call.
 Prepared NW always profiles the prepared query, including when its target is
 shorter. Empty-input exceptions and PATH coordinates retain ordinary semantics.
-Prepared batches reuse one workspace serially; ordinary batches use CPU forks.
+CPU prepared batches reuse one workspace serially; GPU prepared batches move
+independent owners into a balanced plan. Ordinary batches use independent forks.
 Use independently prepared workers or explicitly cloned Bend profiles for
 concurrent shards. One worker never shares mutable workspace between calls.
 

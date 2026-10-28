@@ -107,7 +107,9 @@ For GPU batches, import `./GpuBatch.bend` and call `align_batch(jobs)`; see
 [examples/gpu_batch_usage.bend](examples/gpu_batch_usage.bend). The separate
 module keeps CPU consumers independent of the GPU toolchain. It prepares the
 plan on CPU, executes one `!` call, and restores result order on CPU.
-`gpu_batch.bend` also accepts a count and binary requests on stdin.
+`gpu_batch.bend` accepts a count or `--worker` for persistent BED1/BED2 requests.
+Prepared GPU batches retain independent profiles/workspaces and execute in
+bounded waves; `prepare_query` and `align_prepared_batch` expose the owned API.
 Force `+RTS --gpu on -RTS` when requiring hardware execution: Bend's default can fall
 back to CPU. [GPU validation and benchmarks](CONTRIBUTING.md#benchmarks)
 require completed device dispatches, compare complete CPU/GPU results, and

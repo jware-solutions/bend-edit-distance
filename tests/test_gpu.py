@@ -12,6 +12,60 @@ from tests.test_batches import mixed_jobs, singles
 from transport import encode_request
 
 
+def session_results(binary, reference, *, gpu, repeats=2):
+    import itertools
+    from alignment import EqualityPair, Mode, Task, MaxDistance
+    from transport import AlignmentWorker
+    query = b"A\0\xffN" * 17
+    pairs = (EqualityPair("A", "N"), EqualityPair("N", "C"))
+    targets = [b"", b"A", query, query[::-1], bytes(range(256)), b"Z" * 64,
+               b"A", query[:31], query[:32], query[:33]]
+    bangs = 0
+    with AlignmentWorker([binary, *runtime_prefix(threads=4, gpu=gpu), "--worker"]) as w, \
+            AlignmentWorker([reference, *runtime_prefix(threads=4), "--worker"]) as ref:
+        with w.prepare(query, pairs, timeout=60) as prepared:
+            retained = w.retained_bytes
+            for mode, task in itertools.product(Mode, Task):
+                config = AlignConfig(mode, task, equalities=pairs)
+                assert prepared.align_batch(targets, config, timeout=120) == [
+                    ref.align(query, target, config) for target in targets]
+                bangs += 1
+            assert prepared.align_batch([]) == []
+            for index in range(repeats):
+                config = AlignConfig(threshold=MaxDistance(index % 3), equalities=pairs)
+                values = targets[::-1] if index % 2 else targets
+                assert prepared.align_batch(values, config, timeout=120) == [
+                    ref.align(query, target, config) for target in values]
+                bangs += 1
+                assert w.retained_bytes == retained
+            assert prepared.align(query, timeout=120).edit_distance == 0
+            bangs += 1
+            # Cross the 1,024-owner wave boundary twice. Distinct distances
+            # expose reordered/dropped results as well as incomplete bangs.
+            large = [query if i % 3 == 0 else b"Z" + query[1:] for i in range(2051)]
+            config = AlignConfig(threshold=MaxDistance(1), equalities=pairs)
+            assert prepared.align_batch(large, config, timeout=120) == [
+                ref.align(query, target, config) for target in large]
+            bangs += 3
+        assert prepared.released
+        assert w.retained_entries == w.retained_bytes == 0
+    assert w.process.returncode == 0, w._diagnostics
+    return w._diagnostics, bangs
+
+
+def test_persistent_gpu_entry_cpu_results(gpu_binary, bend_binary):
+    session_results(gpu_binary, bend_binary, gpu="off")
+
+
+@pytest.mark.gpu
+def test_successive_prepared_cuda_batches(gpu_session_probe, bend_binary):
+    from benchmarks.session_runner import session_metrics
+    diagnostics, bangs = session_results(gpu_session_probe, bend_binary, gpu="1GB", repeats=32)
+    metrics = session_metrics(diagnostics, bangs)
+    # Warm sessions must not retain a new device arena for every batch.
+    assert metrics["peak_bytes"] - metrics["baseline_bytes"] < 256 * 1024 * 1024
+
+
 def expected_results(jobs, bend_binary, cpp_binary):
     results = singles(jobs, bend_binary)
     for (query, target, config), result in zip(jobs, results):

@@ -41,6 +41,9 @@ def sequence_length_correct(+sequence: String) ->
 def Laws.gpu_execution_values(plan):
   {==}
 
+def Laws.gpu_prepared_execution_values(plan, options, known_bytes):
+  {==}
+
 def Laws.gpu_batch_empty():
   {==}
 

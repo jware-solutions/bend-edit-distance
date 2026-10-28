@@ -117,6 +117,15 @@ def gpu_device_probe(bend_tool):
 
 
 @pytest.fixture(scope="session")
+def gpu_session_probe(bend_tool):
+    from benchmarks.session_runner import build_session_probe
+    from benchmarks.gpu_runner import require_gpu_build
+    binary = build_session_probe()
+    require_gpu_build(binary)
+    return binary
+
+
+@pytest.fixture(scope="session")
 def dp_binary(bend_tool):
     DP_BINARY.parent.mkdir(parents=True, exist_ok=True)
     execute([bend_tool, ROOT / "tests" / "distance_dp.bend", "-o", DP_BINARY], timeout=180)

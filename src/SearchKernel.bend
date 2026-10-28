@@ -1,3 +1,4 @@
+import ./Word.bend as Word
 import Base
 import ../EdlibTypes.bend as E
 import ./BitVector.bend as V
@@ -19,13 +20,13 @@ type Trim is Type:
 
 def keep_last(+score: Nat, bottom: Nat, +maximum: Nat,
                 length: Nat, target_length: Nat, column: Nat) -> Bool:
-  Bool.and(Nat.is_lt(score, Nat.add(maximum, 32n)),
+  Bool.and(Nat.is_lt(score, Nat.add(maximum, Word.width())),
     Nat.is_le(Nat.add(Nat.add(bottom, score), target_length),
-      Nat.add(Nat.add(Nat.add(maximum, length), column), 63n)))
+      Nat.add(Nat.add(Nat.add(maximum, length), column), Word.band_margin())))
 
 def keep_first(+score: Nat, bottom: Nat, +maximum: Nat,
                  length: Nat, target_length: Nat, column: Nat) -> Bool:
-  Bool.and(Nat.is_lt(score, Nat.add(maximum, 32n)),
+  Bool.and(Nat.is_lt(score, Nat.add(maximum, Word.width())),
     Nat.is_ge(Nat.add(Nat.add(bottom, maximum), target_length),
       Nat.add(Nat.add(score, length), column)))
 
@@ -50,7 +51,7 @@ def trim_last(fuel: Nat, +maximum: Nat, +length: Nat, +target_length: Nat,
       workspace
     case 1n+p Trim{W.Workspace{data, capacity, first, +last}, False{}}:
       trim_last(p, maximum, length, target_length, column,
-        trim_last.score(U32.to_nat(U32.shln(last, 5n)), maximum, length, target_length, column,
+        trim_last.score(U32.to_nat(U32.shln(last, Word.log_width())), maximum, length, target_length, column,
           W.score(W.Workspace{data, capacity, first, last}, U32.sub(last, 1))))
 
 def trim_first.choose(workspace: W.Workspace, keep: Bool) -> Trim:
@@ -74,7 +75,7 @@ def trim_first(fuel: Nat, +maximum: Nat, +length: Nat, +target_length: Nat,
       workspace
     case 1n+p Trim{W.Workspace{data, capacity, +first, last}, False{}}:
       trim_first(p, maximum, length, target_length, column,
-        trim_first.score(U32.to_nat(U32.shln(U32.inc(first), 5n)), maximum, length, target_length, column,
+        trim_first.score(U32.to_nat(U32.shln(U32.inc(first), Word.log_width())), maximum, length, target_length, column,
           W.score(W.Workspace{data, capacity, first, last}, first)))
 
 def reduce.first(workspace: W.Workspace, maximum: Nat, length: Nat,
@@ -100,7 +101,7 @@ def expand.row(workspace: W.Workspace, +index: U32, previous: U32, carry: V.Carr
                  result: P.Profile & U32) -> Step:
   (profile, row) = result
   expand.updated(maximum, length, target_length, column, work,
-    W.update(profile, W.put(workspace, index, V.Block{4294967295, 0, previous}), row, index, carry))
+    W.update(profile, W.put(workspace, index, V.Block{Word.all_bits(), 0, previous}), row, index, carry))
 
 def expand(state: W.Updated, symbol: U32, +maximum: Nat, +length: Nat,
               +target_length: Nat, +column: Nat, work: Nat, expand: Bool) -> Step:
@@ -108,7 +109,7 @@ def expand(state: W.Updated, symbol: U32, +maximum: Nat, +length: Nat,
     case W.Updated{profile, W.Workspace{data, +capacity, first, +last},
                     +score, V.Carry{+positive, +negative}} True{}:
       expand.row(W.Workspace{data, capacity, first, U32.inc(last)}, last,
-        U32.add(U32.sub(U32.add(score, negative), positive), 32), V.Carry{positive, negative},
+        U32.add(U32.sub(U32.add(score, negative), positive), Word.width_u32()), V.Carry{positive, negative},
         maximum, length, target_length, column, work, P.row(profile, symbol))
     case W.Updated{profile, workspace, _, _} False{}:
       reduce(profile, workspace, maximum, length, target_length, column, work)
@@ -116,14 +117,14 @@ def expand(state: W.Updated, symbol: U32, +maximum: Nat, +length: Nat,
 def step.updated(symbol: U32, +length: Nat, +target_length: Nat, +column: Nat,
                     maximum: Nat, padding: Nat, state: W.Updated) -> Step:
   W.Updated{profile, W.Workspace{data, +capacity, +first, +last}, +score, carry} = state
-  +bottom = U32.to_nat(U32.shln(last, 5n))
+  +bottom = U32.to_nat(U32.shln(last, Word.log_width()))
   +k = Nat.min(maximum, Nat.add(U32.to_nat(score),
     Nat.add(Nat.max(Nat.sub(target_length, column), Nat.sub(length, bottom)),
       Bool.pick(Nat, Nat.is_ge(bottom, length), padding, 0n))))
   expand(W.Updated{profile, W.Workspace{data, capacity, first, last}, score, carry}, symbol,
     k, length, target_length, column, U32.to_nat(U32.sub(last, first)),
     Bool.and(U32.is_lt(last, capacity), Nat.is_le(Nat.add(Nat.add(bottom, U32.to_nat(score)), target_length),
-      Nat.add(Nat.add(Nat.add(k, length), column), 62n))))
+      Nat.add(Nat.add(Nat.add(k, length), column), Word.expansion_margin()))))
 
 def finish.score(profile: P.Profile, maximum: Nat, blocks: Nat, columns: Nat,
                     result: W.Workspace & U32) -> Run:
@@ -161,8 +162,8 @@ def nw(target: String, +length: Nat, +target_length: Nat, +padding: Nat,
           W.column(profile, workspace, symbol, V.Carry{1, 0}))))
 
 def initial_count(+length: Nat, +target_length: Nat, +maximum: Nat) -> Nat:
-  Nat.min(V.ceil_div(length, 32n),
-    V.ceil_div(1n+Nat.min(maximum, Nat.div(Nat.sub(Nat.add(maximum, length), target_length), 2n)), 32n))
+  Nat.min(Word.blocks(length),
+    V.ceil_div(1n+Nat.min(maximum, Nat.div(Nat.sub(Nat.add(maximum, length), target_length), 2n)), Word.width()))
 
 def attempt(target: String, profile: P.Profile, workspace: W.Workspace,
                +length: Nat, +target_length: Nat, +maximum: Nat, padding: Nat) -> Run:
@@ -192,7 +193,7 @@ def finite(target: String, profile: P.Profile, workspace: W.Workspace, +length: 
       Run{profile, workspace, Stats{E.NotFound{}, 0n, 0n, 0n}}
     case False{}:
       attempt(target, profile, workspace, length, target_length, Nat.min(maximum, Nat.max(length, target_length)),
-        Nat.sub(Nat.mul(V.ceil_div(length, 32n), 32n), length))
+        Word.padding(length))
 
 def search(target: String, profile: P.Profile, workspace: W.Workspace, +length: Nat,
               +target_length: Nat, threshold: E.Threshold) -> Run:
@@ -202,8 +203,8 @@ def search(target: String, profile: P.Profile, workspace: W.Workspace, +length: 
         Nat.is_lt(maximum, Nat.max(Nat.sub(length, target_length), Nat.sub(target_length, length))))
     case E.Unlimited{}:
       adaptive(1n+Nat.max(length, target_length), target, length, target_length,
-        Nat.min(Nat.max(length, target_length), Nat.max(32n, Nat.max(Nat.sub(target_length, length), Nat.sub(length, target_length)))),
-        Nat.sub(Nat.mul(V.ceil_div(length, 32n), 32n), length),
+        Nat.min(Nat.max(length, target_length), Nat.max(Word.width(), Nat.max(Nat.sub(target_length, length), Nat.sub(length, target_length)))),
+        Word.padding(length),
         Run{profile, workspace, Stats{E.NotFound{}, 0n, 0n, 0n}})
 
 type BestRun is Type:
@@ -219,7 +220,7 @@ def is_hw(mode: E.Mode) -> Bool:
 def trim_semi.score(+mode: E.Mode, maximum: Nat, index: U32, result: W.Workspace & U32) -> Trim:
   (workspace, score) = result
   trim_last.choose(workspace, Bool.or(
-    Bool.and(is_hw(mode), U32.is_eq(index, 0)), Nat.is_lt(U32.to_nat(score), Nat.add(maximum, 32n))))
+    Bool.and(is_hw(mode), U32.is_eq(index, 0)), Nat.is_lt(U32.to_nat(score), Nat.add(maximum, Word.width()))))
 
 def trim_semi(fuel: Nat, +mode: E.Mode, +maximum: Nat, state: Trim) -> W.Workspace:
   match fuel state:
@@ -243,7 +244,7 @@ def semi_expand.choose(profile: P.Profile, workspace: W.Workspace, +last: U32,
     case W.Workspace{data, capacity, first, _} True{}:
       semi_reduce(mode, maximum, W.update.calculated(profile,
         W.Workspace{data, capacity, first, U32.inc(last)}, last,
-        V.calculate_block(V.Block{4294967295, 0, U32.add(previous, 32)}, eq, carry)))
+        V.calculate_block(V.Block{Word.all_bits(), 0, U32.add(previous, Word.width_u32())}, eq, carry)))
     case _ False{}:
       semi_reduce(mode, maximum, W.Updated{profile, workspace, 0, carry})
 
@@ -334,7 +335,7 @@ def initial_best(+length: Nat, before: Bool) -> A.Best:
 
 def best(target: String, profile: P.Profile, workspace: W.Workspace,
             +length: Nat, +maximum: Nat, mode: E.Mode) -> BestRun:
-  +count = V.ceil_div(length, 32n)
-  semi(target, mode, Nat.sub(Nat.mul(count, 32n), length), 0n, maximum,
-    best_ready(profile, W.initialize(workspace, Nat.min(count, V.ceil_div(1n+maximum, 32n))),
-      initial_best(length, Nat.is_ne(Nat.mod(length, 64n), 0n))))
+  +count = Word.blocks(length)
+  semi(target, mode, Nat.sub(Nat.mul(count, Word.width()), length), 0n, maximum,
+    best_ready(profile, W.initialize(workspace, Nat.min(count, V.ceil_div(1n+maximum, Word.width()))),
+      initial_best(length, E.consider_empty_prefix(length))))

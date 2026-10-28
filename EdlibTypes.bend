@@ -231,3 +231,8 @@ def distance_result(distance: Nat, end: Coordinate, accepted: Bool) -> AlignResu
       AlignResult{Ok{}, Found{distance}, [end], None{}, None{}, None{}}
     case False{}:
       not_found()
+
+# Pinned Edlib's semiglobal column-zero convention is observable even when
+# the internal bit-vector word width differs from Edlib's 64-bit build.
+def consider_empty_prefix(length: Nat) -> Bool:
+  Nat.is_ne(Nat.mod(length, 64n), 0n)

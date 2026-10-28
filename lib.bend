@@ -1,4 +1,5 @@
 import ./Prepared.bend as Q
+import ./src/Word.bend as Word
 import Base
 import ./EdlibTypes.bend as Types
 import ./src/Myers.bend as Myers
@@ -39,3 +40,9 @@ def align_prepared_batch(prepared: Q.Prepared, targets: List<&2, String>, option
 
 def clone_prepared(prepared: Q.Prepared) -> Q.Prepared & Q.Prepared:
   Q.clone(prepared)
+
+type Capabilities is Data:
+  Capabilities{word_bits: Nat, u64: Bool, native_library: Bool}
+
+def capabilities() -> Capabilities:
+  Capabilities{Word.width(), Word.supports_u64(), Word.supports_native_library()}

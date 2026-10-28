@@ -1,3 +1,4 @@
+import ./Word.bend as Word
 import Base
 import ../EdlibTypes.bend as E
 import ./Sequence.bend as S
@@ -38,8 +39,8 @@ def prepare.supported(+query: String, +target: String, +pairs: List<&2, E.Equali
     case False{}:
       ScalarArgs{query, target, pairs, S.length(target)}
     case True{}:
-      +count = V.ceil_div(length, 32n)
-      BitArgs{target, Nat.sub(Nat.mul(count, 32n), length),
+      +count = Word.blocks(length)
+      BitArgs{target, Nat.sub(Nat.mul(count, Word.width()), length),
         Frontier{P.build(query, length, pairs), W.initialize(W.new(count), count), [U32.from_nat(length)]}}
 
 def prepare(+query: String, +target: String, +pairs: List<&2, E.EqualityPair>) -> Args:

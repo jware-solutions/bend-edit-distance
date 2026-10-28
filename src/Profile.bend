@@ -1,3 +1,4 @@
+import ./Word.bend as Word
 import Base
 import ../EdlibTypes.bend as E
 import ./BitVector.bend as V
@@ -103,15 +104,15 @@ def fill.neighbors(state: Array<U32> & Array<U32>, stride: U32, +position: U32,
                      result: Array<List<&2, U32>> & List<&2, U32>) ->
                      (Array<U32> & Array<U32>) & Array<List<&2, U32>>:
   (adjacent, neighbors) = result
-  (set_neighbors(neighbors, state, stride, U32.shrn(position, 5n),
-    U32.shln(1, U32.to_nat(U32.and(position, 31)))), adjacent)
+  (set_neighbors(neighbors, state, stride, U32.shrn(position, Word.log_width()),
+    Word.literal_bit(position)), adjacent)
 
 def fill.next(+stride: U32, +position: U32, +code: U32,
                 state: Array<U32> & Array<U32>, adjacent: Array<List<&2, U32>>) ->
                 (Array<U32> & Array<U32>) & Array<List<&2, U32>>:
   (lookup, masks) = state
-  fill.neighbors(set_bit(lookup, masks, code, stride, U32.shrn(position, 5n),
-    U32.shln(1, U32.to_nat(U32.and(position, 31)))), stride, position,
+  fill.neighbors(set_bit(lookup, masks, code, stride, U32.shrn(position, Word.log_width()),
+    Word.literal_bit(position)), stride, position,
     Array.get(List<&2, U32>, adjacent, code))
 
 # Query positions contribute their literal and direct neighbors only; expanded
@@ -136,11 +137,11 @@ def build.equalities(query: String, +length: Nat,
   (state, adjacent) = result
   (lookup, rows0) = state
   +rows = {rows0 : U32}
-  +blocks = V.ceil_div(length, 32n)
+  +blocks = Word.blocks(length)
   +stride_depth = depth(blocks)
   +stride = U32.shln(1, stride_depth)
   masks = Array.new(U32, Nat.add(stride_depth, depth(U32.to_nat(rows))), 0)
-  build.filled(stride, rows, U32.from_nat(blocks), U32.from_nat(Nat.mod(length, 32n)),
+  build.filled(stride, rows, U32.from_nat(blocks), U32.from_nat(Word.used(length)),
     fill(query, (({lookup : Array<U32>}, {masks : Array<U32>}), adjacent), stride, 0))
 
 def build(+query: String, length: Nat, pairs: List<&2, E.EqualityPair>) -> Profile:
@@ -166,7 +167,7 @@ def mask_at(masks: Array<U32>, index: U32, valid: Bool) -> Array<U32> & U32:
 
 def padding_mask(+used: U32, last: Bool) -> U32:
   Bool.pick(U32, Bool.and(last, U32.is_ne(used, 0)),
-    U32.not(U32.sub(U32.shln(1, U32.to_nat(used)), 1)), 0)
+    Word.high_padding(used), 0)
 
 def mask.result(lookup: Array<U32>, stride: U32, rows: U32, +blocks: U32, +used: U32,
                    block: U32, result: Array<U32> & U32) -> Profile & U32:

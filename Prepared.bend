@@ -1,3 +1,4 @@
+import ./src/Word.bend as Word
 import Base
 import ./EdlibTypes.bend as E
 import ./src/Sequence.bend as S
@@ -28,7 +29,7 @@ def prepare.supported(+query: String, +pairs: List<&2, E.EqualityPair>, +length:
                         compact: Bool) -> Prepared:
   match compact:
     case True{}:
-      Prepared{query, pairs, length, Some{P.build(query, length, pairs)}, W.new(V.ceil_div(length, 32n))}
+      Prepared{query, pairs, length, Some{P.build(query, length, pairs)}, W.new(Word.blocks(length))}
     case False{}:
       Prepared{query, pairs, length, None{}, W.new(0n)}
 
@@ -132,7 +133,7 @@ def clone.profile(+query: String, +pairs: List<&2, E.EqualityPair>, +length: Nat
                      workspace: W.Workspace, result: P.Profile & P.Profile) -> Prepared & Prepared:
   (profile, other) = result
   (Prepared{query, pairs, length, Some{profile}, workspace},
-    Prepared{query, pairs, length, Some{other}, W.new(V.ceil_div(length, 32n))})
+    Prepared{query, pairs, length, Some{other}, W.new(Word.blocks(length))})
 
 # Explicit clones give concurrent shards separate masks and mutable storage.
 def clone(prepared: Prepared) -> Prepared & Prepared:
@@ -157,7 +158,7 @@ def retained_bytes(prepared: Prepared) -> Prepared & Nat:
     case Prepared{query, +pairs, +length, Some{profile}, workspace}:
       retained.profile(query, pairs, length, workspace,
         Nat.add(Nat.add(Nat.mul(length, 16n), Nat.mul(List.length(&2, E.EqualityPair, pairs), 32n)),
-          Nat.mul(32n, Nat.pow(2n, P.depth(V.ceil_div(length, 32n))))), P.retained_bytes(profile))
+          Nat.mul(32n, Nat.pow(2n, P.depth(Word.blocks(length))))), P.retained_bytes(profile))
 
 type BatchState is Type:
   BatchState{prepared: Prepared, results: List<&2, E.AlignResult>}

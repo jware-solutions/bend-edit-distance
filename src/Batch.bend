@@ -1,3 +1,4 @@
+import ./Word.bend as Word
 import ./Reconstruction.bend as R
 import ./Profile.bend as P
 import ./BitVector.bend as V
@@ -57,7 +58,7 @@ def estimate_axes(+mode: E.Mode, task: E.Task, pairs: List<&2, E.EqualityPair>,
   (+length, +columns) = sizes
   +l = F32.from_nat(length)
   +c = F32.from_nat(columns)
-  +blocks = F32.from_nat(V.ceil_div(length, 32n))
+  +blocks = F32.from_nat(Word.blocks(length))
   +p = (1.0 + F32.from_nat(List.length(&2, E.EqualityPair, pairs)) : F32)
   (257.0 + l + c + l * p + F32.min(256.0, l) * blocks + blocks * c +
     extra_work(mode, task, l, c, blocks, p, R.small_matrix(length, columns)) : F32)

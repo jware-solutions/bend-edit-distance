@@ -1,5 +1,21 @@
 # Persistent byte transport
 
+`lib.capabilities()` reports the current 32-bit kernel and unavailable U64/native
+library capabilities. Word-dependent operations are isolated in `src/Word.bend`;
+the pinned compiler currently supplies U32 and executable/C emission.
+
+The future native ABI must use versioned runtime, prepared-query and result
+handles. Initialization owns one runtime configuration; incompatible subsequent
+initialization fails. Shutdown waits for callers and requires all handles to be
+disposed. Input byte spans are borrowed only for the call; preparation copies
+its query. Results own library-allocated memory and require exactly one library
+dispose call. Prepared handles have one caller at a time; concurrent callers
+clone them into independent workspaces. Runtime entry/disposal must be thread
+safe, with no callbacks into a caller while holding an internal lock. Errors
+use explicit status codes and caller-owned diagnostic buffers; threshold
+rejection remains a successful result. Failed calls publish no partial handles.
+Bindings and direct-call benchmarks require a supported compiler library target.
+
 Compile `worker.bend` (`bend worker.bend -o build/bend-edit-distance`), then run
 `build/bend-edit-distance +RTS --threads 1 -RTS --RTS --worker`.
 The C++ oracle accepts `build/edlib-oracle --worker`. Both read binary requests

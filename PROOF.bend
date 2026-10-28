@@ -44,6 +44,18 @@ def Laws.gpu_execution_values(plan):
 def Laws.gpu_prepared_execution_values(plan, options, known_bytes):
   {==}
 
+def Laws.pinned_capabilities():
+  {==}
+
+def Laws.word_geometry():
+  {==}
+
+def Laws.word_padding():
+  {==}
+
+def Laws.endpoint_convention_independent():
+  {==}
+
 def Laws.gpu_batch_empty():
   {==}
 

@@ -1,3 +1,4 @@
+import ./Word.bend as Word
 import Base
 import ./Sequence.bend as S
 import ../EdlibTypes.bend as E
@@ -73,7 +74,7 @@ def build_peq(fuel: Nat, query: String, +pairs: List<&2, E.EqualityPair>) -> Lis
     case 0n:
       Nil{}
     case 1n+p:
-      build_peq.step(split_query(32n, query), pairs, rest => build_peq(p, rest, pairs))
+      build_peq.step(split_query(Word.width(), query), pairs, rest => build_peq(p, rest, pairs))
 
 def ceil_div(+x: Nat, +y: Nat) -> Nat:
   Nat.div(Nat.add(x, Nat.sub(y, 1n)), y)
@@ -83,7 +84,7 @@ def init_blocks(n: Nat, +bottom: U32) -> List<Block>:
     case 0n:
       Nil{}
     case 1n+p:
-      Block{4294967295, 0, bottom} <> init_blocks(p, U32.add(bottom, 32))
+      Block{Word.all_bits(), 0, bottom} <> init_blocks(p, U32.add(bottom, Word.width_u32()))
 
 # calculateBlock / Advance_Block from Myers. Addition intentionally wraps
 # at 32 bits. Xv uses the original Eq, before the negative carry is added.
@@ -95,8 +96,8 @@ def calculate_block(block: Block, +eq: U32, hin: Carry) -> Block & Carry:
   +xh = (U32.xor(U32.add(U32.and(eq_in, pv), pv), pv) .|. eq_in : U32)
   +ph = U32.or(mv, U32.not(U32.or(xh, pv)))
   +mh = U32.and(pv, xh)
-  +hout_positive = U32.shrn(ph, 31n)
-  +hout_negative = U32.shrn(mh, 31n)
+  +hout_positive = Word.top(ph)
+  +hout_negative = Word.top(mh)
   +ph_shifted = U32.or(U32.shl(ph), hin_positive)
   mh_shifted = U32.or(U32.shl(mh), hin_negative)
   next_pv = U32.or(mh_shifted, U32.not(U32.or(xv, ph_shifted)))
@@ -133,7 +134,7 @@ def get_block_cell_value(padding: Nat, +pv: U32, +mv: U32, score: U32) -> U32:
       score
     case 1n+p:
       get_block_cell_value(p, U32.shl(pv), U32.shl(mv),
-        U32.add(U32.sub(score, U32.shrn(pv, 31n)), U32.shrn(mv, 31n)))
+        U32.add(U32.sub(score, Word.top(pv)), Word.top(mv)))
 
 def last_block_score(blocks: List<Block>, +padding: Nat) -> Nat:
   match blocks:
@@ -145,18 +146,8 @@ def last_block_score(blocks: List<Block>, +padding: Nat) -> Nat:
       last_block_score(rest, padding)
 
 
-# SWAR population count keeps padded-cell decoding independent of padding size.
-# Arithmetic wraps at U32, including the final byte-sum multiplication.
-def count_ones(+bits: U32) -> U32:
-  +a = U32.sub(bits, U32.and(U32.shr(bits), 1431655765))
-  +b = U32.add(U32.and(a, 858993459), U32.and(U32.shrn(a, 2n), 858993459))
-  c = U32.and(U32.add(b, U32.shrn(b, 4n)), 252645135)
-  U32.shrn(U32.mul(c, 16843009), 24n)
+def count_ones(bits: U32) -> U32:
+  Word.count_ones(bits)
 
 def decode_word(padding: Nat, pv: U32, mv: U32, score: U32) -> U32:
-  match padding:
-    case 0n:
-      score
-    case 1n+p:
-      +shift = Nat.sub(31n, p)
-      U32.add(U32.sub(score, count_ones(U32.shrn(pv, shift))), count_ones(U32.shrn(mv, shift)))
+  Word.decode(padding, pv, mv, score)

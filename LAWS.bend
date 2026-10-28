@@ -1,6 +1,7 @@
 import ./src/Sequence.bend as S
 import ./src/Frontier.bend as F
 import ./src/PreparedPool.bend as PP
+import ./src/Word.bend as Word
 import ./Prepared.bend as Q
 import ./src/SearchKernel.bend as K
 import ./src/Workspace.bend as W
@@ -31,6 +32,18 @@ law gpu_prepared_execution_values:
   for known_bytes: Bool
   {G.execute_prepared(plan, options, known_bytes) ==
     PP.execute(plan, options, known_bytes) : PP.PoolDone}
+
+law pinned_capabilities:
+  {L.capabilities() == L.Capabilities{32n, False{}, False{}} : L.Capabilities}
+
+law word_geometry:
+  {Word.blocks(65n) == 3n : Nat}
+
+law word_padding:
+  {Word.padding(65n) == 31n : Nat}
+
+law endpoint_convention_independent:
+  {E.consider_empty_prefix(32n) == True{} : Bool}
 
 law gpu_batch_empty:
   {G.align_batch(Nil{}) == Nil{} : List<&2, E.AlignResult>}

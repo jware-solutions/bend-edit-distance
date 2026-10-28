@@ -1,3 +1,4 @@
+import ./Word.bend as Word
 import Base
 import ./BitVector.bend as V
 import ./Profile.bend as P
@@ -12,7 +13,7 @@ type Updated is Type:
   Updated{profile: P.Profile, workspace: Workspace, score: U32, carry: V.Carry}
 
 def new(+count: Nat) -> Workspace:
-  Workspace{Array.new(V.Block, P.depth(count), V.Block{4294967295, 0, 0}), U32.from_nat(count), 0, 0}
+  Workspace{Array.new(V.Block, P.depth(count), V.Block{Word.all_bits(), 0, 0}), U32.from_nat(count), 0, 0}
 
 def bounds(workspace: Workspace, first: U32, last: U32) -> Workspace:
   Workspace{data, capacity, _, _} = workspace
@@ -44,7 +45,7 @@ def reset(fuel: Nat, +index: U32, workspace: Workspace) -> Workspace:
       workspace
     case 1n+p:
       reset(p, U32.inc(index), put(workspace, index,
-        V.Block{4294967295, 0, U32.shln(U32.inc(index), 5n)}))
+        V.Block{Word.all_bits(), 0, U32.shln(U32.inc(index), Word.log_width())}))
 
 def initialize(workspace: Workspace, +count: Nat) -> Workspace:
   reset(count, 0, bounds(workspace, 0, U32.from_nat(count)))

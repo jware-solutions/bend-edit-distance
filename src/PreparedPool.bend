@@ -1,3 +1,4 @@
+import ./Word.bend as Word
 import Base
 import ../Prepared.bend as Q
 import ../EdlibTypes.bend as E
@@ -53,13 +54,13 @@ def target_work(+length: Nat, +columns: Nat, options: Q.Options) -> F32:
   match options:
     case Q.Options{E.NW{}, _, E.MaxDistance{maximum}, _}:
       Bool.pick(F32, Nat.is_gt(Nat.max(Nat.sub(length, columns), Nat.sub(columns, length)), maximum),
-        1.0, F32.mul(F32.from_nat(1n+V.ceil_div(length, 32n)), F32.from_nat(1n+columns)))
+        1.0, F32.mul(F32.from_nat(1n+Word.blocks(length)), F32.from_nat(1n+columns)))
     case Q.Options{E.HW{}, E.Distance{}, _, _}:
-      F32.mul(F32.from_nat(1n+V.ceil_div(length, 32n)), F32.from_nat(1n+columns))
+      F32.mul(F32.from_nat(1n+Word.blocks(length)), F32.from_nat(1n+columns))
     case Q.Options{E.HW{}, _, _, _}:
-      (F32.from_nat(1n+V.ceil_div(length, 32n)) * F32.from_nat(1n+columns) * F32.from_nat(1n+columns) : F32)
+      (F32.from_nat(1n+Word.blocks(length)) * F32.from_nat(1n+columns) * F32.from_nat(1n+columns) : F32)
     case _:
-      F32.mul(F32.from_nat(1n+V.ceil_div(length, 32n)), F32.from_nat(1n+columns))
+      F32.mul(F32.from_nat(1n+Word.blocks(length)), F32.from_nat(1n+columns))
 
 def target.sized(index: Nat, +sequence: String, +length: Nat, query_length: Nat, options: Q.Options) -> Target:
   Target{index, sequence, length, target_work(query_length, length, options)}

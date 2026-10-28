@@ -806,3 +806,12 @@ def Laws.workspace_initial_blocks():
 
 def Laws.workspace_retry_reset():
   {==}
+
+def Laws.nw_initial_band_longer():
+  {==}
+
+def Laws.nw_orientation_square():
+  {==}
+
+def Laws.nw_orientation_conservative():
+  {==}

@@ -86,3 +86,15 @@ def test_workspace_preserves_search_counters(myers_probe, length):
                 [myers_probe, *runtime_prefix(threads=1), "search", str(maximum), query, target])
             reference = execute([myers_probe, *runtime_prefix(threads=1), "search-reference", str(maximum), query, target])
             assert actual.stdout == reference.stdout
+
+
+@pytest.mark.parametrize("lengths", [(1, 65), (65, 1), (31, 33), (33, 31), (64, 129), (129, 64), (128, 1024), (512, 1024)])
+def test_both_profiled_orientations(myers_probe, bend_binary, cpp_binary, lengths):
+    rng = random.Random(121 + sum(lengths))
+    query, target = ["".join(rng.choices("ACGT", k=n)) for n in lengths]
+    optimum = cpp_edlib_align(query, target, binary=cpp_binary).edit_distance
+    for maximum in (-1, 0, optimum - 1, optimum, optimum + 1):
+        for q, t in [(query, target), (target, query)]:
+            result = execute([myers_probe, *runtime_prefix(threads=1), "search-profiled", str(maximum), q, t])
+            assert int(result.stdout.split(",")[0]) == (optimum if maximum < 0 or maximum >= optimum else -1)
+    assert bend_align(query, target, binary=bend_binary) == cpp_edlib_align(query, target, binary=cpp_binary)

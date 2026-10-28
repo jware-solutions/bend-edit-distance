@@ -160,9 +160,9 @@ def nw(target: String, +length: Nat, +target_length: Nat, +padding: Nat,
         ready(step.updated(symbol, length, target_length, 1n+column, maximum, padding,
           W.column(profile, workspace, symbol, V.Carry{1, 0}))))
 
-def initial_count(+length: Nat, +target_length: Nat, maximum: Nat) -> Nat:
+def initial_count(+length: Nat, +target_length: Nat, +maximum: Nat) -> Nat:
   Nat.min(V.ceil_div(length, 32n),
-    V.ceil_div(1n+Nat.div(Nat.sub(maximum, Nat.sub(target_length, length)), 2n), 32n))
+    V.ceil_div(1n+Nat.min(maximum, Nat.div(Nat.sub(Nat.add(maximum, length), target_length), 2n)), 32n))
 
 def attempt(target: String, profile: P.Profile, workspace: W.Workspace,
                +length: Nat, +target_length: Nat, +maximum: Nat, padding: Nat) -> Run:
@@ -182,18 +182,27 @@ def adaptive(fuel: Nat, +target: String, +length: Nat, +target_length: Nat,
     case 0n _:
       result
     case 1n+p Run{profile, workspace, stats}:
-      adaptive(p, target, length, target_length, Nat.min(target_length, Nat.mul(maximum, 2n)), padding,
+      adaptive(p, target, length, target_length, Nat.min(Nat.max(length, target_length), Nat.mul(maximum, 2n)), padding,
         accumulated(stats, attempt(target, profile, workspace, length, target_length, maximum, padding)))
+
+def finite(target: String, profile: P.Profile, workspace: W.Workspace, +length: Nat,
+              +target_length: Nat, +maximum: Nat, rejected: Bool) -> Run:
+  match rejected:
+    case True{}:
+      Run{profile, workspace, Stats{E.NotFound{}, 0n, 0n, 0n}}
+    case False{}:
+      attempt(target, profile, workspace, length, target_length, Nat.min(maximum, Nat.max(length, target_length)),
+        Nat.sub(Nat.mul(V.ceil_div(length, 32n), 32n), length))
 
 def search(target: String, profile: P.Profile, workspace: W.Workspace, +length: Nat,
               +target_length: Nat, threshold: E.Threshold) -> Run:
   match threshold:
-    case E.MaxDistance{maximum}:
-      attempt(target, profile, workspace, length, target_length, Nat.min(maximum, target_length),
-        Nat.sub(Nat.mul(V.ceil_div(length, 32n), 32n), length))
+    case E.MaxDistance{+maximum}:
+      finite(target, profile, workspace, length, target_length, maximum,
+        Nat.is_lt(maximum, Nat.max(Nat.sub(length, target_length), Nat.sub(target_length, length))))
     case E.Unlimited{}:
-      adaptive(1n+target_length, target, length, target_length,
-        Nat.min(target_length, Nat.max(32n, Nat.sub(target_length, length))),
+      adaptive(1n+Nat.max(length, target_length), target, length, target_length,
+        Nat.min(Nat.max(length, target_length), Nat.max(32n, Nat.max(Nat.sub(target_length, length), Nat.sub(length, target_length)))),
         Nat.sub(Nat.mul(V.ceil_div(length, 32n), 32n), length),
         Run{profile, workspace, Stats{E.NotFound{}, 0n, 0n, 0n}})
 

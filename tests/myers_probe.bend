@@ -237,6 +237,13 @@ def reference_search(+query: String, +target: String, threshold: Maybe<&2, E.Thr
       +tn = String.length(target)
       IO.print(search_show(reference_search.orient(query, target, qn, tn, k, Nat.is_le(qn, tn))))
 
+def profiled_search(+query: String, +target: String, threshold: Maybe<&2, E.Threshold>) -> IO(Unit):
+  match threshold:
+    case None{}:
+      IO.die(Unit, 2, "Invalid k")
+    case Some{k}:
+      IO.print(search_show(M.search_shorter(query, target, String.length(query), String.length(target), k, True{}, Nil{})))
+
 def run(args: List<String>) -> IO(Unit):
   match args:
     case _ <> "compact" <> +query <> Nil{}:
@@ -257,6 +264,8 @@ def run(args: List<String>) -> IO(Unit):
       trace_mode(query, target, Some{E.NW{}})
     case _ <> "trace-mode" <> mode <> query <> target <> Nil{}:
       trace_mode(query, target, AC.read_mode(mode))
+    case _ <> "search-profiled" <> k <> query <> target <> Nil{}:
+      profiled_search(query, target, AC.read_threshold(k))
     case _ <> "search-reference" <> k <> query <> target <> Nil{}:
       reference_search(query, target, AC.read_threshold(k))
     case _ <> "search" <> k <> query <> target <> Nil{}:

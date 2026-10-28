@@ -1,3 +1,4 @@
+import ./src/SearchKernel.bend as K
 import ./src/Workspace.bend as W
 import ./src/Profile.bend as P
 import ./src/BitVector.bend as V
@@ -821,3 +822,12 @@ law workspace_initial_blocks:
 law workspace_retry_reset:
   {W.block_value(W.get(W.initialize(W.put(W.new(1n), 0, V.Block{0, 1, 9}), 1n), 0)) ==
     V.Block{4294967295, 0, 32} : V.Block}
+
+law nw_initial_band_longer:
+  {K.initial_count(129n, 1n, 128n) == 5n : Nat}
+
+law nw_orientation_square:
+  {Myers.profile_query(512n, 512n) == True{} : Bool}
+
+law nw_orientation_conservative:
+  {Myers.profile_query(512n, 1024n) == True{} : Bool}

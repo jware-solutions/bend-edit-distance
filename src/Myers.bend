@@ -321,10 +321,20 @@ def search_shorter(query: String, target: String, +query_length: Nat,
   match query_is_shorter:
     case True{}:
       search_query(query, target, query_length, target_length, threshold, pairs,
-        Bool.not(E.within_threshold(threshold, Nat.sub(target_length, query_length))))
+        Bool.not(E.within_threshold(threshold, Nat.max(Nat.sub(target_length, query_length), Nat.sub(query_length, target_length)))))
     case False{}:
       search_query(target, query, target_length, query_length, threshold, pairs,
-        Bool.not(E.within_threshold(threshold, Nat.sub(query_length, target_length))))
+        Bool.not(E.within_threshold(threshold, Nat.max(Nat.sub(target_length, query_length), Nat.sub(query_length, target_length)))))
+
+# Full-call measurements include preparation and byte-domain checks. Those
+# costs erased the forced-orientation gains on similar inputs, so ordinary
+# NW retains shorter profiles. K.search also supports fixed query profiles.
+def profile_query(query_length: Nat, target_length: Nat) -> Bool:
+  Nat.is_le(query_length, target_length)
+
+def search_nw(query: String, target: String, +qn: Nat, +tn: Nat,
+                 threshold: E.Threshold, pairs: List<&2, E.EqualityPair>) -> Search:
+  search_shorter(query, target, qn, tn, threshold, profile_query(qn, tn), pairs)
 
 # Directional modes never swap query and target. The initial vertical scores
 # are i in both modes, while the top horizontal difference is +1 for SHW and
@@ -571,8 +581,8 @@ def found_value(distance: E.EditDistance) -> Nat:
 
 def align_shorter(query: String, target: String, query_length: Nat,
                   target_length: Nat, query_is_shorter: Bool) -> Nat:
-  found_value(search_distance(search_shorter(query, target, query_length,
-    target_length, E.Unlimited{}, query_is_shorter, Nil{})))
+  found_value(search_distance(search_nw(query, target, query_length,
+    target_length, E.Unlimited{}, Nil{})))
 
 def distance(query: String, target: String) -> Nat:
   match query target:
@@ -605,7 +615,7 @@ def edlib_align(query: String, target: String, config: E.AlignConfig) -> E.Align
     case +q +t E.AlignConfig{E.NW{}, task, threshold, +pairs, format}:
       +qn +tn = S.length(q) S.length(t)
       nw_result(q, t, task, pairs, format, E.end_coordinate(tn),
-        search_distance(search_shorter(q, t, qn, tn, threshold, Nat.is_le(qn, tn), pairs)))
+        search_distance(search_nw(q, t, qn, tn, threshold, pairs)))
     case +q +t E.AlignConfig{mode, task, threshold, pairs, format}:
       semiglobal_align(q, t, mode, task, threshold, pairs, format)
 

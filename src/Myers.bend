@@ -1,3 +1,6 @@
+import ./Profile.bend as P
+import ./Workspace.bend as W
+import ./SearchKernel.bend as K
 import Base
 import ./Sequence.bend as S
 import ../EdlibTypes.bend as E
@@ -288,14 +291,29 @@ def search_profiles(target: String, profiles: List<&2, V.Peq>, +length: Nat,
         Nat.min(target_length, Nat.max(32n, Nat.sub(target_length, length))),
         Nat.sub(Nat.mul(V.ceil_div(length, 32n), 32n), length), 0n, 0n, 0n)
 
+def compact_search_result(result: K.Run) -> Search:
+  K.Run{_, _, K.Stats{distance, blocks, columns, attempts}} = result
+  Search{distance, blocks, columns, attempts}
+
+def search_query.supported(+query: String, target: String, +length: Nat, target_length: Nat,
+                             threshold: E.Threshold, pairs: List<&2, E.EqualityPair>,
+                             compact: Bool) -> Search:
+  match compact:
+    case True{}:
+      compact_search_result(K.search(target, P.build(query, length, pairs), W.new(V.ceil_div(length, 32n)),
+        length, target_length, threshold))
+    case False{}:
+      search_profiles(target, V.build_peq(V.ceil_div(length, 32n), query, pairs), length, target_length, threshold)
+
 def search_query(+query: String, target: String, +length: Nat, target_length: Nat,
-                 threshold: E.Threshold, pairs: List<&2, E.EqualityPair>,
+                 threshold: E.Threshold, +pairs: List<&2, E.EqualityPair>,
                  rejected: Bool) -> Search:
   match rejected:
     case True{}:
       Search{E.NotFound{}, 0n, 0n, 0n}
     case False{}:
-      search_profiles(target, V.build_peq(V.ceil_div(length, 32n), query, pairs), length, target_length, threshold)
+      search_query.supported(query, target, length, target_length, threshold, pairs,
+        Bool.and(P.bytes(query), P.byte_pairs(pairs)))
 
 def search_shorter(query: String, target: String, +query_length: Nat,
                    +target_length: Nat, +threshold: E.Threshold,
@@ -518,13 +536,26 @@ def configured_finish(query: String, target: String, mode: E.Mode, task: E.Task,
   configured_result(query, target, mode, task, pairs, format, best,
     E.within_threshold(threshold, U32.to_nat(score)))
 
+def compact_best(result: K.BestRun) -> A.Best:
+  K.BestRun{_, _, best, _} = result
+  best
+
+def semiglobal_query(+query: String, target: String, +length: Nat, maximum: Nat,
+                        mode: E.Mode, pairs: List<&2, E.EqualityPair>, compact: Bool) -> A.Best:
+  match compact:
+    case True{}:
+      compact_best(K.best(target, P.build(query, length, pairs), W.new(V.ceil_div(length, 32n)),
+        length, maximum, mode))
+    case False{}:
+      semiglobal_best(target, V.build_peq(V.ceil_div(length, 32n), query, pairs), length, maximum, mode)
+
 def semiglobal_align(+query: String, +target: String, +mode: E.Mode, task: E.Task,
                        +threshold: E.Threshold, +pairs: List<&2, E.EqualityPair>,
                        format: E.CigarFormat) -> E.AlignResult:
   +length = S.length(query)
   configured_finish(query, target, mode, task, threshold, pairs, format,
-    semiglobal_best(target, V.build_peq(V.ceil_div(length, 32n), query, pairs),
-      length, semiglobal_maximum(threshold, length), mode))
+    semiglobal_query(query, target, length, semiglobal_maximum(threshold, length), mode, pairs,
+      Bool.and(P.bytes(query), P.byte_pairs(pairs))))
 
 def search_distance(search: Search) -> E.EditDistance:
   match search:

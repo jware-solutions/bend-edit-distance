@@ -74,3 +74,15 @@ def test_seeded_indels_and_every_padding(bend_binary, dp_binary, cpp_binary, thr
 @example(query=b"A" * 129, target=b"T" * 129)
 def test_banded_differential_with_shrinking(bend_binary, dp_binary, cpp_binary, query, target):
     assert_thresholds(query, target, bend_binary, dp_binary, cpp_binary)
+
+
+@pytest.mark.parametrize("length", [1, 31, 32, 33, 63, 64, 65, 129, 257, 513])
+def test_workspace_preserves_search_counters(myers_probe, length):
+    rng = random.Random(357 + length)
+    query = "".join(rng.choices("ACGT", k=length))
+    for target in (query, "T" * length, query[7:] + "A" * 17, query[::-1]):
+        for maximum in (-1, 0, length // 2, length):
+            actual = execute(
+                [myers_probe, *runtime_prefix(threads=1), "search", str(maximum), query, target])
+            reference = execute([myers_probe, *runtime_prefix(threads=1), "search-reference", str(maximum), query, target])
+            assert actual.stdout == reference.stdout

@@ -797,3 +797,12 @@ def Laws.compact_padding_nonfinal(used):
 
 def Laws.compact_padding_one():
   {==}
+
+def Laws.workspace_capacity(count):
+  {==}
+
+def Laws.workspace_initial_blocks():
+  {==}
+
+def Laws.workspace_retry_reset():
+  {==}

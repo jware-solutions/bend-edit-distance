@@ -1,3 +1,4 @@
+import ./src/Workspace.bend as W
 import ./src/Profile.bend as P
 import ./src/BitVector.bend as V
 import Base
@@ -809,3 +810,14 @@ law compact_padding_nonfinal:
 
 law compact_padding_one:
   {P.padding_mask(1, True{}) == V.build_peq_word("A", 'X', 1, Nil{}) : U32}
+
+law workspace_capacity:
+  for count: Nat
+  {W.capacity(W.new(count)) == U32.from_nat(count) : U32}
+
+law workspace_initial_blocks:
+  {W.block_value(W.get(W.initialize(W.new(2n), 2n), 1)) == V.Block{4294967295, 0, 64} : V.Block}
+
+law workspace_retry_reset:
+  {W.block_value(W.get(W.initialize(W.put(W.new(1n), 0, V.Block{0, 1, 9}), 1n), 0)) ==
+    V.Block{4294967295, 0, 32} : V.Block}

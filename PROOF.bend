@@ -59,6 +59,18 @@ def Laws.endpoint_convention_independent():
 def Laws.indexed_trace_geometry():
   {==}
 
+def Laws.known_path_zero():
+  {==}
+
+def Laws.known_path_one():
+  {==}
+
+def Laws.known_path_gap_tie():
+  {==}
+
+def Laws.known_path_invalid_score():
+  {==}
+
 def Laws.workspace_storage_rounding():
   {==}
 

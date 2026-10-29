@@ -31,6 +31,13 @@ def divided_align(query: String, target: String, config: E.AlignConfig) -> E.Ali
 def auto_align(query: String, target: String, config: E.AlignConfig) -> E.AlignResult:
   probe_align(~R.reconstruct, query, target, config)
 
+def known(+query: String, +target: String, pairs: List<&2, E.EqualityPair>) -> List<&2, E.Operation>:
+  +equalities = pairs
+  R.reconstruct_known(query, target, equalities, DP.distance_with_equalities(query, target, equalities))
+
+def known_align(query: String, target: String, config: E.AlignConfig) -> E.AlignResult:
+  probe_align(~known, query, target, config)
+
 def run(args: List<String>) -> IO(Unit):
   match args:
     case _ <> "dp" <> "--worker" <> Nil{}:
@@ -41,8 +48,10 @@ def run(args: List<String>) -> IO(Unit):
       BT.serve(~divided_align)
     case _ <> "auto" <> "--worker" <> Nil{}:
       BT.serve(~auto_align)
+    case _ <> "known" <> "--worker" <> Nil{}:
+      BT.serve(~known_align)
     case _:
-      IO.die(Unit, 2, "Expected dp|indexed|divide|auto --worker")
+      IO.die(Unit, 2, "Expected dp|indexed|divide|auto|known --worker")
 
 def main() -> IO(Unit):
   do IO<Unit>:

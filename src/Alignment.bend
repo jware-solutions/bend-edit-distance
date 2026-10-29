@@ -73,10 +73,10 @@ def path_validate(query: String, segment: String, pairs: List<&2, E.EqualityPair
     Bool.and(valid_location, R.valid_path(query, segment, operations, pairs, U32.to_nat(score))))
 
 def path_reconstruct(+query: String, +segment: String, +pairs: List<&2, E.EqualityPair>,
-                      score: U32, locations: List<&2, Location>, format: E.CigarFormat,
+                      +score: U32, locations: List<&2, Location>, format: E.CigarFormat,
                       valid_location: Bool) -> E.AlignResult:
   path_validate(query, segment, pairs, score, locations, format,
-    R.reconstruct(query, segment, pairs), valid_location)
+    R.reconstruct_known(query, segment, pairs, U32.to_nat(score)), valid_location)
 
 def result(query: String, target: String, task: E.Task,
            pairs: List<&2, E.EqualityPair>, format: E.CigarFormat,

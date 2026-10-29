@@ -34,7 +34,7 @@ def test_dp_traceback_exact_upstream_small_ties(reconstruction_probe, cpp_binary
         assert_valid_path(query, target, config, actual)
 
 
-@pytest.mark.parametrize("algorithm", ["dp", "indexed", "divide", "auto"])
+@pytest.mark.parametrize("algorithm", ["dp", "indexed", "divide", "auto", "known"])
 @pytest.mark.parametrize("threads", [1, 2, 4])
 @pytest.mark.parametrize("query,target", [
     (b"", b""), (b"", b"AC"), (b"AC", b""),
@@ -84,6 +84,38 @@ def test_indexed_traceback_preserves_all_dp_ties(reconstruction_probe, threads):
         actual = probe_align(reconstruction_probe, "indexed", query, target, config, threads)
         assert actual == probe_align(reconstruction_probe, "dp", query, target, config, threads)
         assert_valid_path(query, target, config, actual)
+
+
+@pytest.mark.parametrize("mode", list(Mode))
+@pytest.mark.parametrize("threads", [1, 4])
+@pytest.mark.parametrize("format", list(CigarFormat))
+def test_known_zero_and_one_edit_paths(bend_binary, cpp_binary, mode, threads, format):
+    import random
+    rng = random.Random(922)
+    pairs = (EqualityPair("A", "N"), EqualityPair("N", "C"),
+             EqualityPair(0, 255), EqualityPair(128, 127))
+    config = AlignConfig(mode, Task.PATH, equalities=pairs, cigar_format=format)
+    for length in [*range(1, 34), 63, 64, 65, 127, 128, 129, 4097, 8193]:
+        query = bytes(rng.choices(range(256), k=length))
+        for edited in (False, True):
+            segment = bytearray(query)
+            if edited:
+                segment[length // 2] ^= 0x55
+            target = (b"prefix" if mode == Mode.HW else b"") + bytes(segment)
+            if mode != Mode.NW:
+                target += b"suffix"
+            expected = cpp_edlib_align(query, target, config, binary=cpp_binary)
+            assert expected.require_distance() <= 1
+            actual = bend_align(query, target, config, binary=bend_binary, threads=threads)
+            assert actual == expected
+            assert_valid_path(query, target, config, actual)
+            accepted = replace(config, threshold=MaxDistance(expected.require_distance()))
+            assert bend_align(query, target, accepted, binary=bend_binary, threads=threads) == actual
+            if expected.require_distance():
+                missing = bend_align(query, target, replace(config, threshold=MaxDistance(0)),
+                                     binary=bend_binary, threads=threads)
+                assert missing.edit_distance == -1
+                assert missing.alignment is None
 
 
 @pytest.mark.parametrize("threads", [1, 2, 4])

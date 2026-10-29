@@ -246,6 +246,51 @@ def reconstruct(+query: String, +target: String, pairs: List<&2, E.EqualityPair>
   +qn +tn = S.length(query) S.length(target)
   reconstruct_order(query, target, qn, tn, pairs, small_matrix(qn, tn), Nat.is_ge(qn, tn))
 
+# A zero-cost path contains only matches. One edit between equal lengths
+# must be one diagonal mismatch: a pair of gaps would already cost two.
+# Alignment still validates the complete path against the selected interval.
+def diagonal_literal(query: String, target: String) -> List<&2, E.Operation>:
+  match query target:
+    case SCon{q, qt} SCon{t, tt}:
+      diagonal_operation(Char.is_eq(q, t)) <> diagonal_literal(qt, tt)
+    case _ _:
+      Nil{}
+
+def diagonal_equalities(query: String, target: String, +pairs: List<&2, E.EqualityPair>) -> List<&2, E.Operation>:
+  match query target:
+    case SCon{q, qt} SCon{t, tt}:
+      diagonal_operation(E.equal(pairs, q, t)) <> diagonal_equalities(qt, tt, pairs)
+    case _ _:
+      Nil{}
+
+def diagonal(query: String, target: String, pairs: List<&2, E.EqualityPair>) -> List<&2, E.Operation>:
+  match pairs:
+    case Nil{}:
+      diagonal_literal(query, target)
+    case _:
+      diagonal_equalities(query, target, pairs)
+
+def reconstruct_one(+query: String, +target: String, +pairs: List<&2, E.EqualityPair>, same_length: Bool) -> List<&2, E.Operation>:
+  match same_length:
+    case True{}:
+      diagonal(query, target, pairs)
+    case False{}:
+      reconstruct(query, target, pairs)
+
+def reconstruct_known.positive(+query: String, +target: String, +pairs: List<&2, E.EqualityPair>, one_edit: Bool) -> List<&2, E.Operation>:
+  match one_edit:
+    case True{}:
+      reconstruct_one(query, target, pairs, Nat.is_eq(S.length(query), S.length(target)))
+    case False{}:
+      reconstruct(query, target, pairs)
+
+def reconstruct_known(query: String, target: String, pairs: List<&2, E.EqualityPair>, distance: Nat) -> List<&2, E.Operation>:
+  match distance:
+    case 0n:
+      List.replicate(E.Operation, S.length(query), E.Match{})
+    case 1n+p:
+      reconstruct_known.positive(query, target, pairs, Nat.is_eq(p, 0n))
+
 # Edlib codes: Match=0 consumes both, Insert=1 consumes query only,
 # Delete=2 consumes target only, Mismatch=3 consumes both. Validation requires
 # exact consumption, the configured (symmetric, nontransitive) predicate on

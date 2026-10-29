@@ -68,6 +68,21 @@ law indexed_trace_small_equivalence:
 law indexed_trace_nonbyte:
   {R.trace_path(SCon{Chr{256}, ""}, SCon{Chr{256}, ""}, Nil{}) == [E.Match{}] : List<&2, E.Operation>}
 
+law known_path_zero:
+  {R.reconstruct_known("AC", "NN", [E.EqualityPair{'A', 'N'}, E.EqualityPair{'N', 'C'}], 0n) ==
+    [E.Match{}, E.Match{}] : List<&2, E.Operation>}
+
+law known_path_one:
+  {R.reconstruct_known("AN", "CN", [E.EqualityPair{'A', 'N'}, E.EqualityPair{'N', 'C'}], 1n) ==
+    [E.Mismatch{}, E.Match{}] : List<&2, E.Operation>}
+
+law known_path_gap_tie:
+  {R.reconstruct_known("AAA", "AA", Nil{}, 1n) == R.reconstruct("AAA", "AA", Nil{}) : List<&2, E.Operation>}
+
+law known_path_invalid_score:
+  {A.path_reconstruct("A", "C", Nil{}, 0, [A.Location{E.Position{0n}, 0n}], E.Extended{}, True{}) ==
+    E.AlignResult{E.Error{}, E.NotFound{}, Nil{}, None{}, None{}, None{}} : E.AlignResult}
+
 law gpu_batch_empty:
   {G.align_batch(Nil{}) == Nil{} : List<&2, E.AlignResult>}
 

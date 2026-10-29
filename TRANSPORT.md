@@ -38,6 +38,15 @@ cost still bound practical input sizes. A worker processes requests sequentially
 use separate workers for concurrent requests. Bend still uses its configured
 CPU threads for independent work within an alignment.
 
+Use `--worker --shards 1`, `--worker --shards 2` or `--worker --shards 4` to
+retain independent prepared profiles/workspaces for parallel CPU batches.
+For example, use `+RTS --threads 4 -RTS --RTS --worker --shards 4`.
+BED1/BED2 framing and worker-local handles are unchanged. Pool cloning targets
+32 MiB, with at least one owner, within the existing 64 MiB/32-entry cache limit.
+The pure CPU APIs are `lib.prepare_pool`, `align_prepared_pool` and
+`align_prepared_pool_batch`; the requested maximum rounds down to a power of two
+subject to the memory target, with a minimum of one owner.
+
 ## GPU batch entry point
 
 Compile `gpu_batch.bend` to `build/gpu-batch`, then invoke

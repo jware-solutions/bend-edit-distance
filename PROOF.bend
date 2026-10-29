@@ -135,6 +135,15 @@ def Laws.trace_suffix_preserves_tie(suffix):
 def Laws.trace_fill_preserves_tie():
   {==}
 
+def Laws.library_pool_batch_values(pool, targets, options):
+  {==}
+
+def Laws.pool_generic_byte_boundary(ready, options):
+  {==}
+
+def Laws.pool_single_result_order(pool, result, tail):
+  {==}
+
 def Laws.indexed_trace_cell_tie():
   {==}
 

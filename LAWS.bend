@@ -905,6 +905,25 @@ law library_align_matches_main:
   for config: E.AlignConfig
   {L.align(query, target, config) == Myers.edlib_align(query, target, config) : E.AlignResult}
 
+law library_pool_batch_values:
+  for pool: PP.Pool
+  for targets: List<&2, String>
+  for options: Q.Options
+  {L.align_prepared_pool_batch(pool, targets, options) == PP.align_batch(pool, targets, options) :
+    PP.Pool & List<&2, E.AlignResult>}
+
+law pool_generic_byte_boundary:
+  for ready: PP.PoolReady
+  for options: Q.Options
+  {PP.align_ready(ready, options) == PP.align_ready_known(ready, options, False{}) :
+    PP.Pool & List<&2, E.AlignResult>}
+
+law pool_single_result_order:
+  for pool: PP.Pool
+  for result: E.AlignResult
+  for tail: List<&2, E.AlignResult>
+  {PP.single_result((pool, result <> tail)) == (pool, result) : PP.Pool & E.AlignResult}
+
 # Configured DP cells and columns retain their dependencies. Independent
 # input scans, Myers profile branches and Hirschberg score passes run in
 # balanced parallel calls. DP matrices are bounded; larger PATHs use linear

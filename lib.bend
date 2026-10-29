@@ -1,4 +1,5 @@
 import ./Prepared.bend as Q
+import ./src/PreparedPool.bend as Pool
 import ./src/Word.bend as Word
 import Base
 import ./EdlibTypes.bend as Types
@@ -40,6 +41,17 @@ def align_prepared_batch(prepared: Q.Prepared, targets: List<&2, String>, option
 
 def clone_prepared(prepared: Q.Prepared) -> Q.Prepared & Q.Prepared:
   Q.clone(prepared)
+
+# Bounded pools retain independent profiles/workspaces across CPU batches.
+def prepare_pool(query: String, equalities: List<&2, Types.EqualityPair>, maximum: Nat) -> Pool.Pool:
+  Pool.prepare_with_max(maximum, query, equalities)
+
+def align_prepared_pool_batch(pool: Pool.Pool, targets: List<&2, String>, options: Q.Options) ->
+                               Pool.Pool & List<&2, Types.AlignResult>:
+  Pool.align_batch(pool, targets, options)
+
+def align_prepared_pool(pool: Pool.Pool, target: String, options: Q.Options) -> Pool.Pool & Types.AlignResult:
+  Pool.single_result(Pool.align_batch(pool, [target], options))
 
 type Capabilities is Data:
   Capabilities{word_bits: Nat, u64: Bool, native_library: Bool}

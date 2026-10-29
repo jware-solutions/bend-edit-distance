@@ -252,9 +252,19 @@ def finish(idle: List<Q.Prepared>, shards: Nat, length: Nat, budget: Nat, ordere
   (Pool{List.append(&1, Q.Prepared, owners, idle), shards, length, budget},
     ordered_results(values, ordered))
 
-def align_ready(ready: PoolReady, options: Q.Options) -> Pool & List<&2, E.AlignResult>:
+def align_ready_known(ready: PoolReady, options: Q.Options, known_bytes: Bool) -> Pool & List<&2, E.AlignResult>:
   PoolReady{plan, idle, shards, length, budget, ordered} = ready
-  finish(idle, shards, length, budget, ordered, execute(plan, options, False{}))
+  finish(idle, shards, length, budget, ordered, execute(plan, options, known_bytes))
+
+def align_ready(ready: PoolReady, options: Q.Options) -> Pool & List<&2, E.AlignResult>:
+  align_ready_known(ready, options, False{})
 
 def align_batch(pool: Pool, targets: List<&2, String>, +options: Q.Options) -> Pool & List<&2, E.AlignResult>:
   align_ready(ready(pool, targets, options), options)
+
+def single_result(value: Pool & List<&2, E.AlignResult>) -> Pool & E.AlignResult:
+  match value:
+    case (pool, result <> _):
+      (pool, result)
+    case (pool, Nil{}):
+      (pool, E.AlignResult{E.Error{}, E.NotFound{}, Nil{}, None{}, None{}, None{}})

@@ -102,6 +102,9 @@ from `Prepared.bend`, or `default_prepared_options()`. Keep the returned owner
 for the next call. Preparation fixes the profiled query, equalities and word
 width; concurrent shards require independent owners. The Python worker offers
 [prepared handles and batches](TRANSPORT.md#prepared-queries-and-batches-bed2).
+For parallel CPU batches, `prepare_pool(query, equalities, maximum)` retains
+independent owners; `align_prepared_pool_batch` returns the pool and ordered
+results. `align_prepared_pool` handles a single target. Keep the returned pool.
 
 For GPU batches, import `./GpuBatch.bend` and call `align_batch(jobs)`; see
 [examples/gpu_batch_usage.bend](examples/gpu_batch_usage.bend). The separate

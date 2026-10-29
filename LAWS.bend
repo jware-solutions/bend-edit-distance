@@ -934,6 +934,21 @@ law pool_wave_reindex_preserves_metadata:
   {PP.reindex(PP.Target{old, sequence, length, work} <> tail, index) ==
     PP.Target{index, sequence, length, work} <> PP.reindex(tail, 1n+index) : List<&2, PP.Target>}
 
+law pool_distance_endpoint:
+  for columns: Nat
+  for distance: Nat
+  {PP.distance_result(columns, E.Found{distance}) ==
+    E.distance_result(distance, E.end_coordinate(columns), True{}) : E.AlignResult}
+
+law pool_distance_rejection:
+  for columns: Nat
+  {PP.distance_result(columns, E.NotFound{}) == E.not_found() : E.AlignResult}
+
+law pool_generic_execution:
+  for plan: PP.Plan
+  for options: Q.Options
+  {PP.execute_known(False{}, plan, options) == PP.execute(plan, options, False{}) : PP.PoolDone}
+
 # Configured DP cells and columns retain their dependencies. Independent
 # input scans, Myers profile branches and Hirschberg score passes run in
 # balanced parallel calls. DP matrices are bounded; larger PATHs use linear

@@ -147,6 +147,15 @@ def Laws.pool_single_result_order(pool, result, tail):
 def Laws.pool_wave_reindex_preserves_metadata(old, sequence, length, work, tail, index):
   {==}
 
+def Laws.pool_distance_endpoint(columns, distance):
+  {==}
+
+def Laws.pool_distance_rejection(columns):
+  {==}
+
+def Laws.pool_generic_execution(plan, options):
+  {==}
+
 def Laws.indexed_trace_cell_tie():
   {==}
 

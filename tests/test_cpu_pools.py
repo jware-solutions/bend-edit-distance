@@ -56,6 +56,26 @@ def test_pool_mixed_lengths_rejections_and_index_gathering(bend_binary, threads)
             assert prepared.align_batch(targets[::-1], config) == expected[::-1]
 
 
+@pytest.mark.parametrize("threads", [1, 2, 4])
+def test_distance_leaf_padding_adaptive_retries_and_empty_exceptions(bend_binary, threads):
+    pairs = (EqualityPair(0, 255), EqualityPair(255, 127))
+    with worker(bend_binary, threads, 4) as pooled:
+        for padding in range(32):
+            query = bytes(range(96 - padding))
+            edited = query[3:] + b"\xff\0N"
+            targets = [edited, b"", query, bytes(reversed(query)), edited[:32], query * 2, edited]
+            optimum = pooled.align(query, edited, AlignConfig(equalities=pairs)).edit_distance
+            with pooled.prepare(query, pairs) as prepared:
+                for maximum in [max(0, optimum - 1), optimum, optimum + 1, None]:
+                    config = AlignConfig(equalities=pairs) if maximum is None else AlignConfig(
+                        threshold=MaxDistance(maximum), equalities=pairs)
+                    expected = [pooled.align(query, target, config) for target in targets]
+                    assert prepared.align_batch(targets, config) == expected
+                    assert prepared.align_batch(targets[:3], config) == expected[:3]
+                assert prepared.align(query).edit_distance == 0
+                assert prepared.align(b"", AlignConfig(threshold=MaxDistance(0))).edit_distance == len(query)
+
+
 def test_pool_cache_limit_release_and_close(bend_binary):
     with worker(bend_binary, 4, 4) as pooled:
         entries = []

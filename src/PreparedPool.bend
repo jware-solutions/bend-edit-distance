@@ -4,6 +4,9 @@ import ../Prepared.bend as Q
 import ../EdlibTypes.bend as E
 import ./BitVector.bend as V
 import ./Batch.bend as B
+import ./Profile.bend as Profile
+import ./Workspace.bend as W
+import ./SearchKernel.bend as K
 
 # Independently owned masks/workspaces are cloned once, before device execution.
 # Cached owners move into ready execution plans without reading their buffers.
@@ -246,6 +249,62 @@ def execute(plan: Plan, +options: Q.Options, +known_bytes: Bool) -> PoolDone:
       a b = execute(left, options, known_bytes) execute(right, options, known_bytes)
       joined(a, b)
 
+# Keep distance leaves statically fork-free. Expanding a generic alignment
+# leaf during CPU frontier growth can execute its whole search on that row.
+type DistanceState is Type:
+  DistanceState{query: String, pairs: List<&2, E.EqualityPair>, length: Nat,
+    profile: Profile.Profile, workspace: W.Workspace, results: List<&2, B.IndexedResult>}
+
+def distance_result(columns: Nat, distance: E.EditDistance) -> E.AlignResult:
+  match distance:
+    case E.NotFound{}:
+      E.not_found()
+    case E.Found{score}:
+      E.distance_result(score, E.end_coordinate(columns), True{})
+
+def distance_updated(index: Nat, columns: Nat, query: String, pairs: List<&2, E.EqualityPair>, length: Nat,
+                       results: List<&2, B.IndexedResult>, run: K.Run) -> DistanceState:
+  K.Run{profile, workspace, K.Stats{distance, _, _, _}} = run
+  DistanceState{query, pairs, length, profile, workspace,
+    B.IndexedResult{index, distance_result(columns, distance)} <> results}
+
+def distance_leaf(values: List<&2, Target>, +threshold: E.Threshold, state: DistanceState) -> PoolDone:
+  match values state:
+    case Nil{} DistanceState{query, pairs, length, profile, workspace, results}:
+      PoolDone{[Q.Prepared{query, pairs, length, Some{profile}, workspace}],
+        List.reverse(&2, B.IndexedResult, results)}
+    case Target{index, SNil{}, _, _} <> tail DistanceState{query, pairs, +length, profile, workspace, results}:
+      # Empty inputs retain their public threshold exception.
+      distance_leaf(tail, threshold, DistanceState{query, pairs, length, profile, workspace,
+        B.IndexedResult{index, E.distance_result(length, E.BeforeStart{}, True{})} <> results})
+    case Target{index, target, +columns, _} <> tail DistanceState{query, pairs, +length, profile, workspace, results}:
+      distance_leaf(tail, threshold, distance_updated(index, columns, query, pairs, length, results,
+        K.search(target, profile, workspace, length, columns, threshold)))
+
+def execute_distance(plan: Plan, +threshold: E.Threshold) -> PoolDone:
+  match plan:
+    case Leaf{Q.Prepared{query, pairs, length, Some{profile}, workspace}, values}:
+      distance_leaf(values, threshold, DistanceState{query, pairs, length, profile, workspace, Nil{}})
+    case Leaf{owner, values}:
+      leaf(values, Q.Options{E.NW{}, E.Distance{}, threshold, E.Extended{}}, True{}, LeafState{owner, Nil{}})
+    case Fork{Leaf{Q.Prepared{aq, ap, an, Some{am}, aw}, av}, Leaf{Q.Prepared{bq, bp, bn, Some{bm}, bw}, bv}}:
+      # Direct leaf tasks let the pinned scheduler distribute both children
+      # before entering their sequential column/carry loops.
+      ast = {DistanceState{aq, ap, an, am, aw, Nil{}} : DistanceState}
+      bst = {DistanceState{bq, bp, bn, bm, bw, Nil{}} : DistanceState}
+      a b = distance_leaf(av, threshold, ast) distance_leaf(bv, threshold, bst)
+      joined(a, b)
+    case Fork{left, right}:
+      a b = execute_distance(left, threshold) execute_distance(right, threshold)
+      joined(a, b)
+
+def execute_known(+known_bytes: Bool, plan: Plan, +options: Q.Options) -> PoolDone:
+  match known_bytes options:
+    case True{} Q.Options{E.NW{}, E.Distance{}, threshold, _}:
+      execute_distance(plan, threshold)
+    case _ _:
+      execute(plan, options, known_bytes)
+
 def ordered_results(values: List<&2, B.IndexedResult>, ordered: Bool) -> List<&2, E.AlignResult>:
   match ordered:
     case True{}:
@@ -261,7 +320,7 @@ def finish(idle: List<Q.Prepared>, shards: Nat, length: Nat, budget: Nat, ordere
 
 def align_ready_known(ready: PoolReady, options: Q.Options, known_bytes: Bool) -> Pool & List<&2, E.AlignResult>:
   PoolReady{plan, idle, shards, length, budget, ordered} = ready
-  finish(idle, shards, length, budget, ordered, execute(plan, options, known_bytes))
+  finish(idle, shards, length, budget, ordered, execute_known(known_bytes, plan, options))
 
 def align_ready(ready: PoolReady, options: Q.Options) -> Pool & List<&2, E.AlignResult>:
   align_ready_known(ready, options, False{})

@@ -2,17 +2,17 @@ import Base
 import ../EdlibTypes.bend as E
 import ./ByteProtocol.bend as P
 
-# The native bridge returns lists of byte values, never decoded UTF-8 text.
+# The native bridge constructs one Char per raw byte, without UTF-8 decoding.
 type Request is Type:
   End{}
   Invalid{}
   Bytes{mode: U32, task: U32, threshold: U32, format: U32,
-    query: List<U32>, target: List<U32>, equalities: List<U32>}
-  PrepareRequest{query: List<U32>, equalities: List<U32>}
-  PreparedRequest{handle: U32, mode: U32, task: U32, threshold: U32, format: U32, target: List<U32>}
+    query: String, target: String, equalities: List<U32>}
+  PrepareRequest{query: String, equalities: List<U32>}
+  PreparedRequest{handle: U32, mode: U32, task: U32, threshold: U32, format: U32, target: String}
   ReleaseRequest{handle: U32}
   BatchRequest{count: U32}
-  PreparedBatchRequest{handle: U32, mode: U32, task: U32, threshold: U32, format: U32, targets: List<List<U32>>}
+  PreparedBatchRequest{handle: U32, mode: U32, task: U32, threshold: U32, format: U32, targets: List<&2, String>}
   InvalidControl{operation: U32}
 
 def read_request() -> IO(Request):
@@ -31,9 +31,8 @@ def respond(~align: String -> String -> E.AlignConfig -> E.AlignResult,
         write_response(P.encode(E.AlignResult{E.Error{}, E.NotFound{}, Nil{}, None{}, None{}, None{}}))
         return True{}
     case Bytes{m, t, k, f, qb, tb, eq}:
-      query target = P.byte_string(qb) P.byte_string(tb)
       do IO<Bool>:
-        write_response(P.encode(align(query, target,
+        write_response(P.encode(align(qb, tb,
           E.AlignConfig{P.mode(m), P.task(t), P.threshold(k), P.pairs(eq), P.format(f)})))
         return True{}
     case _:
@@ -68,7 +67,7 @@ def serve(~align: String -> String -> E.AlignConfig -> E.AlignResult) -> IO(Unit
 def job(request: Request) -> IO(E.AlignJob):
   match request:
     case Bytes{m, t, k, f, qb, tb, eq}:
-      IO.pure(E.AlignJob, E.AlignJob{P.byte_string(qb), P.byte_string(tb),
+      IO.pure(E.AlignJob, E.AlignJob{qb, tb,
         E.AlignConfig{P.mode(m), P.task(t), P.threshold(k), P.pairs(eq), P.format(f)}})
     case _:
       IO.die(E.AlignJob, 2, "Expected a complete alignment request")

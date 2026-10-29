@@ -54,6 +54,16 @@ def test_exceeds_argument_length_limit(command):
         assert worker.align(b"A\0B", b"A\0B").require_distance() == 0
 
 
+@pytest.mark.parametrize("query", [b"\0\xc0\xaf\x80\xff", b"\xc2\xa0\xe2\x82\xac\xf0\x9f\x98\x80",
+                                  bytes(range(256)) * 21])
+def test_raw_bridge_preserves_utf8_like_byte_lengths(bend_binary, query):
+    with AlignmentWorker([bend_binary, *runtime_prefix(threads=1), "--worker"], cwd=ROOT) as worker:
+        assert worker.align(query, b"").require_distance() == len(query)
+        with worker.prepare(query) as prepared:
+            expected = [worker.align(query, target) for target in (b"", query, query[1:], b"\0\xff")]
+            assert prepared.align_batch([b"", query, query[1:], b"\0\xff"]) == expected
+
+
 def test_worker_bypasses_text_sequence_and_equality_caps(command):
     with AlignmentWorker(command, cwd=ROOT) as worker:
         query = b"\0\x80\xff" * 1400

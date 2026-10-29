@@ -128,6 +128,15 @@ static void be_write_frame(const unsigned char *data, uint64_t size) {
 
 
 #ifdef CID(read_request)
+// A Char occupies one raw U32 field in the pinned runtime. io_str decodes
+// UTF-8 and cannot represent arbitrary wire bytes, including malformed UTF-8.
+static Term be_byte_string(Env e, const unsigned char *bytes, uint32_t length) {
+    Term string = term_pak(CID(SNil), 0);
+    for (uint32_t i = length; i; --i)
+        string = io_node(e, CID(SCon), bytes[i - 1], string);
+    return string;
+}
+
 Term read_request_run(Env e, Term *f, IoWork *w) {
     BeRequest r;
     int state = be_read_request(&r);
@@ -142,7 +151,7 @@ Term read_request_run(Env e, Term *f, IoWork *w) {
     if (r.version == 2) {
         Term result;
         if (r.operation == 1) {
-            result = io_node(e, CID(PrepareRequest), io_list(e, (const char *)r.query, r.query_length),
+            result = io_node(e, CID(PrepareRequest), be_byte_string(e, r.query, r.query_length),
                              io_list(e, (const char *)r.pairs, 2ull * r.pair_count));
         } else if (r.operation == 3 || r.operation == 4) {
             // The pinned compiler packs single U32 constructor fields inline.
@@ -150,7 +159,7 @@ Term read_request_run(Env e, Term *f, IoWork *w) {
         } else {
             Term targets;
             if (r.operation == 2) {
-                targets = io_list(e, (const char *)r.target, r.target_length);
+                targets = be_byte_string(e, r.target, r.target_length);
             } else {
                 uint32_t *offsets = malloc(((size_t)r.target_length + 1) * sizeof(uint32_t));
                 if (!offsets) be_die("batch offset allocation failed");
@@ -162,7 +171,7 @@ Term read_request_run(Env e, Term *f, IoWork *w) {
                 targets = term_pak(CID(Nil), 0);
                 for (uint32_t i = r.target_length; i; --i) {
                     size_t off = offsets[i - 1];
-                    Term bytes = io_list(e, (const char *)r.data + off + 4, be_u32(r.data + off));
+                    Term bytes = be_byte_string(e, r.data + off + 4, be_u32(r.data + off));
                     targets = io_node(e, CID(Con), bytes, targets);
                 }
                 free(offsets);
@@ -176,8 +185,8 @@ Term read_request_run(Env e, Term *f, IoWork *w) {
         free(r.data);
         return result;
     }
-    Term query = io_list(e, (const char *)r.query, r.query_length);
-    Term target = io_list(e, (const char *)r.target, r.target_length);
+    Term query = be_byte_string(e, r.query, r.query_length);
+    Term target = be_byte_string(e, r.target, r.target_length);
     Term pairs = io_list(e, (const char *)r.pairs, 2ull * r.pair_count);
     // Bend flattens constructor fields into consecutive heap words. This
     // layout is specific to the pinned compiler; no nested tuple boxes.

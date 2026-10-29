@@ -68,13 +68,6 @@ def align(~State: Type, ~run: State -> String -> Q.Options -> (State & E.AlignRe
         query : State <- take(State, handle)
         aligned(~State, handle, run(query, target, options))
 
-def targets(values: List<List<U32>>) -> List<&2, String>:
-  match values:
-    case Nil{}:
-      Nil{}
-    case bytes <> tail:
-      P.byte_string(bytes) <> targets(tail)
-
 def batch_aligned(~State: Type, +handle: U32, result: State & List<&2, E.AlignResult>) -> IO(Unit):
   (query, +values) = result
   do IO<Unit>:
@@ -112,11 +105,11 @@ def respond(~State: Type,
             request: T.Request) -> IO(Unit):
   match request:
     case T.PrepareRequest{query, pairs}:
-      prepared(~State, size(make(P.byte_string(query), P.pairs(pairs))))
+      prepared(~State, size(make(query, P.pairs(pairs))))
     case T.PreparedRequest{+handle, m, t, k, f, target}:
       do IO<Unit>:
         exists : Bool <- has(handle)
-        align(~State, ~single, handle, P.byte_string(target), Q.Options{P.mode(m), P.task(t), P.threshold(k), P.format(f)}, exists)
+        align(~State, ~single, handle, target, Q.Options{P.mode(m), P.task(t), P.threshold(k), P.format(f)}, exists)
     case T.ReleaseRequest{+handle}:
       do IO<Unit>:
         removed : Bool <- release(handle)
@@ -130,7 +123,7 @@ def respond(~State: Type,
     case T.PreparedBatchRequest{+handle, m, t, k, f, values}:
       do IO<Unit>:
         exists : Bool <- has(handle)
-        batch(~State, ~many, handle, targets(values), Q.Options{P.mode(m), P.task(t), P.threshold(k), P.format(f)}, exists)
+        batch(~State, ~many, handle, values, Q.Options{P.mode(m), P.task(t), P.threshold(k), P.format(f)}, exists)
     case T.InvalidControl{operation}:
       invalid(operation)
     case _:

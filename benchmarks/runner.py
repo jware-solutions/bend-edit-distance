@@ -16,11 +16,13 @@ import statistics
 import subprocess
 import tempfile
 import time
+import sys
 
 from bend_runtime import runtime_prefix, reproducible_env
 
 ROOT = Path(__file__).resolve().parents[1]
-BUILD = ROOT / "build/benchmarks"
+_BUILD = tempfile.TemporaryDirectory(prefix="bend-cpu-bench-")
+BUILD = Path(_BUILD.name)
 PHASES = {0: "transport", 1: "prepare", 2: "profile", 3: "work", 4: "release"}
 
 
@@ -257,10 +259,10 @@ def write_report(output, document):
     (output / "REPORT.md").write_text("\n".join(lines), encoding="utf-8")
 
 
-def main():
+def legacy_main():
     parser = argparse.ArgumentParser(description="Rebuild and benchmark native Bend versus pinned C++ Edlib")
     parser.add_argument("--corpus", default="benchmarks/corpus.json")
-    parser.add_argument("--output", default="build/benchmarks/results")
+    parser.add_argument("--output", default=tempfile.mkdtemp(prefix="bend-cpu-results-"))
     parser.add_argument("--repeats", type=int, default=5)
     parser.add_argument("--warmups", type=int, default=1)
     parser.add_argument("--batch-size", type=int, default=16, help="Power of two, 2..512")
@@ -338,3 +340,12 @@ def main():
     write_report(output, document)
     print(f"Wrote {output / 'REPORT.md'} and raw results.json / summary.csv", flush=True)
     return 0
+
+
+def main(argv=None):
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if "--legacy" in argv:
+        sys.argv = [sys.argv[0], *(arg for arg in argv if arg != "--legacy")]
+        return legacy_main()
+    from benchmarks.gates import main as gate_main
+    return gate_main(argv)

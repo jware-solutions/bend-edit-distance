@@ -14,6 +14,8 @@ import shlex
 import statistics
 import subprocess
 import time
+import tempfile
+import sys
 
 from bend_runtime import runtime_prefix, reproducible_env
 from alignment import AlignConfig
@@ -21,7 +23,8 @@ from benchmarks.runner import command, load_corpus, summarize
 from transport import LENGTH, decode_response, encode_request
 
 ROOT = Path(__file__).resolve().parents[1]
-BUILD = ROOT / "build/gpu"
+_BUILD = tempfile.TemporaryDirectory(prefix="bend-gpu-bench-")
+BUILD = Path(_BUILD.name)
 PREFIX = "BEND_GPU_METRICS "
 
 # Instrument the reviewed 2.0.39 CUDA scheduler, failing closed on changes.
@@ -184,7 +187,7 @@ def measure_edlib(binary, jobs, *, timeout=180):
     payload = b"".join(encode_request(*job) for job in jobs)
     started = time.monotonic_ns()
     result = subprocess.run([str(binary), "--worker"], cwd=ROOT, input=payload,
-                            capture_output=True, timeout=timeout)
+                            capture_output=True, timeout=timeout, env=reproducible_env())
     ended = time.monotonic_ns()
     if result.returncode:
         raise RuntimeError(f"Edlib reference exited {result.returncode}: {result.stderr.decode(errors='replace')}")
@@ -283,9 +286,9 @@ def report(document):
     return "\n".join(lines) + "\n"
 
 
-def main(argv=None):
+def legacy_main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--output", type=Path, default=BUILD / "results")
+    parser.add_argument("--output", type=Path, default=Path(tempfile.mkdtemp(prefix="bend-gpu-results-")))
     parser.add_argument("--corpus", type=Path, default=ROOT / "benchmarks/corpus.json")
     parser.add_argument("--case", action="append", dest="cases")
     parser.add_argument("--batch-sizes", type=int, nargs="+", default=[1, 2, 4, 8, 16, 32, 64, 128, 256, 512])
@@ -405,3 +408,11 @@ def main(argv=None):
         text = report(document) if document["status"] == "device_validated" else "# GPU validation failed\n\n" + document.get("reason", "Validation incomplete") + "\n\nNo GPU equivalence, transfer, VRAM or crossover claim is made.\n"
         (args.output / "REPORT.md").write_text(text, encoding="utf-8")
     return 0
+
+
+def main(argv=None):
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if "--legacy" in argv:
+        return legacy_main([arg for arg in argv if arg != "--legacy"])
+    from benchmarks.gates import main as gate_main
+    return gate_main(argv, device=True)

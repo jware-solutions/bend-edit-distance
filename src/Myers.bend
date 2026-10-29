@@ -515,6 +515,33 @@ def hw_locations(fuel: Nat, locations: List<&2, A.Location>,
           reverse_target, target_length, profiles, query_length, maximum)
       List.append(&2, A.Location, left, right)
 
+# Zero-cost intervals and single-symbol queries have a fixed consumed length.
+def hw_fixed.from(locations: List<&2, A.Location>, +length: Nat,
+                    values: List<&2, A.Location>) -> List<&2, A.Location>:
+  match locations:
+    case Nil{}:
+      List.reverse(&2, A.Location, values)
+    case A.Location{E.BeforeStart{}, _} <> tail:
+      hw_fixed.from(tail, length, A.Location{E.BeforeStart{}, 0n} <> values)
+    case A.Location{E.Position{+end}, _} <> tail:
+      hw_fixed.from(tail, length, A.Location{E.Position{end}, Nat.sub(1n+end, length)} <> values)
+
+def hw_fixed(locations: List<&2, A.Location>, length: Nat) -> List<&2, A.Location>:
+  hw_fixed.from(locations, length, Nil{})
+
+def configured_hw(+query: String, +target: String, task: E.Task,
+                     +pairs: List<&2, E.EqualityPair>, format: E.CigarFormat, +score: U32,
+                     +locations: List<&2, A.Location>, +length: Nat, fixed: Bool) -> E.AlignResult:
+  match fixed:
+    case True{}:
+      A.result(query, target, task, pairs, format, A.Best{score, hw_fixed(locations, length)}, True{})
+    case False{}:
+      +columns = String.length(target)
+      rq rt = String.reverse(query) String.reverse(target)
+      resolved = hw_locations(List.length(&2, A.Location, locations), locations,
+        rt, columns, V.build_peq(Word.blocks(length), rq, pairs), length, U32.to_nat(score))
+      A.result(query, target, task, pairs, format, A.Best{score, resolved}, True{})
+
 def configured_found(task: E.Task, mode: E.Mode, +query: String, +target: String,
                         +pairs: List<&2, E.EqualityPair>, format: E.CigarFormat,
                         best: A.Best) -> E.AlignResult:
@@ -522,11 +549,9 @@ def configured_found(task: E.Task, mode: E.Mode, +query: String, +target: String
     case E.Distance{} _ _:
       A.result(query, target, task, pairs, format, best, True{})
     case _ E.HW{} A.Best{+score, +locations}:
-      +qn +tn = S.length(query) S.length(target)
-      rq rt = String.reverse(query) String.reverse(target)
-      resolved = hw_locations(List.length(&2, A.Location, locations), locations,
-        rt, tn, V.build_peq(Word.blocks(qn), rq, pairs), qn, U32.to_nat(score))
-      A.result(query, target, task, pairs, format, A.Best{score, resolved}, True{})
+      +length = String.length(query)
+      configured_hw(query, target, task, pairs, format, score, locations, length,
+        Bool.or(U32.is_eq(score, 0), Nat.is_eq(length, 1n)))
     case _ _ _:
       # NW/SHW always start at zero; only PATH needs reconstruction.
       A.result(query, target, task, pairs, format, best, True{})

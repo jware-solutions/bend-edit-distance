@@ -47,6 +47,18 @@ def session_results(binary, reference, *, gpu, repeats=2):
             assert prepared.align_batch(large, config, timeout=120) == [
                 ref.align(query, target, config) for target in large]
             bangs += 3
+        # Fixed-length start resolution must complete on the device even when
+        # thousands of tied locations survive, including the empty prefix.
+        for query, target, pairs in [(b"A", b"C" * 4097, ()),
+                (b"A" * 65, b"N" * 4097, (EqualityPair("A", "N"),)),
+                (bytes(range(256)), bytes(range(256)) * 17, ())]:
+            with w.prepare(query, pairs, timeout=60) as tied:
+                for task in (Task.LOC, Task.PATH):
+                    config = AlignConfig(Mode.HW, task, equalities=pairs)
+                    values = [target, target[:33], target]
+                    assert tied.align_batch(values, config, timeout=120) == [
+                        ref.align(query, value, config) for value in values]
+                    bangs += 1
         assert prepared.released
         assert w.retained_entries == w.retained_bytes == 0
     assert w.process.returncode == 0, w._diagnostics

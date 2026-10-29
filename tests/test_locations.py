@@ -9,10 +9,41 @@ from alignment import (
     EqualityPair, MaxDistance, Mode, Operation, Position, Status, Task, Unlimited,
 )
 from tests.helpers import assert_valid_path, bend_align, cpp_edlib_align
+from bend_runtime import runtime_prefix
+from transport import AlignmentWorker
 
 
 def coordinates(values):
     return tuple(BeforeStart() if v == -1 else Position(v) for v in values)
+
+
+@pytest.mark.parametrize("threads", [1, 2, 4])
+@pytest.mark.parametrize("task", [Task.LOC, Task.PATH])
+def test_hw_fixed_interval_starts_with_many_ties(bend_binary, cpp_binary, threads, task):
+    pairs = (EqualityPair("A", "N"), EqualityPair("N", "C"), EqualityPair(0, 255))
+    with AlignmentWorker([bend_binary, *runtime_prefix(threads=threads), "--worker"]) as worker:
+        cases = [(b"A" * n, b"N" * (n + 513)) for n in [*range(1, 34), 63, 64, 65, 127, 128, 129]]
+        cases += [(b"A", b"C" * 8193), (b"\0", b"\xff" * 8193),
+                  (b"A" * 65, b"A" * 8193), (bytes(range(256)), bytes(range(256)) * 17)]
+        for query, target in cases:
+            config = AlignConfig(Mode.HW, task, equalities=pairs)
+            expected = cpp_edlib_align(query, target, config, binary=cpp_binary)
+            actual = worker.align(query, target, config)
+            assert actual == expected
+            assert_valid_path(query, target, config, actual)
+            with worker.prepare(query, pairs) as prepared:
+                values = [target, b"", target[:33], target]
+                results = prepared.align_batch(values, config)
+                assert results == [worker.align(query, value, config) for value in values]
+                for value, result in zip(values, results):
+                    oracle = cpp_edlib_align(query, value, config, binary=cpp_binary)
+                    assert (result.status, result.distance, result.end_locations, result.start_locations) == (
+                        oracle.status, oracle.distance, oracle.end_locations, oracle.start_locations)
+                    assert_valid_path(query, value, config, result)
+            accepted = AlignConfig(Mode.HW, task, MaxDistance(expected.require_distance()), pairs)
+            assert worker.align(query, target, accepted) == actual
+            if expected.require_distance():
+                assert worker.align(query, target, AlignConfig(Mode.HW, task, MaxDistance(0), pairs)).edit_distance == -1
 
 
 @pytest.mark.parametrize("task", list(Task))

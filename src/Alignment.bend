@@ -25,19 +25,25 @@ def ordered(best: Best) -> Best:
     case Best{score, locations}:
       Best{score, List.reverse(&2, Location, locations)}
 
-def ends(locations: List<&2, Location>) -> List<&2, E.Coordinate>:
+def ends.from(locations: List<&2, Location>, values: List<&2, E.Coordinate>) -> List<&2, E.Coordinate>:
   match locations:
     case Nil{}:
-      Nil{}
+      List.reverse(&2, E.Coordinate, values)
     case Location{end, _} <> tail:
-      end <> ends(tail)
+      ends.from(tail, end <> values)
+
+def ends(locations: List<&2, Location>) -> List<&2, E.Coordinate>:
+  ends.from(locations, Nil{})
+
+def starts.from(locations: List<&2, Location>, values: List<&2, E.Coordinate>) -> List<&2, E.Coordinate>:
+  match locations:
+    case Nil{}:
+      List.reverse(&2, E.Coordinate, values)
+    case Location{_, start} <> tail:
+      starts.from(tail, E.Position{start} <> values)
 
 def starts(locations: List<&2, Location>) -> List<&2, E.Coordinate>:
-  match locations:
-    case Nil{}:
-      Nil{}
-    case Location{_, start} <> tail:
-      E.Position{start} <> starts(tail)
+  starts.from(locations, Nil{})
 
 def span(target: String, location: Location) -> String:
   match location:

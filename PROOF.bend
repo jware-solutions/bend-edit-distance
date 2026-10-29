@@ -71,6 +71,12 @@ def Laws.known_path_gap_tie():
 def Laws.known_path_invalid_score():
   {==}
 
+def Laws.hw_fixed_single_symbol():
+  {==}
+
+def Laws.hw_fixed_zero_distance():
+  {==}
+
 def Laws.workspace_storage_rounding():
   {==}
 

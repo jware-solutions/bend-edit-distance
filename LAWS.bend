@@ -83,6 +83,16 @@ law known_path_invalid_score:
   {A.path_reconstruct("A", "C", Nil{}, 0, [A.Location{E.Position{0n}, 0n}], E.Extended{}, True{}) ==
     E.AlignResult{E.Error{}, E.NotFound{}, Nil{}, None{}, None{}, None{}} : E.AlignResult}
 
+law hw_fixed_single_symbol:
+  {Myers.hw_fixed([A.Location{E.BeforeStart{}, 0n}, A.Location{E.Position{0n}, 0n},
+    A.Location{E.Position{64n}, 0n}], 1n) ==
+    [A.Location{E.BeforeStart{}, 0n}, A.Location{E.Position{0n}, 0n},
+     A.Location{E.Position{64n}, 64n}] : List<&2, A.Location>}
+
+law hw_fixed_zero_distance:
+  {Myers.hw_fixed([A.Location{E.Position{1n}, 0n}, A.Location{E.Position{3n}, 0n}], 2n) ==
+    [A.Location{E.Position{1n}, 0n}, A.Location{E.Position{3n}, 2n}] : List<&2, A.Location>}
+
 law gpu_batch_empty:
   {G.align_batch(Nil{}) == Nil{} : List<&2, E.AlignResult>}
 

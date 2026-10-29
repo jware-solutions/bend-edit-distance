@@ -3,14 +3,18 @@ import Base
 import ./BitVector.bend as V
 import ./Profile.bend as P
 
-# Packed blocks compile to a flat array of three 64-bit terms in four-slot
-# records. Each active block is in [first,last), within capacity. Ownership
+# Packed blocks compile to three U32 values in four-slot, 16-byte records.
+# Each active block is in [first,last), within capacity. Ownership
 # moves through the tail-recursive pass; masks are separate immutable data.
 type Workspace is Type:
   Workspace{blocks: Array<V.Block>, capacity: U32, first: U32, last: U32}
 
 type Updated is Type:
   Updated{profile: P.Profile, workspace: Workspace, score: U32, carry: V.Carry}
+
+# Include physical power-of-two rounding, including the zero-capacity buffer.
+def storage_bytes(count: Nat) -> Nat:
+  Nat.mul(16n, Nat.pow(2n, P.depth(count)))
 
 def new(+count: Nat) -> Workspace:
   Workspace{Array.new(V.Block, P.depth(count), V.Block{Word.all_bits(), 0, 0}), U32.from_nat(count), 0, 0}

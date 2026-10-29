@@ -49,6 +49,10 @@ law endpoint_convention_independent:
 law indexed_trace_geometry:
   {TM.supported(7n, 7n) == True{} : Bool}
 
+law workspace_storage_rounding:
+  {(W.storage_bytes(0n), W.storage_bytes(1n), W.storage_bytes(3n)) ==
+    (16n, 16n, 64n) : Nat & Nat & Nat}
+
 law indexed_trace_cell_tie:
   {TM.code(0, 0, 1, False{}) == 5 : U32}
 

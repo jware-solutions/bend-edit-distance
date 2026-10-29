@@ -148,17 +148,18 @@ def retained.profile(query: String, pairs: List<&2, E.EqualityPair>, length: Nat
   (profile, bytes) = result
   (Prepared{query, pairs, length, Some{profile}, workspace}, Nat.add(other, bytes))
 
-# Buffer/term payload bytes, excluding allocator metadata and shared refcounts.
-# The worker applies a separate conservative admission limit to wire inputs.
+# Buffer bytes plus sequence/equality nodes. The worker adds a conservative
+# allowance for wrapper records, allocator metadata and shared refcounts.
 def retained_bytes(prepared: Prepared) -> Prepared & Nat:
   match prepared:
     case Prepared{+query, +pairs, +length, None{}, workspace}:
       (Prepared{query, pairs, length, None{}, workspace},
-        Nat.add(Nat.mul(length, 16n), Nat.mul(List.length(&2, E.EqualityPair, pairs), 32n)))
+        Nat.add(W.storage_bytes(0n),
+          Nat.add(Nat.mul(length, 16n), Nat.mul(List.length(&2, E.EqualityPair, pairs), 32n))))
     case Prepared{query, +pairs, +length, Some{profile}, workspace}:
       retained.profile(query, pairs, length, workspace,
         Nat.add(Nat.add(Nat.mul(length, 16n), Nat.mul(List.length(&2, E.EqualityPair, pairs), 32n)),
-          Nat.mul(32n, Nat.pow(2n, P.depth(Word.blocks(length))))), P.retained_bytes(profile))
+          W.storage_bytes(Word.blocks(length))), P.retained_bytes(profile))
 
 type BatchState is Type:
   BatchState{prepared: Prepared, results: List<&2, E.AlignResult>}

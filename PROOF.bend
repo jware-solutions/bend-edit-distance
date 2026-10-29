@@ -59,6 +59,9 @@ def Laws.endpoint_convention_independent():
 def Laws.indexed_trace_geometry():
   {==}
 
+def Laws.workspace_storage_rounding():
+  {==}
+
 def Laws.indexed_trace_cell_tie():
   {==}
 

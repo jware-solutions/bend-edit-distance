@@ -199,4 +199,5 @@ def clone(profile: Profile) -> Profile & Profile:
 def retained_bytes(profile: Profile) -> Profile & Nat:
   Profile{lookup, masks, +stride, +rows, blocks, used} = profile
   (Profile{lookup, masks, stride, rows, blocks, used},
-    Nat.add(1024n, Nat.mul(4n, Nat.mul(U32.to_nat(stride), Nat.pow(2n, depth(U32.to_nat(rows)))))))
+    Nat.add(1024n, Nat.max(8n,
+      Nat.mul(4n, Nat.mul(U32.to_nat(stride), Nat.pow(2n, depth(U32.to_nat(rows))))))))

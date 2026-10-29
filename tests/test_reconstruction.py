@@ -34,7 +34,7 @@ def test_dp_traceback_exact_upstream_small_ties(reconstruction_probe, cpp_binary
         assert_valid_path(query, target, config, actual)
 
 
-@pytest.mark.parametrize("algorithm", ["dp", "divide", "auto"])
+@pytest.mark.parametrize("algorithm", ["dp", "indexed", "divide", "auto"])
 @pytest.mark.parametrize("threads", [1, 2, 4])
 @pytest.mark.parametrize("query,target", [
     (b"", b""), (b"", b"AC"), (b"AC", b""),
@@ -67,6 +67,23 @@ def test_optimal_path_semantics_are_separate_from_exact_ties(reconstruction_prob
     assert divided.alignment != dp.alignment
     for result in (dp, divided):
         assert_valid_path(query, target, config, result)
+
+
+@pytest.mark.parametrize("threads", [1, 2, 4])
+def test_indexed_traceback_preserves_all_dp_ties(reconstruction_probe, threads):
+    import random
+    rng = random.Random(831)
+    pairs = (EqualityPair("A", "N"), EqualityPair("N", "C"), EqualityPair(0, 255))
+    config = AlignConfig(task=Task.PATH, equalities=pairs)
+    cases = [(bytes(q), bytes(t)) for q in itertools.product((0, 128, 255), repeat=2)
+             for t in itertools.product((0, 128, 255), repeat=2)]
+    for n in (0, 1, 7, 8, 15, 16, 31, 32, 33, 63, 64, 65, 129):
+        cases.append((bytes(rng.choices(b"ACN\0\xff", k=n)), bytes(rng.choices(b"ACN\0\xff", k=n + 3))))
+    cases.extend([(b"N", bytes(range(256)) * 20), (bytes(range(256)) * 20, b"N")])
+    for query, target in cases:
+        actual = probe_align(reconstruction_probe, "indexed", query, target, config, threads)
+        assert actual == probe_align(reconstruction_probe, "dp", query, target, config, threads)
+        assert_valid_path(query, target, config, actual)
 
 
 @pytest.mark.parametrize("threads", [1, 2, 4])

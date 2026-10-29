@@ -2,6 +2,7 @@ import ./src/Sequence.bend as S
 import ./src/Frontier.bend as F
 import ./src/PreparedPool.bend as PP
 import ./src/Word.bend as Word
+import ./src/TraceMatrix.bend as TM
 import ./Prepared.bend as Q
 import ./src/SearchKernel.bend as K
 import ./src/Workspace.bend as W
@@ -44,6 +45,24 @@ law word_padding:
 
 law endpoint_convention_independent:
   {E.consider_empty_prefix(32n) == True{} : Bool}
+
+law indexed_trace_geometry:
+  {TM.supported(7n, 7n) == True{} : Bool}
+
+law indexed_trace_cell_tie:
+  {TM.code(0, 0, 1, False{}) == 5 : U32}
+
+law indexed_trace_score_boundary:
+  {TM.score(TM.code(31, 31, 31, False{})) == 32 : U32}
+
+law indexed_trace_small_equivalence:
+  for query: SmallAscii
+  for target: SmallAscii
+  {R.trace_path(small_ascii(query), small_ascii(target), Nil{}) ==
+    R.dp(small_ascii(query), small_ascii(target), Nil{}) : List<&2, E.Operation>}
+
+law indexed_trace_nonbyte:
+  {R.trace_path(SCon{Chr{256}, ""}, SCon{Chr{256}, ""}, Nil{}) == [E.Match{}] : List<&2, E.Operation>}
 
 law gpu_batch_empty:
   {G.align_batch(Nil{}) == Nil{} : List<&2, E.AlignResult>}

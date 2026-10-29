@@ -22,6 +22,9 @@ def divided(+query: String, +target: String, pairs: List<&2, E.EqualityPair>) ->
 def dp_align(query: String, target: String, config: E.AlignConfig) -> E.AlignResult:
   probe_align(~R.dp, query, target, config)
 
+def indexed_align(query: String, target: String, config: E.AlignConfig) -> E.AlignResult:
+  probe_align(~R.trace_path, query, target, config)
+
 def divided_align(query: String, target: String, config: E.AlignConfig) -> E.AlignResult:
   probe_align(~divided, query, target, config)
 
@@ -32,12 +35,14 @@ def run(args: List<String>) -> IO(Unit):
   match args:
     case _ <> "dp" <> "--worker" <> Nil{}:
       BT.serve(~dp_align)
+    case _ <> "indexed" <> "--worker" <> Nil{}:
+      BT.serve(~indexed_align)
     case _ <> "divide" <> "--worker" <> Nil{}:
       BT.serve(~divided_align)
     case _ <> "auto" <> "--worker" <> Nil{}:
       BT.serve(~auto_align)
     case _:
-      IO.die(Unit, 2, "Expected dp|divide|auto --worker")
+      IO.die(Unit, 2, "Expected dp|indexed|divide|auto --worker")
 
 def main() -> IO(Unit):
   do IO<Unit>:

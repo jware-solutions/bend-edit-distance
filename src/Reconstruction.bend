@@ -1,3 +1,4 @@
+import ./TraceMatrix.bend as TM
 import ./Frontier.bend as F
 import Base
 import ./Sequence.bend as S
@@ -114,6 +115,23 @@ def dp(+query: String, +target: String, pairs: List<&2, E.EqualityPair>) -> List
   dp_trace(dp_rows(query, target, boundary, 1, pairs,
     [List.reverse(&2, TraceCell, boundary)]), qn, tn)
 
+# Keep the list implementation as a semantic oracle and a fallback for
+# dimensions that cannot safely pack scores/indexes in a U32 matrix.
+def trace_path.supported(+query: String, +target: String, +pairs: List<&2, E.EqualityPair>,
+                          height: Nat, width: Nat, supported: Bool) -> List<&2, E.Operation>:
+  match supported:
+    case True{}:
+      TM.path_sized(query, target, pairs, height, width)
+    case False{}:
+      dp(query, target, pairs)
+
+def trace_path_sized(+query: String, +target: String, pairs: List<&2, E.EqualityPair>,
+                       +height: Nat, +width: Nat) -> List<&2, E.Operation>:
+  trace_path.supported(query, target, pairs, height, width, TM.supported(height, width))
+
+def trace_path(+query: String, +target: String, pairs: List<&2, E.EqualityPair>) -> List<&2, E.Operation>:
+  trace_path_sized(query, target, pairs, String.length(query), String.length(target))
+
 # Bound the complete small matrix, including its boundary cells. A one-row
 # problem is also a base case, with linear storage in the column width.
 def small_matrix(query_length: Nat, +target_length: Nat) -> Bool:
@@ -183,11 +201,11 @@ def divide(fuel: Nat, +query: String, +target: String, +query_length: Nat,
     case _ _ SNil{} _:
       List.replicate(E.Operation, query_length, E.Insert{})
     case 0n _ _ _:
-      dp(query, target, pairs)
+      trace_path_sized(query, target, pairs, query_length, target_length)
     case 1n+p SCon{_, SNil{}} _ _:
-      dp(query, target, pairs)
+      trace_path_sized(query, target, pairs, query_length, target_length)
     case 1n+p _ _ True{}:
-      dp(query, target, pairs)
+      trace_path_sized(query, target, pairs, query_length, target_length)
     case Succ{+p} _ _ False{}:
       +half = Nat.div(query_length, 2n)
       +left = String.take(query, half)
@@ -217,7 +235,7 @@ def reconstruct_order(query: String, target: String, +query_length: Nat,
                         small: Bool, query_is_taller: Bool) -> List<&2, E.Operation>:
   match small query_is_taller:
     case True{} _:
-      dp(query, target, pairs)
+      trace_path_sized(query, target, pairs, query_length, target_length)
     case False{} True{}:
       divide(query_length, query, target, query_length, target_length, pairs, False{})
     case False{} False{}:

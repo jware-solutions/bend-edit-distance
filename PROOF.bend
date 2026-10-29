@@ -56,6 +56,120 @@ def Laws.word_padding():
 def Laws.endpoint_convention_independent():
   {==}
 
+def Laws.indexed_trace_geometry():
+  {==}
+
+def Laws.indexed_trace_cell_tie():
+  {==}
+
+def Laws.indexed_trace_score_boundary():
+  {==}
+
+def Laws.indexed_trace_small_equivalence(query, target):
+  match query target:
+    case Laws.EmptyAscii{} Laws.EmptyAscii{}:
+      {==}
+    case Laws.EmptyAscii{} Laws.UpperAscii{}:
+      {==}
+    case Laws.EmptyAscii{} Laws.LowerAscii{}:
+      {==}
+    case Laws.EmptyAscii{} Laws.UpperUpperAscii{}:
+      {==}
+    case Laws.EmptyAscii{} Laws.UpperLowerAscii{}:
+      {==}
+    case Laws.EmptyAscii{} Laws.LowerUpperAscii{}:
+      {==}
+    case Laws.EmptyAscii{} Laws.LowerLowerAscii{}:
+      {==}
+    case Laws.UpperAscii{} Laws.EmptyAscii{}:
+      {==}
+    case Laws.UpperAscii{} Laws.UpperAscii{}:
+      {==}
+    case Laws.UpperAscii{} Laws.LowerAscii{}:
+      {==}
+    case Laws.UpperAscii{} Laws.UpperUpperAscii{}:
+      {==}
+    case Laws.UpperAscii{} Laws.UpperLowerAscii{}:
+      {==}
+    case Laws.UpperAscii{} Laws.LowerUpperAscii{}:
+      {==}
+    case Laws.UpperAscii{} Laws.LowerLowerAscii{}:
+      {==}
+    case Laws.LowerAscii{} Laws.EmptyAscii{}:
+      {==}
+    case Laws.LowerAscii{} Laws.UpperAscii{}:
+      {==}
+    case Laws.LowerAscii{} Laws.LowerAscii{}:
+      {==}
+    case Laws.LowerAscii{} Laws.UpperUpperAscii{}:
+      {==}
+    case Laws.LowerAscii{} Laws.UpperLowerAscii{}:
+      {==}
+    case Laws.LowerAscii{} Laws.LowerUpperAscii{}:
+      {==}
+    case Laws.LowerAscii{} Laws.LowerLowerAscii{}:
+      {==}
+    case Laws.UpperUpperAscii{} Laws.EmptyAscii{}:
+      {==}
+    case Laws.UpperUpperAscii{} Laws.UpperAscii{}:
+      {==}
+    case Laws.UpperUpperAscii{} Laws.LowerAscii{}:
+      {==}
+    case Laws.UpperUpperAscii{} Laws.UpperUpperAscii{}:
+      {==}
+    case Laws.UpperUpperAscii{} Laws.UpperLowerAscii{}:
+      {==}
+    case Laws.UpperUpperAscii{} Laws.LowerUpperAscii{}:
+      {==}
+    case Laws.UpperUpperAscii{} Laws.LowerLowerAscii{}:
+      {==}
+    case Laws.UpperLowerAscii{} Laws.EmptyAscii{}:
+      {==}
+    case Laws.UpperLowerAscii{} Laws.UpperAscii{}:
+      {==}
+    case Laws.UpperLowerAscii{} Laws.LowerAscii{}:
+      {==}
+    case Laws.UpperLowerAscii{} Laws.UpperUpperAscii{}:
+      {==}
+    case Laws.UpperLowerAscii{} Laws.UpperLowerAscii{}:
+      {==}
+    case Laws.UpperLowerAscii{} Laws.LowerUpperAscii{}:
+      {==}
+    case Laws.UpperLowerAscii{} Laws.LowerLowerAscii{}:
+      {==}
+    case Laws.LowerUpperAscii{} Laws.EmptyAscii{}:
+      {==}
+    case Laws.LowerUpperAscii{} Laws.UpperAscii{}:
+      {==}
+    case Laws.LowerUpperAscii{} Laws.LowerAscii{}:
+      {==}
+    case Laws.LowerUpperAscii{} Laws.UpperUpperAscii{}:
+      {==}
+    case Laws.LowerUpperAscii{} Laws.UpperLowerAscii{}:
+      {==}
+    case Laws.LowerUpperAscii{} Laws.LowerUpperAscii{}:
+      {==}
+    case Laws.LowerUpperAscii{} Laws.LowerLowerAscii{}:
+      {==}
+    case Laws.LowerLowerAscii{} Laws.EmptyAscii{}:
+      {==}
+    case Laws.LowerLowerAscii{} Laws.UpperAscii{}:
+      {==}
+    case Laws.LowerLowerAscii{} Laws.LowerAscii{}:
+      {==}
+    case Laws.LowerLowerAscii{} Laws.UpperUpperAscii{}:
+      {==}
+    case Laws.LowerLowerAscii{} Laws.UpperLowerAscii{}:
+      {==}
+    case Laws.LowerLowerAscii{} Laws.LowerUpperAscii{}:
+      {==}
+    case Laws.LowerLowerAscii{} Laws.LowerLowerAscii{}:
+      {==}
+
+
+def Laws.indexed_trace_nonbyte():
+  {==}
+
 def Laws.gpu_batch_empty():
   {==}
 

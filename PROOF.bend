@@ -80,6 +80,12 @@ def Laws.hw_fixed_zero_distance():
 def Laws.workspace_storage_rounding():
   {==}
 
+def Laws.workspace_selected_padding():
+  {==}
+
+def Laws.workspace_selected_logical_guard():
+  {==}
+
 def Laws.indexed_trace_cell_tie():
   {==}
 

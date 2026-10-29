@@ -895,6 +895,16 @@ law workspace_retry_reset:
   {W.block_value(W.get(W.initialize(W.put(W.new(1n), 0, V.Block{0, 1, 9}), 1n), 0)) ==
     V.Block{4294967295, 0, 32} : V.Block}
 
+law workspace_selected_padding:
+  {W.selected(P.build("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", 33n, Nil{}),
+    W.initialize(W.new(2n), 2n), 0, 1, V.Carry{1, 0}) ==
+   W.update(P.build("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", 33n, Nil{}),
+    W.initialize(W.new(2n), 2n), 0, 1, V.Carry{1, 0}) : W.Updated}
+
+law workspace_selected_logical_guard:
+  {W.column(P.build("A", 1n, Nil{}), W.initialize(W.new(32n), 32n), 65, V.Carry{1, 0}) ==
+   W.column_reference(P.build("A", 1n, Nil{}), W.initialize(W.new(32n), 32n), 65, V.Carry{1, 0}) : W.Updated}
+
 law nw_initial_band_longer:
   {K.initial_count(129n, 1n, 128n) == 5n : Nat}
 

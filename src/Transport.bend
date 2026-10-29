@@ -3,16 +3,19 @@ import ../EdlibTypes.bend as E
 import ./ByteProtocol.bend as P
 
 # The native bridge constructs one Char per raw byte, without UTF-8 decoding.
+type SizedTarget is Data:
+  SizedTarget{sequence: String, length: Nat}
+
 type Request is Type:
   End{}
   Invalid{}
   Bytes{mode: U32, task: U32, threshold: U32, format: U32,
     query: String, target: String, equalities: List<U32>}
   PrepareRequest{query: String, equalities: List<U32>}
-  PreparedRequest{handle: U32, mode: U32, task: U32, threshold: U32, format: U32, target: String}
+  PreparedRequest{handle: U32, mode: U32, task: U32, threshold: U32, format: U32, target: SizedTarget}
   ReleaseRequest{handle: U32}
   BatchRequest{count: U32}
-  PreparedBatchRequest{handle: U32, mode: U32, task: U32, threshold: U32, format: U32, targets: List<&2, String>}
+  PreparedBatchRequest{handle: U32, mode: U32, task: U32, threshold: U32, format: U32, targets: List<&2, SizedTarget>}
   InvalidControl{operation: U32}
 
 def read_request() -> IO(Request):

@@ -49,25 +49,36 @@ def wave_next(next: P.Pool -> (P.Pool & List<&2, E.AlignResult>),
 # One target per owner per bang avoids a pinned-runtime completion failure
 # observed when every CUDA leaf reuses its owner for a second target. Planning
 # each bounded wave on the host also caps the live device execution tree.
-def waves(fuel: Nat, pool: P.Pool, +targets: List<&2, String>, options: Q.Options,
+def waves(fuel: Nat, pool: P.Pool, +targets: List<&2, P.Target>, options: Q.Options,
             known_bytes: Bool) -> P.Pool & List<&2, E.AlignResult>:
   match fuel pool targets:
     case _ _ Nil{}:
       (pool, Nil{})
     case 0n _ _:
-      P.align_batch(pool, targets, options)
+      +shared = {options : Q.Options}
+      P.align_ready_known(P.ready.inspected(pool, P.reindex(targets, 0n)), shared, known_bytes)
     case 1n+p P.Pool{owners, +shards, length, budget} _:
       +count = Nat.max(1n, Nat.min(1024n, shards))
       +shared = {options : Q.Options}
       +known = {known_bytes : Bool}
-      head = List.take(&2, String, targets, count)
-      tail = List.drop(&2, String, targets, count)
-      ready = P.ready(P.Pool{owners, shards, length, budget}, head, shared)
+      head = P.reindex(List.take(&2, P.Target, targets, count), 0n)
+      tail = List.drop(&2, P.Target, targets, count)
+      ready = P.ready.inspected(P.Pool{owners, shards, length, budget}, head)
       wave_next(owner => waves(p, owner, tail, shared, known), align_prepared_ready(ready, shared, known))
+
+def align_prepared_targets(pool: P.Pool, targets: List<&2, P.Target>, options: Q.Options,
+                             known_bytes: Bool) -> P.Pool & List<&2, E.AlignResult>:
+  waves(65536n, pool, targets, options, known_bytes)
+
+def align_prepared_strings(pool: P.Pool, targets: List<&2, String>, +options: Q.Options,
+                             known_bytes: Bool) -> P.Pool & List<&2, E.AlignResult>:
+  P.Pool{owners, shards, +length, budget} = pool
+  align_prepared_targets(P.Pool{owners, shards, length, budget},
+    P.targets(targets, 0n, length, options), options, known_bytes)
 
 def align_prepared_batch(pool: P.Pool, targets: List<&2, String>, options: Q.Options) ->
                          P.Pool & List<&2, E.AlignResult>:
-  waves(65536n, pool, targets, options, False{})
+  align_prepared_strings(pool, targets, options, False{})
 
 def single_result(value: P.Pool & List<&2, E.AlignResult>) -> P.Pool & E.AlignResult:
   match value:
@@ -87,7 +98,7 @@ def align_single(query: String, target: String, config: E.AlignConfig) -> E.Alig
 # entry points can skip the generic String byte-domain scan.
 def align_prepared_batch_bytes(pool: P.Pool, targets: List<&2, String>, options: Q.Options) ->
                                P.Pool & List<&2, E.AlignResult>:
-  waves(65536n, pool, targets, options, True{})
+  align_prepared_strings(pool, targets, options, True{})
 
 def align_prepared_bytes(pool: P.Pool, target: String, options: Q.Options) -> P.Pool & E.AlignResult:
   single_result(align_prepared_batch_bytes(pool, [target], options))

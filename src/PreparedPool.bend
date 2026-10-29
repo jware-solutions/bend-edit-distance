@@ -50,6 +50,13 @@ def retained(pool: Pool) -> Pool & Nat:
 type Target is Data:
   Target{index: Nat, sequence: String, length: Nat, work: F32}
 
+def reindex(values: List<&2, Target>, +index: Nat) -> List<&2, Target>:
+  match values:
+    case Nil{}:
+      Nil{}
+    case Target{_, sequence, length, work} <> tail:
+      Target{index, sequence, length, work} <> reindex(tail, 1n+index)
+
 def target_work(+length: Nat, +columns: Nat, options: Q.Options) -> F32:
   match options:
     case Q.Options{E.NW{}, _, E.MaxDistance{maximum}, _}:

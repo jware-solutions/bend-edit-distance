@@ -5,6 +5,7 @@ import ./PreparedPool.bend as P
 import ./PreparedTransport.bend as T
 import ./Myers.bend as M
 import ./Batch.bend as B
+import ./Transport.bend as BT
 
 def prepare_one(query: String, pairs: List<&2, E.EqualityPair>) -> P.Pool:
   P.prepare_with_max(1n, query, pairs)
@@ -20,11 +21,27 @@ def batch(pool: P.Pool, targets: List<&2, String>, options: Q.Options) -> P.Pool
   +shared = options
   P.align_ready_known(P.ready(pool, targets, shared), shared, True{})
 
-def single(pool: P.Pool, target: String, options: Q.Options) -> P.Pool & E.AlignResult:
-  P.single_result(batch(pool, [target], options))
+def targets(values: List<&2, BT.SizedTarget>, +index: Nat, +length: Nat,
+               +options: Q.Options) -> List<&2, P.Target>:
+  match values:
+    case Nil{}:
+      Nil{}
+    case BT.SizedTarget{sequence, columns} <> tail:
+      P.target.sized(index, sequence, columns, length, options) <> targets(tail, 1n+index, length, options)
+
+def ready(pool: P.Pool, values: List<&2, BT.SizedTarget>, options: Q.Options) -> P.PoolReady:
+  P.Pool{owners, shards, +length, budget} = pool
+  P.ready.inspected(P.Pool{owners, shards, length, budget}, targets(values, 0n, length, options))
+
+def batch_sized(pool: P.Pool, targets: List<&2, BT.SizedTarget>, options: Q.Options) -> P.Pool & List<&2, E.AlignResult>:
+  +shared = options
+  P.align_ready_known(ready(pool, targets, shared), shared, True{})
+
+def single(pool: P.Pool, target: BT.SizedTarget, options: Q.Options) -> P.Pool & E.AlignResult:
+  P.single_result(batch_sized(pool, [target], options))
 
 def serve_with(~prepare: String -> List<&2, E.EqualityPair> -> P.Pool) -> IO(Unit):
-  T.serve_generic(~P.Pool, ~prepare, ~P.retained, ~single, ~batch, ~M.edlib_align, ~B.align_batch)
+  T.serve_generic(~P.Pool, ~prepare, ~P.retained, ~single, ~batch_sized, ~M.edlib_align, ~B.align_batch)
 
 def serve(shards: String) -> IO(Unit):
   match shards:

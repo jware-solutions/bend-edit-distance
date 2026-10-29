@@ -171,15 +171,20 @@ Term read_request_run(Env e, Term *f, IoWork *w) {
                 targets = term_pak(CID(Nil), 0);
                 for (uint32_t i = r.target_length; i; --i) {
                     size_t off = offsets[i - 1];
-                    Term bytes = be_byte_string(e, r.data + off + 4, be_u32(r.data + off));
-                    targets = io_node(e, CID(Con), bytes, targets);
+                    uint32_t length = be_u32(r.data + off);
+                    Term target = io_node(e, CID(SizedTarget),
+                        be_byte_string(e, r.data + off + 4, length), length);
+                    targets = io_node(e, CID(Con), target, targets);
                 }
                 free(offsets);
             }
-            u64 fields = heap_alloc(e, cls_fit(6));
+            // SizedTarget is flattened in PreparedRequest, but boxed as a
+            // list element in PreparedBatchRequest (pinned emitted layout).
+            u64 fields = heap_alloc(e, cls_fit(r.operation == 2 ? 7 : 6));
             e.mem[fields] = r.query_length; e.mem[fields + 1] = r.mode;
             e.mem[fields + 2] = r.task; e.mem[fields + 3] = r.threshold;
             e.mem[fields + 4] = r.format; e.mem[fields + 5] = targets;
+            if (r.operation == 2) e.mem[fields + 6] = r.target_length;
             result = term_ctr(r.operation == 2 ? CID(PreparedRequest) : CID(PreparedBatchRequest), fields);
         }
         free(r.data);

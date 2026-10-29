@@ -924,6 +924,16 @@ law pool_single_result_order:
   for tail: List<&2, E.AlignResult>
   {PP.single_result((pool, result <> tail)) == (pool, result) : PP.Pool & E.AlignResult}
 
+law pool_wave_reindex_preserves_metadata:
+  for old: Nat
+  for sequence: String
+  for length: Nat
+  for work: F32
+  for tail: List<&2, PP.Target>
+  for index: Nat
+  {PP.reindex(PP.Target{old, sequence, length, work} <> tail, index) ==
+    PP.Target{index, sequence, length, work} <> PP.reindex(tail, 1n+index) : List<&2, PP.Target>}
+
 # Configured DP cells and columns retain their dependencies. Independent
 # input scans, Myers profile branches and Hirschberg score passes run in
 # balanced parallel calls. DP matrices are bounded; larger PATHs use linear

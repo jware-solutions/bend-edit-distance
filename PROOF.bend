@@ -144,6 +144,9 @@ def Laws.pool_generic_byte_boundary(ready, options):
 def Laws.pool_single_result_order(pool, result, tail):
   {==}
 
+def Laws.pool_wave_reindex_preserves_metadata(old, sequence, length, work, tail, index):
+  {==}
+
 def Laws.indexed_trace_cell_tie():
   {==}
 

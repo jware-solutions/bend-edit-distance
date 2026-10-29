@@ -58,8 +58,8 @@ def aligned(~State: Type, handle: U32, result: State & E.AlignResult) -> IO(Unit
     restore(State, handle, query)
     T.write_result(value)
 
-def align(~State: Type, ~run: State -> String -> Q.Options -> (State & E.AlignResult),
-          +handle: U32, target: String, options: Q.Options, exists: Bool) -> IO(Unit):
+def align(~State: Type, ~run: State -> T.SizedTarget -> Q.Options -> (State & E.AlignResult),
+          +handle: U32, target: T.SizedTarget, options: Q.Options, exists: Bool) -> IO(Unit):
   match exists:
     case False{}:
       error()
@@ -75,8 +75,8 @@ def batch_aligned(~State: Type, +handle: U32, result: State & List<&2, E.AlignRe
     control(5, 0, handle, U32.from_nat(List.length(&2, E.AlignResult, values)))
     T.write_batch(values)
 
-def batch(~State: Type, ~run: State -> List<&2, String> -> Q.Options -> (State & List<&2, E.AlignResult>),
-          +handle: U32, values: List<&2, String>, options: Q.Options, exists: Bool) -> IO(Unit):
+def batch(~State: Type, ~run: State -> List<&2, T.SizedTarget> -> Q.Options -> (State & List<&2, E.AlignResult>),
+          +handle: U32, values: List<&2, T.SizedTarget>, options: Q.Options, exists: Bool) -> IO(Unit):
   match exists:
     case False{}:
       control(5, 1, handle, 0)
@@ -98,8 +98,8 @@ def invalid(operation: U32) -> IO(Unit):
 def respond(~State: Type,
             ~make: String -> List<&2, E.EqualityPair> -> State,
             ~size: State -> (State & Nat),
-            ~single: State -> String -> Q.Options -> (State & E.AlignResult),
-            ~many: State -> List<&2, String> -> Q.Options -> (State & List<&2, E.AlignResult>),
+            ~single: State -> T.SizedTarget -> Q.Options -> (State & E.AlignResult),
+            ~many: State -> List<&2, T.SizedTarget> -> Q.Options -> (State & List<&2, E.AlignResult>),
             ~ordinary_single: String -> String -> E.AlignConfig -> E.AlignResult,
             ~ordinary: List<&2, E.AlignJob> -> List<&2, E.AlignResult>,
             request: T.Request) -> IO(Unit):
@@ -134,8 +134,8 @@ def respond(~State: Type,
 def run(~State: Type,
         ~make: String -> List<&2, E.EqualityPair> -> State,
         ~size: State -> (State & Nat),
-        ~single: State -> String -> Q.Options -> (State & E.AlignResult),
-        ~many: State -> List<&2, String> -> Q.Options -> (State & List<&2, E.AlignResult>),
+        ~single: State -> T.SizedTarget -> Q.Options -> (State & E.AlignResult),
+        ~many: State -> List<&2, T.SizedTarget> -> Q.Options -> (State & List<&2, E.AlignResult>),
         ~ordinary_single: String -> String -> E.AlignConfig -> E.AlignResult,
         ~ordinary: List<&2, E.AlignJob> -> List<&2, E.AlignResult>,
         fuel: Nat, request: T.Request) -> IO(Unit):
@@ -153,8 +153,8 @@ def run(~State: Type,
 def serve_generic(~State: Type,
                   ~make: String -> List<&2, E.EqualityPair> -> State,
                   ~size: State -> (State & Nat),
-                  ~single: State -> String -> Q.Options -> (State & E.AlignResult),
-                  ~many: State -> List<&2, String> -> Q.Options -> (State & List<&2, E.AlignResult>),
+                  ~single: State -> T.SizedTarget -> Q.Options -> (State & E.AlignResult),
+                  ~many: State -> List<&2, T.SizedTarget> -> Q.Options -> (State & List<&2, E.AlignResult>),
                   ~ordinary_single: String -> String -> E.AlignConfig -> E.AlignResult,
                   ~ordinary: List<&2, E.AlignJob> -> List<&2, E.AlignResult>) -> IO(Unit):
   do IO<Unit>:
@@ -164,9 +164,21 @@ def serve_generic(~State: Type,
 def cpu_prepare(query: String, pairs: List<&2, E.EqualityPair>) -> Q.Prepared:
   Q.prepare(query, pairs)
 
-def cpu_align(query: Q.Prepared, target: String, options: Q.Options) -> Q.Prepared & E.AlignResult:
-  Q.align_cached(query, target, options)
+def cpu_align(query: Q.Prepared, target: T.SizedTarget, options: Q.Options) -> Q.Prepared & E.AlignResult:
+  T.SizedTarget{sequence, length} = target
+  Q.align_sized_known(query, sequence, options, length, True{})
+
+# Framing supplies exact byte counts; no String length or byte-domain scan is needed.
+def cpu_batch(values: List<&2, T.SizedTarget>, +options: Q.Options, state: Q.BatchState) -> Q.Prepared & List<&2, E.AlignResult>:
+  match values state:
+    case Nil{} Q.BatchState{query, results}:
+      (query, List.reverse(&2, E.AlignResult, results))
+    case target <> tail Q.BatchState{query, results}:
+      cpu_batch(tail, options, Q.batch.updated(results, cpu_align(query, target, options)))
+
+def cpu_many(query: Q.Prepared, values: List<&2, T.SizedTarget>, options: Q.Options) -> Q.Prepared & List<&2, E.AlignResult>:
+  cpu_batch(values, options, Q.BatchState{query, Nil{}})
 
 def serve() -> IO(Unit):
-  serve_generic(~Q.Prepared, ~cpu_prepare, ~Q.retained_bytes, ~cpu_align, ~Q.align_batch_cached,
+  serve_generic(~Q.Prepared, ~cpu_prepare, ~Q.retained_bytes, ~cpu_align, ~cpu_many,
     ~M.edlib_align, ~B.align_batch)

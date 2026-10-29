@@ -114,6 +114,27 @@ def operations(value: Maybe<&2, List<&2, E.Operation>>) -> U32 & List<U32>:
     case Some{+values}:
       (U32.from_nat(List.length(&2, E.Operation, values)), operation_bytes(values))
 
+def coordinate_values(values: List<&2, E.Coordinate>) -> List<U32>:
+  match values:
+    case Nil{}:
+      Nil{}
+    case value <> tail:
+      coordinate_value(value) <> coordinate_values(tail)
+
+def optional_coordinates(values: Maybe<&2, List<&2, E.Coordinate>>) -> Maybe<&1, List<U32>>:
+  match values:
+    case None{}:
+      None{}
+    case Some{items}:
+      Some{coordinate_values(items)}
+
+def optional_operations(values: Maybe<&2, List<&2, E.Operation>>) -> Maybe<&1, List<U32>>:
+  match values:
+    case None{}:
+      None{}
+    case Some{items}:
+      Some{operation_bytes(items)}
+
 def cigar_bytes(value: String) -> List<U32>:
   match value:
     case SNil{}:

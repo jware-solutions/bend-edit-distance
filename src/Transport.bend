@@ -21,6 +21,16 @@ def read_request() -> IO(Request):
 def write_response(bytes: List<U32>) -> IO(Unit):
   import "./transport.c"
 
+def write_result_fields(status: U32, distance: U32, ends: List<U32>,
+                          starts: Maybe<&1, List<U32>>,
+                          operations: Maybe<&1, List<U32>>, cigar: Maybe<&2, String>) -> IO(Unit):
+  import "./transport.c"
+
+def write_result(result: E.AlignResult) -> IO(Unit):
+  E.AlignResult{status, distance, ends, starts, operations, cigar} = result
+  write_result_fields(P.status_value(status), P.distance_value(distance), P.coordinate_values(ends),
+    P.optional_coordinates(starts), P.optional_operations(operations), cigar)
+
 def respond(~align: String -> String -> E.AlignConfig -> E.AlignResult,
             request: Request) -> IO(Bool):
   match request:
@@ -32,8 +42,8 @@ def respond(~align: String -> String -> E.AlignConfig -> E.AlignResult,
         return True{}
     case Bytes{m, t, k, f, qb, tb, eq}:
       do IO<Bool>:
-        write_response(P.encode(align(qb, tb,
-          E.AlignConfig{P.mode(m), P.task(t), P.threshold(k), P.pairs(eq), P.format(f)})))
+        write_result(align(qb, tb,
+          E.AlignConfig{P.mode(m), P.task(t), P.threshold(k), P.pairs(eq), P.format(f)}))
         return True{}
     case _:
       do IO<Bool>:
@@ -89,5 +99,5 @@ def write_batch(results: List<&2, E.AlignResult>) -> IO(Unit):
       IO.pure(Unit, Unit{})
     case head <> tail:
       do IO<Unit>:
-        write_response(P.encode(head))
+        write_result(head)
         write_batch(tail)

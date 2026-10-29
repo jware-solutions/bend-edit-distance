@@ -151,6 +151,18 @@ law transport_absent_starts:
 law transport_empty_starts:
   {BT.starts(Some{Nil{}}) == (0, Nil{}) : U32 & List<U32>}
 
+law transport_coordinate_values:
+  {BT.coordinate_values([E.BeforeStart{}, E.Position{0n}, E.Position{255n}]) ==
+    [4294967295, 0, 255] : List<U32>}
+
+law transport_optional_coordinate_values:
+  {(BT.optional_coordinates(None{}), BT.optional_coordinates(Some{Nil{}})) ==
+    (None{}, Some{Nil{}}) : Maybe<&1, List<U32>> & Maybe<&1, List<U32>>}
+
+law transport_optional_operation_values:
+  {BT.optional_operations(Some{[E.Match{}, E.Insert{}, E.Delete{}, E.Mismatch{}]}) ==
+    Some{[0, 1, 2, 3]} : Maybe<&1, List<U32>>}
+
 # A finite first domain for alignment proofs: precisely every string of length
 # 0..2 over {'A', 'a'}. This includes case differences and repeated symbols.
 # It is a subset of the CLI's non-NUL ASCII domain, not all Bend Strings.

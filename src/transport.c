@@ -215,7 +215,84 @@ Term write_response_run(Env e, Term *f, IoWork *w) {
 
 #endif
 
+#ifdef CID(write_result_fields)
+static uint32_t be_sequence_length(Env e, Term sequence, uint32_t con, uint32_t nil) {
+    uint64_t length = 0;
+    while (term_aux(sequence) == con) {
+        uint64_t at = term_peek(e.mem, sequence);
+        sequence = e.mem[at + 1];
+        if (++length >= BE_NULL) be_die("result sequence exceeds length range");
+    }
+    if (term_aux(sequence) != nil) be_die("invalid result sequence");
+    return (uint32_t)length;
+}
+static unsigned char *be_result_coordinates(Env e, Term sequence, unsigned char *out) {
+    while (term_aux(sequence) == CID(Con)) {
+        uint64_t at = term_peek(e.mem, sequence);
+        be_put_u32(out, (uint32_t)e.mem[at]); out += 4;
+        sequence = e.mem[at + 1];
+    }
+    return out;
+}
+static unsigned char *be_result_operations(Env e, Term sequence, unsigned char *out) {
+    while (term_aux(sequence) == CID(Con)) {
+        uint64_t at = term_peek(e.mem, sequence);
+        uint32_t code = (uint32_t)e.mem[at];
+        if (code > 3) be_die("invalid result operation");
+        *out++ = (unsigned char)code;
+        sequence = e.mem[at + 1];
+    }
+    return out;
+}
+static unsigned char *be_result_cigar(Env e, Term string, unsigned char *out) {
+    while (term_aux(string) == CID(SCon)) {
+        uint64_t at = term_peek(e.mem, string);
+        *out++ = (unsigned char)e.mem[at];
+        string = e.mem[at + 1];
+    }
+    return out;
+}
+Term write_result_fields_run(Env e, Term *f, IoWork *w) {
+    // Each effect argument is one Term. Optional lists/strings use Base's
+    // Some/None boxes; borrow their payloads until their owners are dropped.
+    uint32_t present[3]; Term values[3];
+    for (unsigned i = 0; i < 3; ++i) {
+        Term option = f[3 + i];
+        if (term_aux(option) == CID(None)) { present[i] = 0; values[i] = 0; }
+        else if (term_aux(option) == CID(Some)) {
+            present[i] = 1; values[i] = e.mem[term_peek(e.mem, option)];
+        } else be_die("invalid optional result field");
+    }
+    uint32_t ends = be_sequence_length(e, f[2], CID(Con), CID(Nil));
+    uint32_t starts = present[0] ? be_sequence_length(e, values[0], CID(Con), CID(Nil)) : BE_NULL;
+    uint32_t operations = present[1] ? be_sequence_length(e, values[1], CID(Con), CID(Nil)) : BE_NULL;
+    uint32_t cigar = present[2] ? be_sequence_length(e, values[2], CID(SCon), CID(SNil)) : BE_NULL;
+    uint64_t size = BE_RESPONSE_SIZE + 4ull * ends + (present[0] ? 4ull * starts : 0)
+        + (present[1] ? operations : 0) + (present[2] ? cigar : 0);
+    if (size > INT_MAX) be_die("response exceeds protocol length range");
+    unsigned char *buffer = malloc((size_t)size);
+    if (!buffer) be_die("response allocation failed");
+    memcpy(buffer, "BER1", 4);
+    uint32_t fields[6] = {(u32)f[0], (u32)f[1], ends, starts, operations, cigar};
+    for (unsigned i = 0; i < 6; ++i) be_put_u32(buffer + 4 + 4*i, fields[i]);
+    unsigned char *out = be_result_coordinates(e, f[2], buffer + BE_RESPONSE_SIZE);
+    if (present[0]) out = be_result_coordinates(e, values[0], out);
+    if (present[1]) out = be_result_operations(e, values[1], out);
+    if (present[2]) out = be_result_cigar(e, values[2], out);
+    if ((uint64_t)(out - buffer) != size) be_die("inconsistent result lengths");
+    be_write_frame(buffer, size); free(buffer);
+    term_drop(e, f[2]);
+    term_drop(e, f[3]);
+    term_drop(e, f[4]);
+    term_drop(e, f[5]);
+    return term_pak(CID(Unit), 0);
+}
+#endif
+
 static void __attribute__((constructor)) byte_transport_effects(void) {
+#ifdef CID(write_result_fields)
+    io_eff(CID(write_result_fields), write_result_fields_run);
+#endif
 #ifdef CID(read_request)
     io_eff(CID(read_request), read_request_run);
 #endif

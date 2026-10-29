@@ -86,6 +86,15 @@ def Laws.workspace_selected_padding():
 def Laws.workspace_selected_logical_guard():
   {==}
 
+def Laws.transport_coordinate_values():
+  {==}
+
+def Laws.transport_optional_coordinate_values():
+  {==}
+
+def Laws.transport_optional_operation_values():
+  {==}
+
 def Laws.indexed_trace_cell_tie():
   {==}
 

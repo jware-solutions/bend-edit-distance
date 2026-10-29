@@ -56,7 +56,7 @@ def aligned(~State: Type, handle: U32, result: State & E.AlignResult) -> IO(Unit
   (query, value) = result
   do IO<Unit>:
     restore(State, handle, query)
-    T.write_response(P.encode(value))
+    T.write_result(value)
 
 def align(~State: Type, ~run: State -> String -> Q.Options -> (State & E.AlignResult),
           +handle: U32, target: String, options: Q.Options, exists: Bool) -> IO(Unit):

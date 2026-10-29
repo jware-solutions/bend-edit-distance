@@ -1,3 +1,4 @@
+import ./PathList.bend as PL
 import ./TraceMatrix.bend as TM
 import ./Frontier.bend as F
 import Base
@@ -87,7 +88,7 @@ def traceback(fuel: Nat, current: List<&2, TraceCell>,
     case 0n _ _:
       operations
     case 1n+p _ Nil{}:
-      List.append(&2, E.Operation, List.replicate(E.Operation, column, E.Delete{}), operations)
+      PL.repeat(column, E.Delete{}, operations)
     case 1n+p Nil{} _:
       operations
     case 1n+p TraceCell{_, E.Insert{}} <> _ row <> rest:
@@ -131,6 +132,19 @@ def trace_path_sized(+query: String, +target: String, pairs: List<&2, E.Equality
 
 def trace_path(+query: String, +target: String, pairs: List<&2, E.EqualityPair>) -> List<&2, E.Operation>:
   trace_path_sized(query, target, pairs, String.length(query), String.length(target))
+
+def trace_path.into_supported(query: String, target: String, pairs: List<&2, E.EqualityPair>,
+                               height: Nat, width: Nat, operations: List<&2, E.Operation>,
+                               supported: Bool) -> List<&2, E.Operation>:
+  match supported:
+    case True{}:
+      TM.path_sized_into(query, target, pairs, height, width, operations)
+    case False{}:
+      PL.append(dp(query, target, pairs), operations)
+
+def trace_path_sized_into(query: String, target: String, pairs: List<&2, E.EqualityPair>,
+                            +height: Nat, +width: Nat, operations: List<&2, E.Operation>) -> List<&2, E.Operation>:
+  trace_path.into_supported(query, target, pairs, height, width, operations, TM.supported(height, width))
 
 # Bound the complete small matrix, including its boundary cells. A one-row
 # problem is also a base case, with linear storage in the column width.
@@ -192,43 +206,40 @@ def midpoint(left: String, right: String, +target: String,
 # Score passes run in balanced parallel calls and are consumed before recursion.
 # Subpaths are evaluated sequentially to bound live score storage even on many
 # threads; the result lists themselves necessarily use O(m+n) space.
-def divide(fuel: Nat, +query: String, +target: String, +query_length: Nat,
-             +target_length: Nat, +pairs: List<&2, E.EqualityPair>, small: Bool) ->
+def divide_into(fuel: Nat, +query: String, +target: String, +query_length: Nat,
+             +target_length: Nat, +pairs: List<&2, E.EqualityPair>, small: Bool,
+                  operations: List<&2, E.Operation>) ->
              List<&2, E.Operation>:
   match fuel query target small:
     case _ SNil{} _ _:
-      List.replicate(E.Operation, target_length, E.Delete{})
+      PL.repeat(target_length, E.Delete{}, operations)
     case _ _ SNil{} _:
-      List.replicate(E.Operation, query_length, E.Insert{})
+      PL.repeat(query_length, E.Insert{}, operations)
     case 0n _ _ _:
-      trace_path_sized(query, target, pairs, query_length, target_length)
+      trace_path_sized_into(query, target, pairs, query_length, target_length, operations)
     case 1n+p SCon{_, SNil{}} _ _:
-      trace_path_sized(query, target, pairs, query_length, target_length)
+      trace_path_sized_into(query, target, pairs, query_length, target_length, operations)
     case 1n+p _ _ True{}:
-      trace_path_sized(query, target, pairs, query_length, target_length)
+      trace_path_sized_into(query, target, pairs, query_length, target_length, operations)
     case Succ{+p} _ _ False{}:
       +half = Nat.div(query_length, 2n)
-      +left = String.take(query, half)
+      +left = S.take(query, half)
       +right = String.drop(query, half)
       +cut = midpoint(left, right, target, pairs)
-      left_path = divide(p, left, String.take(target, cut), half, cut, pairs,
-        small_matrix(half, cut))
       +right_length = Nat.sub(query_length, half)
       +right_width = Nat.sub(target_length, cut)
-      right_path = divide(p, right, String.drop(target, cut), right_length, right_width, pairs,
-        small_matrix(right_length, right_width))
-      List.append(&2, E.Operation, left_path, right_path)
+      right_path = divide_into(p, right, String.drop(target, cut), right_length, right_width, pairs,
+        small_matrix(right_length, right_width), operations)
+      divide_into(p, left, S.take(target, cut), half, cut, pairs, small_matrix(half, cut), right_path)
+
+# Build the right suffix first, then prepend the left path during traceback.
+# Subpaths stay sequential and no intermediate path concatenation is needed.
+def divide(fuel: Nat, query: String, target: String, query_length: Nat,
+             target_length: Nat, pairs: List<&2, E.EqualityPair>, small: Bool) -> List<&2, E.Operation>:
+  divide_into(fuel, query, target, query_length, target_length, pairs, small, Nil{})
 
 def transpose(operations: List<&2, E.Operation>) -> List<&2, E.Operation>:
-  match operations:
-    case Nil{}:
-      Nil{}
-    case E.Insert{} <> tail:
-      E.Delete{} <> transpose(tail)
-    case E.Delete{} <> tail:
-      E.Insert{} <> transpose(tail)
-    case operation <> tail:
-      operation <> transpose(tail)
+  PL.transpose(operations)
 
 def reconstruct_order(query: String, target: String, +query_length: Nat,
                         +target_length: Nat, pairs: List<&2, E.EqualityPair>,
@@ -249,19 +260,25 @@ def reconstruct(+query: String, +target: String, pairs: List<&2, E.EqualityPair>
 # A zero-cost path contains only matches. One edit between equal lengths
 # must be one diagonal mismatch: a pair of gaps would already cost two.
 # Alignment still validates the complete path against the selected interval.
-def diagonal_literal(query: String, target: String) -> List<&2, E.Operation>:
+def diagonal_literal.from(query: String, target: String, operations: List<&2, E.Operation>) -> List<&2, E.Operation>:
   match query target:
     case SCon{q, qt} SCon{t, tt}:
-      diagonal_operation(Char.is_eq(q, t)) <> diagonal_literal(qt, tt)
+      diagonal_literal.from(qt, tt, diagonal_operation(Char.is_eq(q, t)) <> operations)
     case _ _:
-      Nil{}
+      List.reverse(&2, E.Operation, operations)
 
-def diagonal_equalities(query: String, target: String, +pairs: List<&2, E.EqualityPair>) -> List<&2, E.Operation>:
+def diagonal_literal(query: String, target: String) -> List<&2, E.Operation>:
+  diagonal_literal.from(query, target, Nil{})
+
+def diagonal_equalities.from(query: String, target: String, +pairs: List<&2, E.EqualityPair>, operations: List<&2, E.Operation>) -> List<&2, E.Operation>:
   match query target:
     case SCon{q, qt} SCon{t, tt}:
-      diagonal_operation(E.equal(pairs, q, t)) <> diagonal_equalities(qt, tt, pairs)
+      diagonal_equalities.from(qt, tt, pairs, diagonal_operation(E.equal(pairs, q, t)) <> operations)
     case _ _:
-      Nil{}
+      List.reverse(&2, E.Operation, operations)
+
+def diagonal_equalities(query: String, target: String, pairs: List<&2, E.EqualityPair>) -> List<&2, E.Operation>:
+  diagonal_equalities.from(query, target, pairs, Nil{})
 
 def diagonal(query: String, target: String, pairs: List<&2, E.EqualityPair>) -> List<&2, E.Operation>:
   match pairs:
@@ -287,7 +304,7 @@ def reconstruct_known.positive(+query: String, +target: String, +pairs: List<&2,
 def reconstruct_known(query: String, target: String, pairs: List<&2, E.EqualityPair>, distance: Nat) -> List<&2, E.Operation>:
   match distance:
     case 0n:
-      List.replicate(E.Operation, S.length(query), E.Match{})
+      PL.repeat(S.length(query), E.Match{}, Nil{})
     case 1n+p:
       reconstruct_known.positive(query, target, pairs, Nat.is_eq(p, 0n))
 
@@ -295,21 +312,27 @@ def reconstruct_known(query: String, target: String, pairs: List<&2, E.EqualityP
 # Delete=2 consumes target only, Mismatch=3 consumes both. Validation requires
 # exact consumption, the configured (symmetric, nontransitive) predicate on
 # every diagonal operation, and an edit cost equal to the reported distance.
-def validate(operations: List<&2, E.Operation>, query: String, target: String,
-               +pairs: List<&2, E.EqualityPair>, +expected: Nat, cost: Nat) -> Bool:
-  match operations query target:
-    case Nil{} SNil{} SNil{}:
-      Nat.is_eq(cost, expected)
-    case E.Match{} <> tail SCon{q, qt} SCon{t, tt}:
-      Bool.and(E.equal(pairs, q, t), validate(tail, qt, tt, pairs, expected, cost))
-    case E.Mismatch{} <> tail SCon{q, qt} SCon{t, tt}:
-      Bool.and(Bool.not(E.equal(pairs, q, t)), validate(tail, qt, tt, pairs, expected, 1n+cost))
-    case E.Insert{} <> tail SCon{_, qt} _:
-      validate(tail, qt, target, pairs, expected, 1n+cost)
-    case E.Delete{} <> tail _ SCon{_, tt}:
-      validate(tail, query, tt, pairs, expected, 1n+cost)
-    case _ _ _:
+def validate.from(operations: List<&2, E.Operation>, valid: Bool, query: String, target: String,
+                    +pairs: List<&2, E.EqualityPair>, +expected: Nat, cost: Nat) -> Bool:
+  match operations valid query target:
+    case _ False{} _ _:
       False{}
+    case Nil{} True{} SNil{} SNil{}:
+      Nat.is_eq(cost, expected)
+    case E.Match{} <> tail True{} SCon{q, qt} SCon{t, tt}:
+      validate.from(tail, E.equal(pairs, q, t), qt, tt, pairs, expected, cost)
+    case E.Mismatch{} <> tail True{} SCon{q, qt} SCon{t, tt}:
+      validate.from(tail, Bool.not(E.equal(pairs, q, t)), qt, tt, pairs, expected, 1n+cost)
+    case E.Insert{} <> tail True{} SCon{_, qt} _:
+      validate.from(tail, True{}, qt, target, pairs, expected, 1n+cost)
+    case E.Delete{} <> tail True{} _ SCon{_, tt}:
+      validate.from(tail, True{}, query, tt, pairs, expected, 1n+cost)
+    case _ _ _ _:
+      False{}
+
+def validate(operations: List<&2, E.Operation>, query: String, target: String,
+                 pairs: List<&2, E.EqualityPair>, expected: Nat, cost: Nat) -> Bool:
+  validate.from(operations, True{}, query, target, pairs, expected, cost)
 
 def valid_path(query: String, target: String, operations: List<&2, E.Operation>,
                  pairs: List<&2, E.EqualityPair>, distance: Nat) -> Bool:

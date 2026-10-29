@@ -50,7 +50,7 @@ def span(target: String, location: Location) -> String:
     case Location{E.BeforeStart{}, _}:
       ""
     case Location{E.Position{index}, start}:
-      String.drop(String.take(target, 1n+index), start)
+      String.drop(S.take(target, 1n+index), start)
 
 def path_result(score: U32, +locations: List<&2, Location>,
                 +operations: List<&2, E.Operation>, format: E.CigarFormat) -> E.AlignResult:

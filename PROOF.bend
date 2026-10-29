@@ -95,6 +95,46 @@ def Laws.transport_optional_coordinate_values():
 def Laws.transport_optional_operation_values():
   {==}
 
+def Laws.tail_take_small_equivalence(sequence):
+  match sequence:
+    case Laws.EmptyAscii{}:
+      {==}
+    case Laws.UpperAscii{}:
+      {==}
+    case Laws.LowerAscii{}:
+      {==}
+    case Laws.UpperUpperAscii{}:
+      {==}
+    case Laws.UpperLowerAscii{}:
+      {==}
+    case Laws.LowerUpperAscii{}:
+      {==}
+    case Laws.LowerLowerAscii{}:
+      {==}
+
+def Laws.tail_take_zero(sequence):
+  match sequence:
+    case SNil{}:
+      {==}
+    case SCon{_, _}:
+      {==}
+
+def Laws.tail_take_nonbyte():
+  {==}
+
+def Laws.path_list_append_suffix(suffix):
+  match suffix:
+    case Nil{}:
+      {==}
+    case _ <> _:
+      {==}
+
+def Laws.trace_suffix_preserves_tie(suffix):
+  {==}
+
+def Laws.trace_fill_preserves_tie():
+  {==}
+
 def Laws.indexed_trace_cell_tie():
   {==}
 

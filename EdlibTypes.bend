@@ -170,15 +170,18 @@ def alignment_runs_reversed(operations: List<&2, Operation>, +format: CigarForma
 def alignment_runs(operations: List<&2, Operation>, format: CigarFormat) -> List<&2, CigarRun>:
   List.reverse(&2, CigarRun, alignment_runs_reversed(operations, format, Nil{}))
 
-def cigar_runs_show(runs: List<&2, CigarRun>) -> String:
+def cigar_runs_show.reversed(runs: List<&2, CigarRun>, value: String) -> String:
   match runs:
     case Nil{}:
-      ""
+      value
     case CigarRun{count, symbol} <> tail:
-      Nat.show(count) ++ SCon{symbol, cigar_runs_show(tail)}
+      cigar_runs_show.reversed(tail, Nat.show(count) ++ SCon{symbol, value})
+
+def cigar_runs_show(runs: List<&2, CigarRun>) -> String:
+  cigar_runs_show.reversed(List.reverse(&2, CigarRun, runs), "")
 
 def alignment_to_cigar(operations: List<&2, Operation>, format: CigarFormat) -> String:
-  cigar_runs_show(alignment_runs(operations, format))
+  cigar_runs_show.reversed(alignment_runs_reversed(operations, format, Nil{}), "")
 
 def coordinates_show(locations: List<&2, Coordinate>) -> String:
   List.show(~&2, ~Coordinate, ~coordinate_show, locations)

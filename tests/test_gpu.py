@@ -78,6 +78,49 @@ def test_successive_prepared_cuda_batches(gpu_session_probe, bend_binary):
     assert metrics["peak_bytes"] - metrics["baseline_bytes"] < 256 * 1024 * 1024
 
 
+def long_path_results(binary, reference, oracle, *, gpu):
+    import random
+    from alignment import EqualityPair, Mode, Task
+    from transport import AlignmentWorker
+    rng = random.Random(1614)
+    pairs = (EqualityPair("A", "N"), EqualityPair("N", "C"), EqualityPair(0, 255))
+    bangs = 0
+    with AlignmentWorker([binary, *runtime_prefix(threads=4, gpu=gpu), "--worker"]) as worker, \
+            AlignmentWorker([reference, *runtime_prefix(threads=4), "--worker"]) as ref:
+        for length in (1024, 4097, 8193):
+            query = bytes(rng.choices(b"ACN\0\xff", k=length)) if length != 8193 else (bytes(range(256)) * 33)[:length]
+            edited = bytearray(query)
+            edited[length // 2] ^= 0x55
+            targets = [query, bytes(edited), b"Z" + bytes(edited)]
+            if length == 1024:
+                targets.append(bytes(rng.choices(b"ACN\0\xff", k=length + 1)))
+            with worker.prepare(query, pairs, timeout=120) as prepared:
+                for mode in Mode:
+                    config = AlignConfig(mode, Task.PATH, equalities=pairs)
+                    actual = prepared.align_batch(targets, config, timeout=120)
+                    assert actual == [ref.align(query, target, config, timeout=120) for target in targets]
+                    for target, result in zip(targets, actual):
+                        expected = cpp_edlib_align(query, target, config, binary=oracle, timeout=120)
+                        assert (result.status, result.distance, result.end_locations, result.start_locations) == (
+                            expected.status, expected.distance, expected.end_locations, expected.start_locations)
+                        assert_valid_path(query, target, config, result)
+                    bangs += 1
+        assert worker.retained_entries == worker.retained_bytes == 0
+    assert worker.process.returncode == 0, worker._diagnostics
+    return worker._diagnostics, bangs
+
+
+def test_long_paths_gpu_entry_cpu_results(gpu_binary, bend_binary, cpp_binary):
+    long_path_results(gpu_binary, bend_binary, cpp_binary, gpu="off")
+
+
+@pytest.mark.gpu
+def test_long_paths_complete_on_cuda(gpu_session_probe, bend_binary, cpp_binary):
+    from benchmarks.session_runner import session_metrics
+    diagnostics, bangs = long_path_results(gpu_session_probe, bend_binary, cpp_binary, gpu="1GB")
+    session_metrics(diagnostics, bangs)
+
+
 def expected_results(jobs, bend_binary, cpp_binary):
     results = singles(jobs, bend_binary)
     for (query, target, config), result in zip(jobs, results):

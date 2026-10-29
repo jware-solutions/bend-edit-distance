@@ -1,4 +1,5 @@
 import ./src/Sequence.bend as S
+import ./src/PathList.bend as PL
 import ./src/Frontier.bend as F
 import ./src/PreparedPool.bend as PP
 import ./src/Word.bend as Word
@@ -191,6 +192,41 @@ def small_ascii(sequence: SmallAscii) -> String:
       "aA"
     case LowerLowerAscii{}:
       "aa"
+
+law tail_take_small_equivalence:
+  for sequence: SmallAscii
+  {(S.take(small_ascii(sequence), 0n), S.take(small_ascii(sequence), 1n),
+     S.take(small_ascii(sequence), 2n), S.take(small_ascii(sequence), 3n)) ==
+   (String.take(small_ascii(sequence), 0n), String.take(small_ascii(sequence), 1n),
+     String.take(small_ascii(sequence), 2n), String.take(small_ascii(sequence), 3n)) :
+     String & String & String & String}
+
+law tail_take_zero:
+  for sequence: String
+  {S.take(sequence, 0n) == "" : String}
+
+law tail_take_nonbyte:
+  {S.take(SCon{Chr{256}, "AB"}, 1n) == SCon{Chr{256}, ""} : String}
+
+law path_list_append_suffix:
+  for suffix: List<&2, E.Operation>
+  {PL.append([E.Match{}, E.Insert{}], suffix) == E.Match{} <> E.Insert{} <> suffix : List<&2, E.Operation>}
+
+# The packed matrix has three logical rows, two columns and one padded row.
+# Split filling from traceback so each check fits the pinned kernel's fuel.
+def trace_tie_fixture() -> TM.Filling:
+  TM.Filling{
+    ANode{ANode{ANode{ALeaf{2}, ALeaf{6}}, ANode{ALeaf{5}, ALeaf{0}}},
+      ANode{ANode{ALeaf{9}, ALeaf{5}}, ANode{ALeaf{0}, ALeaf{0}}}}, 0, 1}
+
+law trace_fill_preserves_tie:
+  {TM.fill("AA", "A", Nil{}, 1, 2,
+    TM.Filling{TM.initial(2n, 0, [0 : U32^3n]), 0, 0}) == trace_tie_fixture() : TM.Filling}
+
+law trace_suffix_preserves_tie:
+  for suffix: List<&2, E.Operation>
+  {TM.complete_into(2n, 1n, 2, suffix, trace_tie_fixture()) ==
+    E.Match{} <> E.Insert{} <> suffix : List<&2, E.Operation>}
 
 # Exactly the three valid horizontal differences, with neither sign ambiguous.
 type CarrySign is Data:

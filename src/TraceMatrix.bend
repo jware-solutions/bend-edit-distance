@@ -1,3 +1,4 @@
+import ./PathList.bend as PL
 import Base
 import ../EdlibTypes.bend as E
 import ./Profile.bend as P
@@ -97,11 +98,9 @@ def make_trace.chosen(matrix: Array<U32>, row: U32, column: U32,
                         operations: List<&2, E.Operation>, empty_row: Bool, empty_column: Bool) -> Trace:
   match empty_row empty_column:
     case True{} _:
-      Finished{List.append(&2, E.Operation,
-        List.replicate(E.Operation, U32.to_nat(column), E.Delete{}), operations)}
+      Finished{PL.repeat(U32.to_nat(column), E.Delete{}, operations)}
     case _ True{}:
-      Finished{List.append(&2, E.Operation,
-        List.replicate(E.Operation, U32.to_nat(row), E.Insert{}), operations)}
+      Finished{PL.repeat(U32.to_nat(row), E.Insert{}, operations)}
     case False{} False{}:
       Running{matrix, row, column, operations}
 
@@ -136,17 +135,25 @@ def trace(fuel: Nat, +stride: U32, state: Trace) -> List<&2, E.Operation>:
     case 1n+p Running{matrix, +row, +column, operations}:
       trace(p, stride, read_trace(row, column, operations, matrix[U32.add(U32.mul(row, stride), column)]))
 
-def complete(+height: Nat, +width: Nat, stride: U32, state: Filling) -> List<&2, E.Operation>:
+def complete_into(+height: Nat, +width: Nat, stride: U32,
+                      operations: List<&2, E.Operation>, state: Filling) -> List<&2, E.Operation>:
   Filling{matrix, _, _} = state
-  trace(Nat.add(height, width), stride, make_trace(matrix, U32.from_nat(height), U32.from_nat(width), Nil{}))
+  trace(Nat.add(height, width), stride, make_trace(matrix, U32.from_nat(height), U32.from_nat(width), operations))
 
-def path_sized(query: String, +target: String, pairs: List<&2, E.EqualityPair>,
-                 +height: Nat, +width: Nat) -> List<&2, E.Operation>:
+def complete(height: Nat, width: Nat, stride: U32, state: Filling) -> List<&2, E.Operation>:
+  complete_into(height, width, stride, Nil{}, state)
+
+def path_sized_into(query: String, +target: String, pairs: List<&2, E.EqualityPair>,
+                      +height: Nat, +width: Nat, operations: List<&2, E.Operation>) -> List<&2, E.Operation>:
   +depth = P.depth(1n+width)
   +stride = U32.shln(1, depth)
-  complete(height, width, stride,
+  complete_into(height, width, stride, operations,
     fill(query, target, pairs, 1, stride,
       Filling{initial(1n+width, 0, Array.new(U32, Nat.add(P.depth(1n+height), depth), 0)), 0, 0}))
+
+def path_sized(query: String, target: String, pairs: List<&2, E.EqualityPair>,
+                 height: Nat, width: Nat) -> List<&2, E.Operation>:
+  path_sized_into(query, target, pairs, height, width, Nil{})
 
 # Bound logical cells including boundaries. Rounded dimensions use at most
 # four times this storage; scores and indexes therefore fit their packed U32.

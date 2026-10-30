@@ -85,10 +85,10 @@ def resolve(job: E.AlignJob, scanned: Scanned) -> Resolved:
 def restore(job: E.AlignJob, resolved: Resolved) -> IO(E.AlignResult):
   match job resolved:
     case E.AlignJob{+q, +t, E.AlignConfig{_, E.Path{}, _, +pairs, format}}
-         Resolved{A.Best{score, +location <> tail}, True{}}:
+         Resolved{A.Best{+score, +location <> tail}, True{}}:
       +segment = A.span(t, location)
       do IO<E.AlignResult>:
-        operations : List<&2, E.Operation> <- T.mark(List<&2, E.Operation>, 5, R.reconstruct(q, segment, pairs))
+        operations : List<&2, E.Operation> <- T.mark(List<&2, E.Operation>, 5, R.reconstruct_known(q, segment, pairs, U32.to_nat(score)))
         T.mark(E.AlignResult, 9, A.path_validate(q, segment, pairs, score, location <> tail,
           format, operations, A.location_valid(t, location)))
     case E.AlignJob{q, t, E.AlignConfig{_, task, _, pairs, format}} Resolved{best, within}:

@@ -156,6 +156,36 @@ def Laws.pool_distance_rejection(columns):
 def Laws.pool_generic_execution(plan, options):
   {==}
 
+def Laws.bounded_path_generic_fallback(query, target, pairs, distance):
+  {==}
+
+def Laws.small_path_trail_suffix(operation, matches, previous, suffix):
+  {==}
+
+def Laws.small_path_insert_bounds(index, target, trail):
+  {==}
+
+def Laws.small_path_delete_bounds(index, query, trail):
+  {==}
+
+def Laws.small_path_nontransitive_rejection():
+  {==}
+
+def Laws.small_path_nontransitive_match():
+  {==}
+
+def Laws.small_path_substitution():
+  {==}
+
+def Laws.small_path_one_gap():
+  {==}
+
+def Laws.small_path_empty_query():
+  {==}
+
+def Laws.small_path_finite_rejection():
+  {==}
+
 def Laws.indexed_trace_cell_tie():
   {==}
 

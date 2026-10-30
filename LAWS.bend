@@ -1,6 +1,7 @@
 import ./src/Sequence.bend as S
 import ./src/PathList.bend as PL
 import ./src/Frontier.bend as F
+import ./src/SmallPath.bend as SP
 import ./src/PreparedPool.bend as PP
 import ./src/Word.bend as Word
 import ./src/TraceMatrix.bend as TM
@@ -948,6 +949,56 @@ law pool_generic_execution:
   for plan: PP.Plan
   for options: Q.Options
   {PP.execute_known(False{}, plan, options) == PP.execute(plan, options, False{}) : PP.PoolDone}
+
+law bounded_path_generic_fallback:
+  for query: String
+  for target: String
+  for pairs: List<&2, E.EqualityPair>
+  for distance: Nat
+  {R.reconstruct_bounded.supported(query, target, pairs, distance, False{}) ==
+    R.reconstruct(query, target, pairs) : List<&2, E.Operation>}
+
+law small_path_trail_suffix:
+  for operation: E.Operation
+  for matches: Nat
+  for previous: SP.Trail
+  for suffix: List<&2, E.Operation>
+  {SP.operations(SP.Step{operation, matches, previous}, suffix) ==
+    SP.operations(previous, operation <> PL.repeat(matches, E.Match{}, suffix)) : List<&2, E.Operation>}
+
+law small_path_insert_bounds:
+  for index: Nat
+  for target: String
+  for trail: SP.Trail
+  {SP.inserted(SP.Reached{index, "", target, trail}) == SP.NoSeed{} : SP.Seed}
+
+law small_path_delete_bounds:
+  for index: Nat
+  for query: String
+  for trail: SP.Trail
+  {SP.deleted(SP.Reached{index, query, "", trail}) == SP.NoSeed{} : SP.Seed}
+
+law small_path_nontransitive_rejection:
+  {SP.search("A", "C", [E.EqualityPair{'A', 'N'}, E.EqualityPair{'N', 'C'}], 0n) ==
+    SP.NotFound{} : SP.Search}
+
+law small_path_nontransitive_match:
+  {SP.known("AC", "NN", [E.EqualityPair{'A', 'N'}, E.EqualityPair{'N', 'C'}], 0n) ==
+    Some{[E.Match{}, E.Match{}]} : Maybe<&2, List<&2, E.Operation>>}
+
+law small_path_substitution:
+  {SP.known("A", "C", [E.EqualityPair{'A', 'N'}, E.EqualityPair{'N', 'C'}], 1n) ==
+    Some{[E.Mismatch{}]} : Maybe<&2, List<&2, E.Operation>>}
+
+law small_path_one_gap:
+  {SP.known("AAA", "AA", Nil{}, 1n) == Some{[E.Match{}, E.Match{}, E.Insert{}]} :
+    Maybe<&2, List<&2, E.Operation>>}
+
+law small_path_empty_query:
+  {SP.known("", "AC", Nil{}, 2n) == Some{[E.Delete{}, E.Delete{}]} : Maybe<&2, List<&2, E.Operation>>}
+
+law small_path_finite_rejection:
+  {SP.search("AC", "GT", Nil{}, 1n) == SP.NotFound{} : SP.Search}
 
 # Configured DP cells and columns retain their dependencies. Independent
 # input scans, Myers profile branches and Hirschberg score passes run in

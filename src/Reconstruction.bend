@@ -1,6 +1,8 @@
 import ./PathList.bend as PL
 import ./TraceMatrix.bend as TM
 import ./Frontier.bend as F
+import ./SmallPath.bend as SP
+import ./Profile.bend as P
 import Base
 import ./Sequence.bend as S
 import ../EdlibTypes.bend as E
@@ -287,26 +289,54 @@ def diagonal(query: String, target: String, pairs: List<&2, E.EqualityPair>) -> 
     case _:
       diagonal_equalities(query, target, pairs)
 
+# Use bounded edit frontiers only for byte-specialized, low-distance paths.
+# Generic inputs and small traceback fixtures retain their original backend.
+def reconstruct_bounded.found(query: String, target: String, pairs: List<&2, E.EqualityPair>, candidate: Maybe<&2, List<&2, E.Operation>>) -> List<&2, E.Operation>:
+  match candidate:
+    case Some{operations}:
+      operations
+    case None{}:
+      reconstruct(query, target, pairs)
+
+def reconstruct_bounded.supported(+query: String, +target: String, +pairs: List<&2, E.EqualityPair>, distance: Nat, supported: Bool) -> List<&2, E.Operation>:
+  match supported:
+    case True{}:
+      reconstruct_bounded.found(query, target, pairs, SP.known(query, target, pairs, distance))
+    case False{}:
+      reconstruct(query, target, pairs)
+
+def reconstruct_bounded.eligible(+query: String, +target: String, +pairs: List<&2, E.EqualityPair>, distance: Nat, eligible: Bool) -> List<&2, E.Operation>:
+  match eligible:
+    case True{}:
+      reconstruct_bounded.supported(query, target, pairs, distance,
+        Bool.and(P.bytes(query), Bool.and(P.bytes(target), P.byte_pairs(pairs))))
+    case False{}:
+      reconstruct(query, target, pairs)
+
+def reconstruct_bounded(+query: String, target: String, pairs: List<&2, E.EqualityPair>, +distance: Nat) -> List<&2, E.Operation>:
+  reconstruct_bounded.eligible(query, target, pairs, distance,
+    Bool.and(Nat.is_ge(S.length(query), 256n), Nat.is_le(distance, SP.limit())))
+
 def reconstruct_one(+query: String, +target: String, +pairs: List<&2, E.EqualityPair>, same_length: Bool) -> List<&2, E.Operation>:
   match same_length:
     case True{}:
       diagonal(query, target, pairs)
     case False{}:
-      reconstruct(query, target, pairs)
+      reconstruct_bounded(query, target, pairs, 1n)
 
-def reconstruct_known.positive(+query: String, +target: String, +pairs: List<&2, E.EqualityPair>, one_edit: Bool) -> List<&2, E.Operation>:
+def reconstruct_known.positive(+query: String, +target: String, +pairs: List<&2, E.EqualityPair>, distance: Nat, one_edit: Bool) -> List<&2, E.Operation>:
   match one_edit:
     case True{}:
       reconstruct_one(query, target, pairs, Nat.is_eq(S.length(query), S.length(target)))
     case False{}:
-      reconstruct(query, target, pairs)
+      reconstruct_bounded(query, target, pairs, distance)
 
 def reconstruct_known(query: String, target: String, pairs: List<&2, E.EqualityPair>, distance: Nat) -> List<&2, E.Operation>:
   match distance:
     case 0n:
       PL.repeat(S.length(query), E.Match{}, Nil{})
-    case 1n+p:
-      reconstruct_known.positive(query, target, pairs, Nat.is_eq(p, 0n))
+    case Succ{+p}:
+      reconstruct_known.positive(query, target, pairs, 1n+p, Nat.is_eq(p, 0n))
 
 # Edlib codes: Match=0 consumes both, Insert=1 consumes query only,
 # Delete=2 consumes target only, Mismatch=3 consumes both. Validation requires

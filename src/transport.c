@@ -112,12 +112,14 @@ static int be_read_request(BeRequest *r) {
     }
 }
 
+static int be_batch_output;
+
 static void be_write_frame(const unsigned char *data, uint64_t size) {
     unsigned char prefix[4];
     if (size > INT_MAX) be_die("response exceeds protocol length range");
     be_put_u32(prefix, (uint32_t)size);
     if (fwrite(prefix, 1, 4, stdout) != 4 ||
-        fwrite(data, 1, (size_t)size, stdout) != size || fflush(stdout))
+        fwrite(data, 1, (size_t)size, stdout) != size || (!be_batch_output && fflush(stdout)))
         be_die("write failed");
 }
 #endif
@@ -207,6 +209,25 @@ Term read_request_run(Env e, Term *f, IoWork *w) {
     return term_ctr(CID(Bytes), fields);
 }
 
+#endif
+
+#ifdef CID(begin_batch_output)
+Term begin_batch_output_run(Env e, Term *f, IoWork *w) {
+    if (be_batch_output) be_die("nested batch output");
+    be_batch_output = 1;
+    return term_pak(CID(Unit), 0);
+}
+
+Term end_batch_output_run(Env e, Term *f, IoWork *w) {
+    if (!be_batch_output || fflush(stdout)) be_die("batch write failed");
+    be_batch_output = 0;
+    return term_pak(CID(Unit), 0);
+}
+
+static void __attribute__((constructor)) be_batch_output_effects(void) {
+    io_eff(CID(begin_batch_output), begin_batch_output_run);
+    io_eff(CID(end_batch_output), end_batch_output_run);
+}
 #endif
 
 #ifdef CID(write_response)

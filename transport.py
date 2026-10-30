@@ -29,6 +29,7 @@ CONTROL = struct.Struct("<4sIIIII")
 MAX_PREPARED_ENTRIES = 32
 MAX_RETAINED_BYTES = 64 * 1024 * 1024
 MAX_BATCH_SIZE = 65536
+READ_AHEAD_SIZE = 65536
 
 
 def sequence_bytes(value: bytes | str) -> bytes:
@@ -142,6 +143,8 @@ class AlignmentWorker:
         self._closed = False
         self._prepared = {}
         self._retained_bytes = 0
+        self._read_buffer = b""
+        self._read_offset = 0
         self._stderr = tempfile.TemporaryFile()
         try:
             self.process = subprocess.Popen(
@@ -180,17 +183,40 @@ class AlignmentWorker:
             view = view[count:]
 
     def _read(self, size: int, deadline) -> bytes:
-        chunks = bytearray()
-        while len(chunks) < size:
-            self._ready(self.process.stdout, selectors.EVENT_READ, deadline)
+        if time.monotonic() >= deadline:
+            raise TimeoutError("alignment request timed out")
+        available = len(self._read_buffer) - self._read_offset
+        if size <= available:
+            end = self._read_offset + size
+            result = self._read_buffer[self._read_offset:end]
+            self._read_offset = end
+            if end == len(self._read_buffer):
+                self._read_buffer = b""
+                self._read_offset = 0
+            return result
+        chunks = [self._read_buffer[self._read_offset:]] if available else []
+        size -= available
+        self._read_buffer = b""
+        self._read_offset = 0
+        while size:
+            if time.monotonic() >= deadline:
+                raise TimeoutError("alignment request timed out")
             try:
-                chunk = os.read(self.process.stdout.fileno(), min(size - len(chunks), 65536))
+                chunk = os.read(self.process.stdout.fileno(), READ_AHEAD_SIZE)
             except BlockingIOError:
+                self._ready(self.process.stdout, selectors.EVENT_READ, deadline)
                 continue
             if not chunk:
                 raise EOFError("worker closed stdout before a complete response")
-            chunks.extend(chunk)
-        return bytes(chunks)
+            if len(chunk) > size:
+                chunks.append(chunk[:size])
+                self._read_buffer = chunk
+                self._read_offset = size
+                size = 0
+            else:
+                chunks.append(chunk)
+                size -= len(chunk)
+        return b"".join(chunks)
 
     def align(self, query: bytes | str, target: bytes | str,
               config: AlignConfig = AlignConfig(), *, timeout: float = 10) -> AlignResult:
@@ -363,6 +389,8 @@ class AlignmentWorker:
                 prepared._released = True
             self._prepared.clear()
             self._retained_bytes = 0
+            self._read_buffer = b""
+            self._read_offset = 0
             self.process.stdin.close()
             try:
                 self.process.wait(timeout=1)

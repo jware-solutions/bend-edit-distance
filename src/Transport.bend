@@ -96,11 +96,24 @@ def read_batch(count: Nat) -> IO(List<&2, E.AlignJob>):
         tail : List<&2, E.AlignJob> <- read_batch(p)
         return head <> tail
 
-def write_batch(results: List<&2, E.AlignResult>) -> IO(Unit):
+def write_batch_items(results: List<&2, E.AlignResult>) -> IO(Unit):
   match results:
     case Nil{}:
       IO.pure(Unit, Unit{})
     case head <> tail:
       do IO<Unit>:
         write_result(head)
-        write_batch(tail)
+        write_batch_items(tail)
+
+# Standard I/O keeps a bounded buffer; flush before accepting another request.
+def begin_batch_output() -> IO(Unit):
+  import "./transport.c"
+
+def end_batch_output() -> IO(Unit):
+  import "./transport.c"
+
+def write_batch(results: List<&2, E.AlignResult>) -> IO(Unit):
+  do IO<Unit>:
+    begin_batch_output()
+    write_batch_items(results)
+    end_batch_output()

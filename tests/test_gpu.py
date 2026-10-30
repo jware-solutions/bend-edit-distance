@@ -47,6 +47,19 @@ def session_results(binary, reference, *, gpu, repeats=2):
             assert prepared.align_batch(large, config, timeout=120) == [
                 ref.align(query, target, config) for target in large]
             bangs += 3
+        # Scalar prepared NW keeps one word in registers through long target
+        # scans; consecutive calls still reset the owned band workspace.
+        for length in (1, 7, 31, 32, 33):
+            query = (b"A\0\xffN" * 9)[:length]
+            values = [b"", query, b"Z" * 4097, bytes(range(256)), query]
+            with w.prepare(query, pairs, timeout=60) as word:
+                for task in Task:
+                    config = AlignConfig(task=task, equalities=pairs)
+                    assert word.align_batch(values, config, timeout=120) == [
+                        ref.align(query, value, config) for value in values]
+                    bangs += 1
+                assert word.align(query, timeout=120).edit_distance == 0
+                bangs += 1
         # Fixed-length start resolution must complete on the device even when
         # thousands of tied locations survive, including the empty prefix.
         for query, target, pairs in [(b"A", b"C" * 4097, ()),

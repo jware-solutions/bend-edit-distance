@@ -7,6 +7,26 @@ import ./src/Myers.bend as Myers
 import ./EdlibTypes.bend as E
 import ./src/Sequence.bend as S
 
+def Laws.single_word_column(profile, block, mask):
+  match block:
+    case V.Block{pv, mv, score}:
+      {==}
+
+def Laws.single_word_shapes():
+  {==}
+
+def Laws.single_word_unknown_padding():
+  {==}
+
+def Laws.single_word_nontransitive():
+  {==}
+
+def Laws.single_word_high_bytes():
+  {==}
+
+def Laws.single_word_legacy_lookup():
+  {==}
+
 # The accumulator traversal preserves the existing String.length contracts.
 def add_successor(+a: Nat, +b: Nat) ->
     {Nat.add(a, 1n+b) == 1n+Nat.add(a, b) : Nat}:

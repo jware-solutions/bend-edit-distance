@@ -120,7 +120,8 @@ def test_public_pool_api_preserves_byte_and_generic_calls(pool_probe, threads):
     pairs = (EqualityPair("A", "N"), EqualityPair("N", "C"), EqualityPair(0, 255))
     for variant in ("byte", "both", "target"):
         for mode, task in itertools.product(Mode, Task):
-            for query, target in [(b"\0A", b""), (b"A\0\xffN" * 9, b"N\0\xffA" * 10)]:
+            for query, target in [(b"\0A", b""), (b"A\0\xffN" * 9, b"N\0\xffA" * 10),
+                                  (b"A\0\xffN" * 8, b"N\0\xffA" * 7)]:
                 config = AlignConfig(mode, task, equalities=pairs)
                 result = subprocess.run([pool_probe, *runtime_prefix(threads=threads), variant],
                     input=encode_request(query, target, config), capture_output=True, check=True, timeout=30)

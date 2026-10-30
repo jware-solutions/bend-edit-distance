@@ -279,7 +279,7 @@ def distance_leaf(values: List<&2, Target>, +threshold: E.Threshold, state: Dist
         B.IndexedResult{index, E.distance_result(length, E.BeforeStart{}, True{})} <> results})
     case Target{index, target, +columns, _} <> tail DistanceState{query, pairs, +length, profile, workspace, results}:
       distance_leaf(tail, threshold, distance_updated(index, columns, query, pairs, length, results,
-        K.search(target, profile, workspace, length, columns, threshold)))
+        Q.run_nw(target, profile, workspace, length, columns, threshold)))
 
 def execute_distance(plan: Plan, +threshold: E.Threshold) -> PoolDone:
   match plan:

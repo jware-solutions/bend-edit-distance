@@ -2,6 +2,7 @@ import ./src/Sequence.bend as S
 import ./src/PathList.bend as PL
 import ./src/Frontier.bend as F
 import ./src/SmallPath.bend as SP
+import ./src/SingleWord.bend as SW
 import ./src/PreparedPool.bend as PP
 import ./src/Word.bend as Word
 import ./src/TraceMatrix.bend as TM
@@ -22,6 +23,48 @@ import ./src/Cli.bend as AC
 import ./src/Reconstruction.bend as R
 import ./src/Batch.bend as B
 import ./GpuBatch.bend as G
+
+def single_word_state.block(profile: P.Profile, value: W.Workspace & V.Block) -> SW.State:
+  (_, block) = value
+  SW.State{profile, block}
+
+def single_word_state(value: W.Updated) -> SW.State:
+  W.Updated{profile, workspace, _, _} = value
+  single_word_state.block(profile, W.get(workspace, 0))
+
+law single_word_column:
+  for profile: P.Profile
+  for block: V.Block
+  for mask: U32
+  {SW.masked(block, (profile, mask)) ==
+    single_word_state(W.update.block(profile, 0, mask, V.Carry{1, 0},
+      (W.bounds(W.new(1n), 0, 1), block))) : SW.State}
+
+law single_word_shapes:
+  {(Q.single_word(1n, 1, 1, 1), Q.single_word(32n, 1, 1, 1),
+    Q.single_word(0n, 1, 1, 1), Q.single_word(33n, 1, 1, 1),
+    Q.single_word(1n, 2, 1, 1), Q.single_word(1n, 1, 2, 1), Q.single_word(1n, 1, 1, 0)) ==
+    (True{}, True{}, False{}, False{}, False{}, False{}, False{}) :
+    Bool & Bool & Bool & Bool & Bool & Bool & Bool}
+
+def single_word_distance(value: SW.Run) -> E.EditDistance:
+  SW.Run{_, _, distance} = value
+  distance
+
+law single_word_unknown_padding:
+  {single_word_distance(SW.run("Z", P.build("A", 1n, Nil{}), 31n)) == E.Found{1n} : E.EditDistance}
+
+law single_word_nontransitive:
+  {single_word_distance(SW.run("C", P.build("A", 1n,
+    [E.EqualityPair{'A', 'N'}, E.EqualityPair{'N', 'C'}]), 31n)) == E.Found{1n} : E.EditDistance}
+
+law single_word_high_bytes:
+  {single_word_distance(SW.run(SCon{Chr{255}, ""}, P.build(SCon{Chr{128}, ""}, 1n,
+    [E.EqualityPair{Chr{128}, Chr{255}}]), 31n)) == E.Found{0n} : E.EditDistance}
+
+law single_word_legacy_lookup:
+  {single_word_distance(SW.run(SCon{Chr{321}, ""}, P.build("A", 1n, Nil{}), 31n)) ==
+    E.Found{0n} : E.EditDistance}
 
 # GPU batches prepare a complete plan on the host, execute it in one ! call,
 # then restore input order on the host. Bang changes scheduling, not values.

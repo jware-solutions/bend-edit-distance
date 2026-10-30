@@ -6,6 +6,7 @@ import ./src/BitVector.bend as V
 import ./src/Profile.bend as P
 import ./src/Workspace.bend as W
 import ./src/SearchKernel.bend as K
+import ./src/SingleWord.bend as SW
 import ./src/Myers.bend as M
 import ./src/Alignment.bend as A
 
@@ -60,19 +61,53 @@ def align.semi(+query: String, +target: String, length: Nat, +pairs: List<&2, E.
   (Prepared{query, pairs, length, Some{profile}, workspace},
     M.configured_finish(query, target, mode, task, threshold, pairs, format, best))
 
+def run_nw.result(workspace: W.Workspace, +columns: Nat, result: SW.Run) -> K.Run:
+  SW.Run{profile, block, distance} = result
+  K.Run{profile, W.put(W.bounds(workspace, 0, 1), 0, block), K.Stats{distance, columns, columns, 1n}}
+
+def run_nw.unlimited(target: String, profile: P.Profile, workspace: W.Workspace,
+                       length: Nat, columns: Nat, single: Bool) -> K.Run:
+  match single:
+    case True{}:
+      run_nw.result(workspace, columns, SW.run(target, profile, Word.padding(length)))
+    case False{}:
+      K.search(target, profile, workspace, length, columns, E.Unlimited{})
+
+# The scalar loop is valid only for a complete, nonempty query word.
+# Guard logical shapes before the final write into the wrapping array.
+def single_word(+length: Nat, stride: U32, blocks: U32, capacity: U32) -> Bool:
+  Bool.and(Bool.and(Nat.is_gt(length, 0n), Nat.is_le(length, Word.width())),
+    Bool.and(U32.is_eq(stride, 1), Bool.and(U32.is_eq(blocks, 1), U32.is_eq(capacity, 1))))
+
+def run_nw.shaped(profile: P.Profile, workspace: W.Workspace, target: String, +length: Nat,
+                     columns: Nat) -> K.Run:
+  P.Profile{lookup, masks, +stride, rows, +blocks, used} = profile
+  W.Workspace{data, +capacity, first, last} = workspace
+  run_nw.unlimited(target, P.Profile{lookup, masks, stride, rows, blocks, used},
+    W.Workspace{data, capacity, first, last}, length, columns,
+    single_word(length, stride, blocks, capacity))
+
+def run_nw(target: String, profile: P.Profile, workspace: W.Workspace, length: Nat,
+              columns: Nat, threshold: E.Threshold) -> K.Run:
+  match threshold:
+    case E.Unlimited{}:
+      run_nw.shaped(profile, workspace, target, length, columns)
+    case _:
+      K.search(target, profile, workspace, length, columns, threshold)
+
 def align.bytes(+query: String, +target: String, +length: Nat, +columns: Nat,
                   +pairs: List<&2, E.EqualityPair>, profile: P.Profile, workspace: W.Workspace,
                   options: Options) -> Prepared & E.AlignResult:
   match options:
     case Options{E.NW{}, E.Distance{}, threshold, format}:
       align.nw_metadata(query, length, columns, pairs, E.Distance{}, format,
-        K.search(target, profile, workspace, length, columns, threshold))
+        run_nw(target, profile, workspace, length, columns, threshold))
     case Options{E.NW{}, E.Locations{}, threshold, format}:
       align.nw_metadata(query, length, columns, pairs, E.Locations{}, format,
-        K.search(target, profile, workspace, length, columns, threshold))
+        run_nw(target, profile, workspace, length, columns, threshold))
     case Options{E.NW{}, E.Path{}, threshold, format}:
       align.nw(query, target, length, columns, pairs, E.Path{}, format,
-        K.search(target, profile, workspace, length, columns, threshold))
+        run_nw(target, profile, workspace, length, columns, threshold))
     case Options{+mode, task, +threshold, format}:
       align.semi(query, target, length, pairs, mode, task, threshold, format,
         K.best(target, profile, workspace, length, M.semiglobal_maximum(threshold, length), mode))

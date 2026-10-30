@@ -49,8 +49,8 @@ def session_results(binary, reference, *, gpu, repeats=2):
             bangs += 3
         # Scalar prepared NW keeps one word in registers through long target
         # scans; consecutive calls still reset the owned band workspace.
-        for length in (1, 7, 31, 32, 33):
-            query = (b"A\0\xffN" * 9)[:length]
+        for length in (1, 7, 31, 32, 33, 63, 64, 65):
+            query = (b"A\0\xffN" * 17)[:length]
             values = [b"", query, b"Z" * 4097, bytes(range(256)), query]
             with w.prepare(query, pairs, timeout=60) as word:
                 for task in Task:

@@ -3,6 +3,7 @@ import ./src/PathList.bend as PL
 import ./src/Frontier.bend as F
 import ./src/SmallPath.bend as SP
 import ./src/SingleWord.bend as SW
+import ./src/TwoWord.bend as TW
 import ./src/PreparedPool.bend as PP
 import ./src/Word.bend as Word
 import ./src/TraceMatrix.bend as TM
@@ -65,6 +66,50 @@ law single_word_high_bytes:
 law single_word_legacy_lookup:
   {single_word_distance(SW.run(SCon{Chr{321}, ""}, P.build("A", 1n, Nil{}), 31n)) ==
     E.Found{0n} : E.EditDistance}
+
+def two_word_state.second(profile: P.Profile, first: V.Block, value: W.Workspace & V.Block) -> TW.State:
+  (_, second) = value
+  TW.State{profile, first, second}
+
+def two_word_state.first(profile: P.Profile, value: W.Workspace & V.Block) -> TW.State:
+  (workspace, first) = value
+  two_word_state.second(profile, first, W.get(workspace, 1))
+
+def two_word_state(value: W.Updated) -> TW.State:
+  W.Updated{profile, workspace, _, _} = value
+  two_word_state.first(profile, W.get(workspace, 0))
+
+law two_word_carry:
+  for profile: P.Profile
+  for first: V.Block
+  for second: V.Block
+  for carry: V.Carry
+  for mask: U32
+  {TW.second.masked(first, second, carry, (profile, mask)) ==
+    two_word_state(W.update.block(profile, 1, mask, carry,
+      (W.put(W.bounds(W.new(2n), 0, 2), 0, first), second))) : TW.State}
+
+law two_word_shapes:
+  {(Q.two_word(33n, 2, 2, 2), Q.two_word(64n, 2, 2, 2), Q.two_word(32n, 2, 2, 2),
+    Q.two_word(65n, 2, 2, 2), Q.two_word(33n, 1, 2, 2), Q.two_word(33n, 2, 1, 2),
+    Q.two_word(33n, 2, 2, 1)) == (True{}, True{}, False{}, False{}, False{}, False{}, False{}) :
+    Bool & Bool & Bool & Bool & Bool & Bool & Bool}
+
+def two_word_distance(value: TW.Run) -> E.EditDistance:
+  TW.Run{_, _, _, distance} = value
+  distance
+
+law two_word_unknown_padding:
+  {two_word_distance(TW.run("Z", P.build("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAC", 33n, Nil{}), 31n)) ==
+    E.Found{33n} : E.EditDistance}
+
+law two_word_boundary_match:
+  {two_word_distance(TW.run("C", P.build("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAC", 33n, Nil{}), 31n)) ==
+    E.Found{32n} : E.EditDistance}
+
+law two_word_nontransitive:
+  {two_word_distance(TW.run("C", P.build("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", 33n,
+    [E.EqualityPair{'A', 'N'}, E.EqualityPair{'N', 'C'}]), 31n)) == E.Found{33n} : E.EditDistance}
 
 # GPU batches prepare a complete plan on the host, execute it in one ! call,
 # then restore input order on the host. Bang changes scheduling, not values.

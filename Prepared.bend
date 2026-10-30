@@ -7,6 +7,7 @@ import ./src/Profile.bend as P
 import ./src/Workspace.bend as W
 import ./src/SearchKernel.bend as K
 import ./src/SingleWord.bend as SW
+import ./src/TwoWord.bend as TW
 import ./src/Myers.bend as M
 import ./src/Alignment.bend as A
 
@@ -65,26 +66,44 @@ def run_nw.result(workspace: W.Workspace, +columns: Nat, result: SW.Run) -> K.Ru
   SW.Run{profile, block, distance} = result
   K.Run{profile, W.put(W.bounds(workspace, 0, 1), 0, block), K.Stats{distance, columns, columns, 1n}}
 
-def run_nw.unlimited(target: String, profile: P.Profile, workspace: W.Workspace,
-                       length: Nat, columns: Nat, single: Bool) -> K.Run:
-  match single:
-    case True{}:
-      run_nw.result(workspace, columns, SW.run(target, profile, Word.padding(length)))
-    case False{}:
-      K.search(target, profile, workspace, length, columns, E.Unlimited{})
-
 # The scalar loop is valid only for a complete, nonempty query word.
 # Guard logical shapes before the final write into the wrapping array.
 def single_word(+length: Nat, stride: U32, blocks: U32, capacity: U32) -> Bool:
   Bool.and(Bool.and(Nat.is_gt(length, 0n), Nat.is_le(length, Word.width())),
     Bool.and(U32.is_eq(stride, 1), Bool.and(U32.is_eq(blocks, 1), U32.is_eq(capacity, 1))))
 
+def two_word(+length: Nat, stride: U32, blocks: U32, capacity: U32) -> Bool:
+  Bool.and(Bool.and(Nat.is_gt(length, Word.width()), Nat.is_le(length, Nat.mul(Word.width(), 2n))),
+    Bool.and(U32.is_eq(stride, 2), Bool.and(U32.is_eq(blocks, 2), U32.is_eq(capacity, 2))))
+
+def run_nw.two.result(workspace: W.Workspace, +columns: Nat, result: TW.Run) -> K.Run:
+  TW.Run{profile, first, second, distance} = result
+  K.Run{profile, W.put(W.put(W.bounds(workspace, 0, 2), 0, first), 1, second),
+    K.Stats{distance, Nat.mul(columns, 2n), columns, 1n}}
+
+def run_nw.two(target: String, profile: P.Profile, workspace: W.Workspace,
+                  length: Nat, columns: Nat, suitable: Bool) -> K.Run:
+  match suitable:
+    case True{}:
+      run_nw.two.result(workspace, columns, TW.run(target, profile, Word.padding(length)))
+    case False{}:
+      K.search(target, profile, workspace, length, columns, E.Unlimited{})
+
+def run_nw.small(target: String, profile: P.Profile, workspace: W.Workspace,
+                    +length: Nat, columns: Nat, stride: U32, blocks: U32, capacity: U32, one: Bool) -> K.Run:
+  match one:
+    case True{}:
+      run_nw.result(workspace, columns, SW.run(target, profile, Word.padding(length)))
+    case False{}:
+      run_nw.two(target, profile, workspace, length, columns,
+        two_word(length, stride, blocks, capacity))
+
 def run_nw.shaped(profile: P.Profile, workspace: W.Workspace, target: String, +length: Nat,
                      columns: Nat) -> K.Run:
   P.Profile{lookup, masks, +stride, rows, +blocks, used} = profile
   W.Workspace{data, +capacity, first, last} = workspace
-  run_nw.unlimited(target, P.Profile{lookup, masks, stride, rows, blocks, used},
-    W.Workspace{data, capacity, first, last}, length, columns,
+  run_nw.small(target, P.Profile{lookup, masks, stride, rows, blocks, used},
+    W.Workspace{data, capacity, first, last}, length, columns, stride, blocks, capacity,
     single_word(length, stride, blocks, capacity))
 
 def run_nw(target: String, profile: P.Profile, workspace: W.Workspace, length: Nat,

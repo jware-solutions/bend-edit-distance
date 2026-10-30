@@ -27,6 +27,23 @@ def Laws.single_word_high_bytes():
 def Laws.single_word_legacy_lookup():
   {==}
 
+def Laws.two_word_carry(profile, first, second, carry, mask):
+  match first second carry:
+    case V.Block{_, _, _} V.Block{_, _, _} V.Carry{_, _}:
+      {==}
+
+def Laws.two_word_shapes():
+  {==}
+
+def Laws.two_word_unknown_padding():
+  {==}
+
+def Laws.two_word_boundary_match():
+  {==}
+
+def Laws.two_word_nontransitive():
+  {==}
+
 # The accumulator traversal preserves the existing String.length contracts.
 def add_successor(+a: Nat, +b: Nat) ->
     {Nat.add(a, 1n+b) == 1n+Nat.add(a, b) : Nat}:

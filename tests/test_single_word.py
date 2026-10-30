@@ -1,4 +1,4 @@
-"""Scalar prepared NW transitions, padding, ownership and fallback search."""
+"""Scalar one/two-word prepared NW transitions, padding, ownership and fallback search."""
 
 import random
 import subprocess
@@ -22,7 +22,7 @@ PAIRS = (EqualityPair("A", "N"), EqualityPair("N", "C"),
 def test_single_word_prepared_calls_and_state_reset(bend_binary, threads):
     rng = random.Random(922)
     with worker(bend_binary, threads, 4) as pooled:
-        for length in range(34):
+        for length in range(66):
             query = bytes(rng.choices(b"ACN\0\x80\xff", k=length))
             targets = [b"", query, query[::-1], bytes(range(256)), b"Z" * 512,
                        bytes(rng.choices(range(256), k=65)), b"\0\xff" * 16]
@@ -65,9 +65,9 @@ def single_word_probe(bend_tool):
 
 
 @pytest.mark.parametrize("threads", [1, 2, 4])
-def test_scalar_final_workspace_matches_banded_search(single_word_probe, threads):
+def test_scalar_final_workspace_matches_full_columns(single_word_probe, threads):
     rng = random.Random(291)
-    for length in range(1, 34):
+    for length in range(1, 65):
         query = bytes(rng.choices(range(256), k=length))
         for target in (b"", query, bytes(range(256)), b"Z" * 4097):
             for maximum in (None, 0):
@@ -77,5 +77,5 @@ def test_scalar_final_workspace_matches_banded_search(single_word_probe, threads
                     input=encode_request(query, target, config), capture_output=True, check=True, timeout=30)
                 scalar, reference, same_state = decode_batch(result.stdout, 3)
                 assert scalar == reference
-                assert same_state.edit_distance == 1
+                assert same_state.edit_distance == 1, (length, len(target), maximum)
                 assert result.stderr == b""

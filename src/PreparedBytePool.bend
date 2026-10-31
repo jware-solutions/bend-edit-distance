@@ -127,10 +127,14 @@ def ready(shards: Nat, length: Nat, budget: Nat, +active: Nat, values: List<&1, 
 
 # Weighted byte work includes fixed result/ownership cost. Small leaves keep
 # one owner; the other cached shards remain idle until a larger batch.
-def active_owners(+shards: Nat, +count: Nat, units: Nat, length: Nat) -> Nat:
+def serial_cutoff(+length: Nat) -> Nat:
+  Bool.pick(Nat, Bool.and(Nat.is_gt(length, Nat.mul(Word.width(), 3n)),
+    Nat.is_le(length, Bytes.maximum_query())), 32768n, 65536n)
+
+def active_owners(+shards: Nat, +count: Nat, units: Nat, +length: Nat) -> Nat:
   +columns = Nat.sub(units, count)
   +work = Nat.add(Nat.mul(columns, Word.blocks(length)), Nat.mul(count, 32n))
-  Bool.pick(Nat, Bool.or(Nat.is_eq(columns, 0n), Nat.is_lt(work, 65536n)),
+  Bool.pick(Nat, Bool.or(Nat.is_eq(columns, 0n), Nat.is_lt(work, serial_cutoff(length))),
     1n, Nat.min(shards, Nat.max(1n, count)))
 
 def many(pool: P.Pool, batch: BT.Batch) -> P.Pool & List<&2, E.AlignResult>:

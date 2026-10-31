@@ -94,7 +94,10 @@ def test_scalar_buffers_export_every_workspace_block(packed_probe, threads):
     rng = random.Random(147)
     for length in (1, 32, 33, 64, *range(65, 129)):
         query = bytes(rng.choices(range(256), k=length))
-        for target in (b"", query, bytes(range(256)) + b"\xff\0\x80"):
+        targets = [b"", query, bytes(range(256)) + b"\xff\0\x80"]
+        if length in (65, 96, 97, 128):
+            targets.append(bytes(range(256)) * 16 + b"\xff")
+        for target in targets:
             done = subprocess.run([packed_probe, *runtime_prefix(threads=threads), "workspace"],
                 input=encode_request(query, target, AlignConfig(equalities=PAIRS)),
                 capture_output=True, check=True, timeout=30)

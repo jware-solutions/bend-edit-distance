@@ -116,6 +116,51 @@ law two_word_nontransitive:
   {two_word_distance(TW.run("C", P.build("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", 33n,
     [E.EqualityPair{'A', 'N'}, E.EqualityPair{'N', 'C'}]), 31n)) == E.Found{33n} : E.EditDistance}
 
+# Scores do not participate in the bit transition or horizontal carry.
+def transition_differences(value: V.Block & V.Carry) -> U32 & U32 & V.Carry:
+  (V.Block{pv, mv, _}, carry) = value
+  (pv, mv, carry)
+
+law block_transition_score_independence:
+  for positive: U32
+  for negative: U32
+  for score_a: U32
+  for score_b: U32
+  for mask: U32
+  for carry: V.Carry
+  {transition_differences(V.calculate_block(V.Block{positive, negative, score_a}, mask, carry)) ==
+    transition_differences(V.calculate_block(V.Block{positive, negative, score_b}, mask, carry)) :
+    U32 & U32 & V.Carry}
+
+law block_previous_boundary:
+  for positive: U32
+  for negative: U32
+  for score: U32
+  {V.previous_score(V.Block{positive, negative, score}) ==
+    V.decode_word(Word.width(), positive, negative, score) : U32}
+
+law block_previous_initial:
+  {V.previous_score(V.Block{4294967295, 0, 128}) == 96 : U32}
+
+def three_scores(value: Three.Run) -> U32 & U32 & U32:
+  Three.Run{_, V.Block{_, _, first}, V.Block{_, _, second}, V.Block{_, _, third}, _} = value
+  (first, second, third)
+
+def four_scores(value: Four.Run) -> U32 & U32 & U32 & U32:
+  Four.Run{_, V.Block{_, _, first}, V.Block{_, _, second}, V.Block{_, _, third}, V.Block{_, _, fourth}, _} = value
+  (first, second, third, fourth)
+
+law three_restored_initial_scores:
+  for profile: P.Profile
+  {three_scores(Three.finish(Three.State{profile, V.Block{4294967295, 0, 0},
+    V.Block{4294967295, 0, 0}, V.Block{4294967295, 0, 96}}, 0n)) == (32, 64, 96) : U32 & U32 & U32}
+
+law four_restored_initial_scores:
+  for profile: P.Profile
+  {four_scores(Four.finish(Four.State{profile, V.Block{4294967295, 0, 0},
+    V.Block{4294967295, 0, 0}, V.Block{4294967295, 0, 0}, V.Block{4294967295, 0, 128}}, 0n)) ==
+    (32, 64, 96, 128) : U32 & U32 & U32 & U32}
+
 # Fixed-stride kernels require complete logical workspaces, even when the
 # physical three-block allocation rounds up to four entries.
 law three_word_mask_0:
@@ -283,6 +328,15 @@ law packed_pool_serial_small:
 
 law packed_pool_parallel_large:
   {PBP.active_owners(4n, 1024n, 33792n, 32n) == 4n : Nat}
+
+law packed_pool_four_word_serial:
+  {PBP.active_owners(4n, 8n, 4104n, 128n) == 1n : Nat}
+
+law packed_pool_four_word_parallel:
+  {PBP.active_owners(4n, 16n, 8208n, 128n) == 4n : Nat}
+
+law packed_pool_three_word_conservative:
+  {PBP.active_owners(4n, 32n, 16416n, 96n) == 1n : Nat}
 
 law packed_pool_empty_work:
   {PBP.active_owners(4n, 8n, 8n, 64n) == 1n : Nat}

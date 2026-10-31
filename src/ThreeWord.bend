@@ -4,8 +4,9 @@ import ./Profile.bend as P
 import ./BitVector.bend as V
 import ./Word.bend as Word
 
-# Complete 3-word NW state. The caller validates stride 4 and 3 logical
-# blocks; row guards also cover unknown target bytes and final padding.
+# Three-word NW vertical differences and final bottom score. The caller
+# validates stride 4 and 3 logical blocks. Row guards cover unknown bytes.
+# Earlier score fields are unused until finish restores them from differences.
 # Block carries and successive target columns stay sequential.
 type State is Type:
   State{profile: P.Profile, b0: V.Block, b1: V.Block, b2: V.Block}
@@ -30,7 +31,8 @@ def block2.masked(row: U32, b0: V.Block, b1: V.Block, b2: V.Block, carry: V.Carr
   block2.updated(profile, b0, b1, V.calculate_block(b2, eq, carry))
 
 def block1.updated(profile: P.Profile, +row: U32, b0: V.Block, b2: V.Block, value: V.Block & V.Carry) -> State:
-  (b1, carry) = value
+  (V.Block{pv, mv, _}, carry) = value
+  b1 = {V.Block{pv, mv, 0} : V.Block}
   block2.masked(row, b0, b1, b2, carry, mask(profile, row, 2))
 
 def block1.masked(row: U32, b0: V.Block, b1: V.Block, b2: V.Block, carry: V.Carry, value: P.Profile & U32) -> State:
@@ -38,7 +40,8 @@ def block1.masked(row: U32, b0: V.Block, b1: V.Block, b2: V.Block, carry: V.Carr
   block1.updated(profile, row, b0, b2, V.calculate_block(b1, eq, carry))
 
 def block0.updated(profile: P.Profile, +row: U32, b1: V.Block, b2: V.Block, value: V.Block & V.Carry) -> State:
-  (b0, carry) = value
+  (V.Block{pv, mv, _}, carry) = value
+  b0 = {V.Block{pv, mv, 0} : V.Block}
   block1.masked(row, b0, b1, b2, carry, mask(profile, row, 1))
 
 def block0.masked(row: U32, b0: V.Block, b1: V.Block, b2: V.Block, carry: V.Carry, value: P.Profile & U32) -> State:
@@ -49,11 +52,28 @@ def selected(b0: V.Block, b1: V.Block, b2: V.Block, value: P.Profile & U32) -> S
   (profile, +row) = value
   block0.masked(row, b0, b1, b2, V.Carry{1, 0}, mask(profile, row, 0))
 
+def finish_run(profile: P.Profile, b0: V.Block, b1: V.Block, b2: V.Block, padding: Nat) -> Run:
+  V.Block{+pv, +mv, +score} = b2
+  Run{profile, b0, b1, V.Block{pv, mv, score}, E.Found{U32.to_nat(V.decode_word(padding, pv, mv, score))}}
+
+def restore0(profile: P.Profile, b0: V.Block, +b1: V.Block, b2: V.Block, padding: Nat) -> Run:
+  V.Block{pv, mv, _} = b0
+  next = {V.Block{pv, mv, V.previous_score(b1)} : V.Block}
+  finish_run(profile, next, b1, b2, padding)
+
+def restore1(profile: P.Profile, b0: V.Block, b1: V.Block, +b2: V.Block, padding: Nat) -> Run:
+  V.Block{pv, mv, _} = b1
+  next = {V.Block{pv, mv, V.previous_score(b2)} : V.Block}
+  restore0(profile, b0, next, b2, padding)
+
+def finish(state: State, padding: Nat) -> Run:
+  State{profile, b0, b1, b2} = state
+  restore1(profile, b0, b1, b2, padding)
+
 def scan(target: String, +padding: Nat, state: State) -> Run:
   match target state:
-    case SNil{} State{profile, b0, b1, V.Block{+pv, +mv, +score}}:
-      Run{profile, b0, b1, V.Block{pv, mv, score},
-        E.Found{U32.to_nat(V.decode_word(padding, pv, mv, score))}}
+    case SNil{} _:
+      finish(state, padding)
     case SCon{symbol, tail} State{profile, b0, b1, b2}:
       scan(tail, padding, selected(b0, b1, b2, P.row(profile, Char.to_u32(symbol))))
 

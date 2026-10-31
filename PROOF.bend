@@ -44,6 +44,23 @@ def Laws.two_word_boundary_match():
 def Laws.two_word_nontransitive():
   {==}
 
+def Laws.block_transition_score_independence(positive, negative, score_a, score_b, mask, carry):
+  match carry:
+    case V.Carry{_, _}:
+      {==}
+
+def Laws.block_previous_boundary(positive, negative, score):
+  {==}
+
+def Laws.block_previous_initial():
+  {==}
+
+def Laws.three_restored_initial_scores(profile):
+  {==}
+
+def Laws.four_restored_initial_scores(profile):
+  {==}
+
 def Laws.three_word_mask_0(lookup, masks, rows, used, row):
   {==}
 
@@ -114,6 +131,15 @@ def Laws.packed_pool_serial_small():
   {==}
 
 def Laws.packed_pool_parallel_large():
+  {==}
+
+def Laws.packed_pool_four_word_serial():
+  {==}
+
+def Laws.packed_pool_four_word_parallel():
+  {==}
+
+def Laws.packed_pool_three_word_conservative():
   {==}
 
 def Laws.packed_pool_empty_work():

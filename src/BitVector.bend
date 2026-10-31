@@ -151,3 +151,9 @@ def count_ones(bits: U32) -> U32:
 
 def decode_word(padding: Nat, pv: U32, mv: U32, score: U32) -> U32:
   Word.decode(padding, pv, mv, score)
+
+# Decode a complete word's vertical differences to the preceding boundary.
+# Scalar NW loops need only the final score until exporting their workspace.
+def previous_score(block: Block) -> U32:
+  Block{pv, mv, score} = block
+  decode_word(Word.width(), pv, mv, score)

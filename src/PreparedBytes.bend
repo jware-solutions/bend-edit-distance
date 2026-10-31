@@ -133,9 +133,7 @@ def three.word(word: U32, state: Three.State) -> Three.State:
   three.remaining(4n, word, state)
 
 def three.finish(state: Three.State, padding: Nat) -> Three.Run:
-  Three.State{profile, b0, b1, V.Block{+pv, +mv, +score}} = state
-  Three.Run{profile, b0, b1, V.Block{pv, mv, score},
-    E.Found{U32.to_nat(V.decode_word(padding, pv, mv, score))}}
+  Three.finish(state, padding)
 
 def three.end.read(state: Three.State, padding: Nat, remaining: Nat, value: Array<U32> & U32) -> Three.Run:
   (_, word) = value
@@ -181,9 +179,7 @@ def four.word(word: U32, state: Four.State) -> Four.State:
   four.remaining(4n, word, state)
 
 def four.finish(state: Four.State, padding: Nat) -> Four.Run:
-  Four.State{profile, b0, b1, b2, V.Block{+pv, +mv, +score}} = state
-  Four.Run{profile, b0, b1, b2, V.Block{pv, mv, score},
-    E.Found{U32.to_nat(V.decode_word(padding, pv, mv, score))}}
+  Four.finish(state, padding)
 
 def four.end.read(state: Four.State, padding: Nat, remaining: Nat, value: Array<U32> & U32) -> Four.Run:
   (_, word) = value

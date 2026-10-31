@@ -143,6 +143,7 @@ class AlignmentWorker:
         self._closed = False
         self._prepared = {}
         self._owned_supported = {6: None, 7: None}
+        self._owned_limit = None
         self._retained_bytes = 0
         self._read_buffer = b""
         self._read_offset = 0
@@ -318,10 +319,49 @@ class AlignmentWorker:
         if config.equalities and config.equalities != prepared.equalities:
             raise ValueError("Prepared query equality definition is fixed")
 
-    def _owned_options(self, prepared, config, operation):
+    def _owned_candidate(self, prepared, config, operation):
         return (self._owned_supported[operation] is not False
-                and 0 < prepared.query_length <= 64 and config.mode == Mode.NW
+                and prepared.query_length > 0 and config.mode == Mode.NW
                 and config.task == Task.DISTANCE and config.threshold.to_edlib() < 0)
+
+    def _owned_options(self, prepared, config, operation):
+        return (self._owned_candidate(prepared, config, operation)
+                and prepared.query_length <= (self._owned_limit or 64))
+
+    def _owned_capabilities(self, deadline):
+        status, width, retained, maximum = self._control(deadline, 8)
+        if status:
+            if width or maximum:
+                raise ValueError("Invalid owned-buffer capability rejection")
+            self._owned_limit = 64
+        else:
+            if width not in (32, 64) or not width <= maximum <= MAX_BATCH_SIZE or maximum % width:
+                raise ValueError("Invalid owned-buffer capabilities")
+            self._owned_limit = maximum
+        self._retained_bytes = retained
+
+    def _prepared_exchange(self, prepared, config, operation, make_frame,
+                           legacy_read, owned_read, timeout):
+        def selected():
+            owned = self._owned_options(prepared, config, operation)
+            legacy_operation = 2 if operation == 6 else 5
+            return make_frame(operation if owned else legacy_operation), owned_read if owned else legacy_read
+
+        if (self._owned_limit is None and prepared.query_length > 64
+                and self._owned_candidate(prepared, config, operation)):
+            # Optional control-only request. Its rejection preserves the original
+            # 64-byte fast path; it says nothing about operations 6 and 7.
+            payload = REQUEST.pack(b"BED2", 0, 0, 0, 8, 0, 0, 0, 0)
+
+            def negotiated(deadline):
+                self._owned_capabilities(deadline)
+                frame, read = selected()
+                self._write(frame, deadline)
+                return read(deadline)
+
+            return self._exchange(LENGTH.pack(len(payload)) + payload, negotiated, timeout)
+        frame, read = selected()
+        return self._exchange(frame, read, timeout)
 
     def _owned_single(self, prepared, target, config, deadline):
         payload = self._frame(deadline, CONTROL.size)
@@ -343,12 +383,12 @@ class AlignmentWorker:
         target = sequence_bytes(target)
         with self._lock:
             self._prepared_options(prepared, config)
-            if self._owned_options(prepared, config, 6):
-                frame = encode_control(6, handle=prepared.handle, body=target, config=config)
-                return self._exchange(frame,
-                    lambda deadline: self._owned_single(prepared, target, config, deadline), timeout)
-            frame = encode_control(2, handle=prepared.handle, body=target, config=config)
-            return self._exchange(frame, lambda deadline: decode_response(self._frame(deadline)), timeout)
+            if len(target) + REQUEST.size > MAX_FRAME_LENGTH:
+                raise ValueError("Request exceeds maximum frame length")
+            return self._prepared_exchange(prepared, config, 6,
+                lambda operation: encode_control(operation, handle=prepared.handle, body=target, config=config),
+                lambda deadline: decode_response(self._frame(deadline)),
+                lambda deadline: self._owned_single(prepared, target, config, deadline), timeout)
 
     def _batch_response(self, operation, count, deadline):
         return self._batch_values(self._control(deadline, operation), count, deadline)
@@ -398,15 +438,13 @@ class AlignmentWorker:
         body = b"".join(LENGTH.pack(len(t)) + t for t in targets)
         with self._lock:
             self._prepared_options(prepared, config)
-            if self._owned_options(prepared, config, 7):
-                frame = encode_control(7, handle=prepared.handle, count=len(targets), body=body,
-                    pairs=len(body), config=config)
-                read = lambda deadline: self._owned_batch(prepared, len(targets), body, config, deadline)
-            else:
-                frame = encode_control(5, handle=prepared.handle, count=len(targets), body=body,
-                    pairs=len(body), config=config)
-                read = lambda deadline: self._batch_response(5, len(targets), deadline)
-            control, values = self._exchange(frame, read, timeout)
+            if len(body) + REQUEST.size > MAX_FRAME_LENGTH:
+                raise ValueError("Request exceeds maximum frame length")
+            control, values = self._prepared_exchange(prepared, config, 7,
+                lambda operation: encode_control(operation,
+                    handle=prepared.handle, count=len(targets), body=body, pairs=len(body), config=config),
+                lambda deadline: self._batch_response(5, len(targets), deadline),
+                lambda deadline: self._owned_batch(prepared, len(targets), body, config, deadline), timeout)
             self._retained_bytes = control[2]
             if control[0]:
                 raise RuntimeError("Prepared batch request rejected")

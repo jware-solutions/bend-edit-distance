@@ -44,6 +44,48 @@ def Laws.two_word_boundary_match():
 def Laws.two_word_nontransitive():
   {==}
 
+def Laws.three_word_mask_0(lookup, masks, rows, used, row):
+  {==}
+
+def Laws.three_word_mask_1(lookup, masks, rows, used, row):
+  {==}
+
+def Laws.three_word_mask_2(lookup, masks, rows, used, row):
+  {==}
+
+def Laws.four_word_mask_0(lookup, masks, rows, used, row):
+  {==}
+
+def Laws.four_word_mask_1(lookup, masks, rows, used, row):
+  {==}
+
+def Laws.four_word_mask_2(lookup, masks, rows, used, row):
+  {==}
+
+def Laws.four_word_mask_3(lookup, masks, rows, used, row):
+  {==}
+
+def Laws.packed_wide_shapes():
+  {==}
+
+def Laws.packed_three_word_steps(profile, first, second, third, word):
+  {==}
+
+def Laws.packed_four_word_steps(profile, first, second, third, fourth, word):
+  {==}
+
+def Laws.three_word_unknown_padding():
+  {==}
+
+def Laws.three_word_boundary_match():
+  {==}
+
+def Laws.four_word_unknown_padding():
+  {==}
+
+def Laws.four_word_boundary_match():
+  {==}
+
 def Laws.packed_byte_order():
   {==}
 

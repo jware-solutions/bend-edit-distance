@@ -3,6 +3,8 @@ import ./src/PathList.bend as PL
 import ./src/Frontier.bend as F
 import ./src/SmallPath.bend as SP
 import ./src/SingleWord.bend as SW
+import ./src/ThreeWord.bend as Three
+import ./src/FourWord.bend as Four
 import ./src/TwoWord.bend as TW
 import ./src/ByteTarget.bend as Packed
 import ./src/PreparedBytes.bend as PB
@@ -113,6 +115,119 @@ law two_word_boundary_match:
 law two_word_nontransitive:
   {two_word_distance(TW.run("C", P.build("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", 33n,
     [E.EqualityPair{'A', 'N'}, E.EqualityPair{'N', 'C'}]), 31n)) == E.Found{33n} : E.EditDistance}
+
+# Fixed-stride kernels require complete logical workspaces, even when the
+# physical three-block allocation rounds up to four entries.
+law three_word_mask_0:
+  for lookup: Array<U32>
+  for masks: Array<U32>
+  for rows: U32
+  for used: U32
+  for row: U32
+  {Three.mask(P.Profile{lookup, masks, 4, rows, 3, used}, row, 0) ==
+    P.mask(P.Profile{lookup, masks, 4, rows, 3, used}, row, 0) : P.Profile & U32}
+
+law three_word_mask_1:
+  for lookup: Array<U32>
+  for masks: Array<U32>
+  for rows: U32
+  for used: U32
+  for row: U32
+  {Three.mask(P.Profile{lookup, masks, 4, rows, 3, used}, row, 1) ==
+    P.mask(P.Profile{lookup, masks, 4, rows, 3, used}, row, 1) : P.Profile & U32}
+
+law three_word_mask_2:
+  for lookup: Array<U32>
+  for masks: Array<U32>
+  for rows: U32
+  for used: U32
+  for row: U32
+  {Three.mask(P.Profile{lookup, masks, 4, rows, 3, used}, row, 2) ==
+    P.mask(P.Profile{lookup, masks, 4, rows, 3, used}, row, 2) : P.Profile & U32}
+
+law four_word_mask_0:
+  for lookup: Array<U32>
+  for masks: Array<U32>
+  for rows: U32
+  for used: U32
+  for row: U32
+  {Four.mask(P.Profile{lookup, masks, 4, rows, 4, used}, row, 0) ==
+    P.mask(P.Profile{lookup, masks, 4, rows, 4, used}, row, 0) : P.Profile & U32}
+
+law four_word_mask_1:
+  for lookup: Array<U32>
+  for masks: Array<U32>
+  for rows: U32
+  for used: U32
+  for row: U32
+  {Four.mask(P.Profile{lookup, masks, 4, rows, 4, used}, row, 1) ==
+    P.mask(P.Profile{lookup, masks, 4, rows, 4, used}, row, 1) : P.Profile & U32}
+
+law four_word_mask_2:
+  for lookup: Array<U32>
+  for masks: Array<U32>
+  for rows: U32
+  for used: U32
+  for row: U32
+  {Four.mask(P.Profile{lookup, masks, 4, rows, 4, used}, row, 2) ==
+    P.mask(P.Profile{lookup, masks, 4, rows, 4, used}, row, 2) : P.Profile & U32}
+
+law four_word_mask_3:
+  for lookup: Array<U32>
+  for masks: Array<U32>
+  for rows: U32
+  for used: U32
+  for row: U32
+  {Four.mask(P.Profile{lookup, masks, 4, rows, 4, used}, row, 3) ==
+    P.mask(P.Profile{lookup, masks, 4, rows, 4, used}, row, 3) : P.Profile & U32}
+
+law packed_wide_shapes:
+  {(PB.wide_word(64n, 2, 4, 2), PB.wide_word(65n, 3, 4, 3),
+    PB.wide_word(96n, 3, 4, 3), PB.wide_word(97n, 4, 4, 4),
+    PB.wide_word(128n, 4, 4, 4), PB.wide_word(129n, 5, 8, 5),
+    PB.wide_word(65n, 3, 4, 4), PB.wide_word(65n, 3, 2, 3),
+    PB.wide_word(65n, 4, 4, 4)) ==
+    (False{}, True{}, True{}, True{}, True{}, False{}, False{}, False{}, False{}) :
+    Bool & Bool & Bool & Bool & Bool & Bool & Bool & Bool & Bool}
+
+law packed_three_word_steps:
+  for profile: P.Profile
+  for first: V.Block
+  for second: V.Block
+  for third: V.Block
+  for word: U32
+  {PB.three.word(word, Three.State{profile, first, second, third}) ==
+    PB.three.remaining(4n, word, Three.State{profile, first, second, third}) : Three.State}
+
+law packed_four_word_steps:
+  for profile: P.Profile
+  for first: V.Block
+  for second: V.Block
+  for third: V.Block
+  for fourth: V.Block
+  for word: U32
+  {PB.four.word(word, Four.State{profile, first, second, third, fourth}) ==
+    PB.four.remaining(4n, word, Four.State{profile, first, second, third, fourth}) : Four.State}
+
+def three_word_distance(value: Three.Run) -> E.EditDistance:
+  Three.Run{_, _, _, _, distance} = value
+  distance
+
+def four_word_distance(value: Four.Run) -> E.EditDistance:
+  Four.Run{_, _, _, _, _, distance} = value
+  distance
+
+law three_word_unknown_padding:
+  {three_word_distance(Three.run("Z", P.build("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAC", 65n, Nil{}), 31n)) == E.Found{65n} : E.EditDistance}
+
+law three_word_boundary_match:
+  {three_word_distance(Three.run("C", P.build("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAC", 65n, Nil{}), 31n)) == E.Found{64n} : E.EditDistance}
+
+law four_word_unknown_padding:
+  {four_word_distance(Four.run("Z", P.build("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAC", 97n, Nil{}), 31n)) == E.Found{97n} : E.EditDistance}
+
+law four_word_boundary_match:
+  {four_word_distance(Four.run("C", P.build("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAC", 97n, Nil{}), 31n)) == E.Found{96n} : E.EditDistance}
 
 law packed_byte_order:
   {(Packed.byte(4286578689, 0), Packed.byte(4286578689, 1),

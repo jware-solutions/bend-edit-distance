@@ -176,6 +176,7 @@ for the remaining operations. The last three u32 fields are interpreted as follo
 | 5: prepared batch | handle | target count | body bytes | repeated u32 length, then target bytes |
 | 6: owned prepared input (optional) | handle | target bytes | 0 | target |
 | 7: owned prepared batch (optional) | handle | target count | body bytes | repeated u32 length, then target bytes |
+| 8: owned-input capabilities (optional) | 0 | 0 | 0 | empty |
 
 Recognized operations 2 and 6 return BER1. Other operations return a 24-byte BER2 control frame:
 magic `BER2`, operation, status (0 success, 1 rejected), handle, retained cache
@@ -188,8 +189,13 @@ CPU workers support optional operations 6/7 for unlimited NW DISTANCE. They use
 owned packed byte buffers; operation 6 returns BER1, and operation 7 returns
 BER2 followed by ordered BER1 results. Unsupported optional operations return
 BER2 with status 1, handle 0 and count 0. `AlignmentWorker` selects them for
-prepared queries of 1–64 bytes and negotiates operations 2/5 within the original
-deadline when a worker explicitly rejects support. GPU workers use that fallback.
+prepared queries of 1–128 bytes on current CPU workers. For queries above 64
+bytes, it first sends operation 8 once per worker. Success returns the word width
+in the control handle field and maximum supported query length in its count
+field (currently 32 and 128). Explicit rejection preserves the 64-byte limit.
+Operations 2/5 are used outside the advertised range or after explicit rejection
+of operations 6/7. Negotiation and alignment share one deadline. GPU workers
+reject these optional operations and use that fallback.
 
 Preparation fixes the query, symmetric equality pairs, compact profile layout,
 and 32-bit word width. Mode, task, threshold and CIGAR format remain per-call.

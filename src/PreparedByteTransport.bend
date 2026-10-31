@@ -7,6 +7,7 @@ import ./PreparedTransport.bend as P
 import ./Transport.bend as T
 import ./Myers.bend as M
 import ./Batch.bend as B
+import ./Word.bend as Word
 
 # Optional BED2 operations 6/7 consume owned target buffers. Their contract is
 # unlimited NW DISTANCE; existing requests keep their original representation.
@@ -46,6 +47,8 @@ def respond(~State: Type,
                 ~many_bytes: State -> BT.Batch -> (State & List<&2, E.AlignResult>),
                 request: T.Request) -> IO(Unit):
   match request:
+    case T.CapabilitiesRequest{}:
+      P.control(8, 0, Word.width_u32(), U32.from_nat(Bytes.maximum_query()))
     case T.OwnedPreparedRequest{+handle, target}:
       do IO<Unit>:
         exists : Bool <- P.has(handle)

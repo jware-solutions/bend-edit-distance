@@ -20,6 +20,7 @@ type Request is Type:
   InvalidControl{operation: U32}
   OwnedPreparedRequest{handle: U32, target: Own.Target}
   OwnedPreparedBatchRequest{handle: U32, batch: Own.Batch}
+  CapabilitiesRequest{}
 
 def read_request() -> IO(Request):
   import "./transport.c"

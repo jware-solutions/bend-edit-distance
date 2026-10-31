@@ -130,6 +130,8 @@ def respond(~State: Type,
       invalid(6)
     case T.OwnedPreparedBatchRequest{_, _}:
       invalid(7)
+    case T.CapabilitiesRequest{}:
+      invalid(8)
     case _:
       do IO<Unit>:
         alive : Bool <- T.respond(~ordinary_single, request)

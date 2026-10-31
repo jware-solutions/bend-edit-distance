@@ -23,11 +23,11 @@ PAIRS = (EqualityPair("A", "N"), EqualityPair("N", "C"),
 def test_every_query_padding_and_packed_target_tail(bend_binary, threads):
     rng = random.Random(312)
     with worker(bend_binary, threads, 4) as pooled:
-        for length in range(1, 65):
+        for length in range(1, 130):
             query = bytes(rng.choices(b"ACN\0\x80\xff", k=length))
             targets = [bytes(rng.choices(range(256), k=n)) for n in range(10)]
             targets += [b"\0\x80\xff", b"\xff\0\x80\0\xff"]
-            if length in (32, 64):
+            if length in (32, 64, 65, 96, 97, 128, 129):
                 targets += [bytes(range(256)) * 16 + b"\xff"]
             with pooled.prepare(query, PAIRS) as prepared:
                 retained = pooled.retained_bytes
@@ -37,13 +37,16 @@ def test_every_query_padding_and_packed_target_tail(bend_binary, threads):
                     assert result.end_locations[0].to_edlib() == len(target) - 1
                 assert prepared.align(targets[-1]) == results[-1]
                 assert pooled._owned_supported == {6: True, 7: True}
+                if length > 64:
+                    assert pooled._owned_limit == 128
                 assert pooled.retained_bytes == retained
 
 
 @pytest.mark.parametrize("threads", [1, 2, 4])
-def test_owned_partitions_preserve_order_and_reuse_idle_shards(bend_binary, threads):
+@pytest.mark.parametrize("query_length", [64, 96, 128])
+def test_owned_partitions_preserve_order_and_reuse_idle_shards(bend_binary, threads, query_length):
     rng = random.Random(833)
-    query = bytes(rng.choices(range(256), k=64))
+    query = bytes(rng.choices(range(256), k=query_length))
     targets = [bytes(rng.choices(range(256), k=(index * 39) % 513)) for index in range(513)]
     targets += [b"\0\xff" * 50001, b"", targets[3]]
     with worker(bend_binary, threads, 4) as pooled, pooled.prepare(query, PAIRS) as prepared:
@@ -67,7 +70,7 @@ def packed_probe(bend_tool):
 @pytest.mark.parametrize("threads", [1, 2, 4])
 def test_pure_buffers_preserve_generic_query_and_pair_fallbacks(packed_probe, threads):
     for kind in ("byte", "query", "pairs"):
-        for query in (b"A", b"\0" + bytes(range(32)), bytes(range(65))):
+        for query in (b"A", b"\0" + bytes(range(32)), *(bytes(range(n)) for n in (65, 96, 97, 128, 129))):
             for target in (b"", bytes(range(7)), query[::-1], b"\xff" * 4097):
                 result = subprocess.run([packed_probe, *runtime_prefix(threads=threads), kind],
                     input=encode_request(query, target, AlignConfig(equalities=PAIRS)),
@@ -84,6 +87,36 @@ def test_invalid_array_lengths_fail_before_wrapping_and_preserve_owner(packed_pr
     assert [value.status for value in values] == [Status.ERROR, Status.OK, Status.ERROR, Status.OK]
     assert [values[index].edit_distance for index in (1, 3)] == [0, 0]
     assert result.stderr == b""
+
+
+@pytest.mark.parametrize("threads", [1, 2, 4])
+def test_scalar_buffers_export_every_workspace_block(packed_probe, threads):
+    rng = random.Random(147)
+    for length in (1, 32, 33, 64, *range(65, 129)):
+        query = bytes(rng.choices(range(256), k=length))
+        for target in (b"", query, bytes(range(256)) + b"\xff\0\x80"):
+            done = subprocess.run([packed_probe, *runtime_prefix(threads=threads), "workspace"],
+                input=encode_request(query, target, AlignConfig(equalities=PAIRS)),
+                capture_output=True, check=True, timeout=30)
+            assert decode_batch(done.stdout, 1)[0].edit_distance == 1, (length, target)
+            assert done.stderr == b""
+
+
+@pytest.mark.parametrize("length", [65, 96, 97, 128])
+def test_wide_owned_state_can_return_to_all_configured_searches(bend_binary, length):
+    from alignment import MaxDistance, Mode, Task
+    rng = random.Random(length)
+    query = bytes(rng.choices(b"ACN\0\x80\xff", k=length))
+    target = b"\xff" + query[1:-2] + b"\0\x80"
+    with worker(bend_binary, 4, 4) as pooled, pooled.prepare(query, PAIRS) as prepared:
+        for mode in Mode:
+            optimum = pooled.align(query, target, AlignConfig(mode, equalities=PAIRS)).edit_distance
+            for task in Task:
+                for maximum in (max(0, optimum - 1), optimum, optimum + 1):
+                    assert prepared.align(target).edit_distance == distance_dp(query, target, PAIRS)
+                    config = AlignConfig(mode, task, MaxDistance(maximum), PAIRS)
+                    assert prepared.align(target, config) == pooled.align(query, target, config)
+        assert prepared.align_batch([target, b"", query])[2].edit_distance == 0
 
 
 def test_optional_operation_configuration_rejection_is_recoverable(bend_binary):
@@ -113,7 +146,7 @@ def test_owned_buffers_do_not_accumulate_across_batches(bend_binary):
         return int(next(line.split()[1] for line in text.splitlines() if line.startswith("VmRSS:"))) * 1024
 
     rng = random.Random(994)
-    query = bytes(rng.choices(range(256), k=64))
+    query = bytes(rng.choices(range(256), k=128))
     targets = [bytes(rng.choices(range(256), k=512 + index % 5)) for index in range(256)]
     with worker(bend_binary, 4, 4) as pooled, pooled.prepare(query) as prepared:
         expected = prepared.align_batch(targets)

@@ -57,13 +57,40 @@ while True:
     elif operation == 1:
         send(control(1, 1))
     elif operation == 2:
-        if kind == 'owned_deadline':
+        if kind in ('owned_deadline', 'owned_caps_deadline'):
             time.sleep(0.05)
         send(result(target))
+    elif operation == 8:
+        assert (mode, task, fmt, maximum, query, target, pairs) == (0, 0, 0, 0, 0, 0, 0)
+        if kind == 'owned_caps_deadline':
+            time.sleep(0.05)
+        if kind == 'owned_caps_bad_width':
+            send(control(8, 128, 0, 31))
+        elif kind == 'owned_caps_bad_limit':
+            send(control(8, 127, 0, 32))
+        elif kind == 'owned_caps_bad_reject':
+            send(control(8, 0, 1, 32))
+        elif kind == 'owned_caps_bad_operation':
+            send(control(9, 128, 0, 32))
+        elif kind.startswith('owned_caps_success'):
+            send(control(8, 128, 0, 32))
+        else:
+            send(control(8, 0, 1, 0))
     elif operation in (6, 7):
         if kind == 'owned_deadline':
             time.sleep(0.05)
-        if kind == 'owned_bad_count':
+        if kind.startswith('owned_caps_success'):
+            if operation == 6:
+                send(result(target))
+            else:
+                values, offset = [], 24
+                for _ in range(target):
+                    length, = struct.unpack_from('<I', payload, offset)
+                    offset += 4 + length
+                    values.append(result(length))
+                assert offset == len(payload)
+                send(control(7, target) + b''.join(values))
+        elif kind == 'owned_bad_count':
             send(control(operation, 1, 1, 0))
         elif kind == 'owned_bad_status':
             send(control(operation, 0, 2, 0))
@@ -83,6 +110,8 @@ while True:
     elif operation == 3:
         send(control(3, 0))
     elif operation == 5:
+        if kind == 'owned_caps_deadline':
+            time.sleep(0.05)
         values, offset = [], 24
         for _ in range(target):
             length, = struct.unpack_from('<I', payload, offset)
@@ -211,6 +240,44 @@ def test_optional_negotiation_keeps_original_deadline(stream_worker):
         prepared = worker.prepare(b"A")
         with pytest.raises(RuntimeError, match="timed out"):
             prepared.align(b"A", timeout=0.08)
+        assert worker.closed and prepared.released
+
+
+@pytest.mark.parametrize("kind", ["owned_caps_success", "owned_caps_success_fragment", "owned_legacy"])
+@pytest.mark.parametrize("batch", [False, True])
+def test_wider_query_capability_is_negotiated_once_and_cached(stream_worker, kind, batch):
+    with stream_worker(kind) as worker:
+        for length in (129, 65, 96, 97, 128, 64):
+            with worker.prepare(b"A" * length) as prepared:
+                for _ in range(2):
+                    result = prepared.align_batch([b"next"])[0] if batch else prepared.align(b"next")
+                    assert result.edit_distance == 4
+        assert worker._owned_limit == (128 if 'success' in kind else 64)
+    lines = worker._diagnostics.splitlines()
+    assert lines.count("request 8") == 1
+    # 129 bytes exceed both advertised limits; that request stays on BED2 2/5.
+    assert lines.count("request 5" if batch else "request 2") >= 2
+    assert ("request 7" if batch else "request 6") in lines
+
+
+@pytest.mark.parametrize("kind", ["owned_caps_bad_width", "owned_caps_bad_limit",
+                                  "owned_caps_bad_reject", "owned_caps_bad_operation"])
+@pytest.mark.parametrize("batch", [False, True])
+def test_malformed_capabilities_close_before_alignment(stream_worker, kind, batch):
+    with stream_worker(kind) as worker:
+        prepared = worker.prepare(b"A" * 65)
+        with pytest.raises(ValueError):
+            prepared.align_batch([b"A"]) if batch else prepared.align(b"A")
+        assert worker.closed and prepared.released
+    assert worker._diagnostics.splitlines() == ["request 1", "request 8"]
+
+
+@pytest.mark.parametrize("batch", [False, True])
+def test_capability_negotiation_keeps_original_deadline(stream_worker, batch):
+    with stream_worker("owned_caps_deadline") as worker:
+        prepared = worker.prepare(b"A" * 65)
+        with pytest.raises(RuntimeError, match="timed out"):
+            prepared.align_batch([b"A"], timeout=0.08) if batch else prepared.align(b"A", timeout=0.08)
         assert worker.closed and prepared.released
 
 

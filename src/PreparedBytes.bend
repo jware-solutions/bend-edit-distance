@@ -6,12 +6,17 @@ import ./Profile.bend as P
 import ./Workspace.bend as W
 import ./SingleWord.bend as SW
 import ./TwoWord.bend as TW
+import ./ThreeWord.bend as Three
+import ./FourWord.bend as Four
 import ./BitVector.bend as V
 import ./Word.bend as Word
 import ./SearchKernel.bend as K
 
 # Search columns and block carries remain sequential. A target's one array
 # owner passes through the scan, then is disposed in constant space.
+def maximum_query() -> Nat:
+  Nat.mul(Word.width(), 4n)
+
 type OneState is Type:
   OneState{bytes: Array<U32>, state: SW.State}
 
@@ -108,6 +113,124 @@ def two.words(fuel: Nat, +index: U32, +remaining: Nat, +padding: Nat, value: Two
     case 1n+p TwoState{bytes, state}:
       two.words(p, U32.inc(index), remaining, padding, two.word.read(state, bytes[index]))
 
+type ThreeState is Type:
+  ThreeState{bytes: Array<U32>, state: Three.State}
+
+def three.symbol(state: Three.State, symbol: U32) -> Three.State:
+  Three.State{profile, b0, b1, b2} = state
+  Three.selected(b0, b1, b2, P.row(profile, symbol))
+
+def three.remaining(fuel: Nat, +word: U32, state: Three.State) -> Three.State:
+  match fuel:
+    case 0n:
+      state
+    case 1n+p:
+      three.remaining(p, U32.shrn(word, 8n), three.symbol(state, U32.and(word, 255)))
+
+# A bounded loop keeps the larger state in scalars in the pinned compiler.
+# Fully unrolling four columns increases generated state passing costs.
+def three.word(word: U32, state: Three.State) -> Three.State:
+  three.remaining(4n, word, state)
+
+def three.finish(state: Three.State, padding: Nat) -> Three.Run:
+  Three.State{profile, b0, b1, V.Block{+pv, +mv, +score}} = state
+  Three.Run{profile, b0, b1, V.Block{pv, mv, score},
+    E.Found{U32.to_nat(V.decode_word(padding, pv, mv, score))}}
+
+def three.end.read(state: Three.State, padding: Nat, remaining: Nat, value: Array<U32> & U32) -> Three.Run:
+  (_, word) = value
+  three.finish(three.remaining(remaining, word, state), padding)
+
+def three.end(index: U32, remaining: Nat, padding: Nat, value: ThreeState) -> Three.Run:
+  match remaining value:
+    case 0n ThreeState{_, state}:
+      three.finish(state, padding)
+    case 1n+p ThreeState{bytes, state}:
+      three.end.read(state, padding, 1n+p, bytes[index])
+
+def three.word.read(state: Three.State, value: Array<U32> & U32) -> ThreeState:
+  (bytes, word) = value
+  ThreeState{bytes, three.word(word, state)}
+
+def three.words(fuel: Nat, +index: U32, +remaining: Nat, +padding: Nat, value: ThreeState) -> Three.Run:
+  match fuel value:
+    case 0n _:
+      three.end(index, remaining, padding, value)
+    case 1n+p ThreeState{bytes, state}:
+      three.words(p, U32.inc(index), remaining, padding, three.word.read(state, bytes[index]))
+
+def three.result(workspace: W.Workspace, +columns: Nat, value: Three.Run) -> K.Run:
+  Three.Run{profile, b0, b1, b2, distance} = value
+  K.Run{profile, W.put(W.put(W.put(W.bounds(workspace, 0, 3), 0, b0), 1, b1), 2, b2), K.Stats{distance, Nat.mul(columns, 3n), columns, 1n}}
+
+type FourState is Type:
+  FourState{bytes: Array<U32>, state: Four.State}
+
+def four.symbol(state: Four.State, symbol: U32) -> Four.State:
+  Four.State{profile, b0, b1, b2, b3} = state
+  Four.selected(b0, b1, b2, b3, P.row(profile, symbol))
+
+def four.remaining(fuel: Nat, +word: U32, state: Four.State) -> Four.State:
+  match fuel:
+    case 0n:
+      state
+    case 1n+p:
+      four.remaining(p, U32.shrn(word, 8n), four.symbol(state, U32.and(word, 255)))
+
+def four.word(word: U32, state: Four.State) -> Four.State:
+  four.remaining(4n, word, state)
+
+def four.finish(state: Four.State, padding: Nat) -> Four.Run:
+  Four.State{profile, b0, b1, b2, V.Block{+pv, +mv, +score}} = state
+  Four.Run{profile, b0, b1, b2, V.Block{pv, mv, score},
+    E.Found{U32.to_nat(V.decode_word(padding, pv, mv, score))}}
+
+def four.end.read(state: Four.State, padding: Nat, remaining: Nat, value: Array<U32> & U32) -> Four.Run:
+  (_, word) = value
+  four.finish(four.remaining(remaining, word, state), padding)
+
+def four.end(index: U32, remaining: Nat, padding: Nat, value: FourState) -> Four.Run:
+  match remaining value:
+    case 0n FourState{_, state}:
+      four.finish(state, padding)
+    case 1n+p FourState{bytes, state}:
+      four.end.read(state, padding, 1n+p, bytes[index])
+
+def four.word.read(state: Four.State, value: Array<U32> & U32) -> FourState:
+  (bytes, word) = value
+  FourState{bytes, four.word(word, state)}
+
+def four.words(fuel: Nat, +index: U32, +remaining: Nat, +padding: Nat, value: FourState) -> Four.Run:
+  match fuel value:
+    case 0n _:
+      four.end(index, remaining, padding, value)
+    case 1n+p FourState{bytes, state}:
+      four.words(p, U32.inc(index), remaining, padding, four.word.read(state, bytes[index]))
+
+def four.result(workspace: W.Workspace, +columns: Nat, value: Four.Run) -> K.Run:
+  Four.Run{profile, b0, b1, b2, b3, distance} = value
+  K.Run{profile, W.put(W.put(W.put(W.put(W.bounds(workspace, 0, 4), 0, b0), 1, b1), 2, b2), 3, b3), K.Stats{distance, Nat.mul(columns, 4n), columns, 1n}}
+
+def run.four(bytes: Array<U32>, +columns: Nat, profile: P.Profile, workspace: W.Workspace, length: Nat) -> K.Run:
+  four.result(workspace, columns, four.words(Nat.div(columns, BT.cell_bytes()), 0, Nat.mod(columns, BT.cell_bytes()), Word.padding(length),
+    FourState{bytes, Four.State{profile, V.Block{Word.all_bits(), 0, U32.mul(1, Word.width_u32())}, V.Block{Word.all_bits(), 0, U32.mul(2, Word.width_u32())}, V.Block{Word.all_bits(), 0, U32.mul(3, Word.width_u32())}, V.Block{Word.all_bits(), 0, U32.mul(4, Word.width_u32())}}}))
+
+def run.three(bytes: Array<U32>, +columns: Nat, profile: P.Profile, workspace: W.Workspace, +length: Nat, three: Bool) -> K.Run:
+  match three:
+    case False{}:
+      run.four(bytes, columns, profile, workspace, length)
+    case True{}:
+      three.result(workspace, columns, three.words(Nat.div(columns, BT.cell_bytes()), 0, Nat.mod(columns, BT.cell_bytes()), Word.padding(length),
+        ThreeState{bytes, Three.State{profile, V.Block{Word.all_bits(), 0, U32.mul(1, Word.width_u32())}, V.Block{Word.all_bits(), 0, U32.mul(2, Word.width_u32())}, V.Block{Word.all_bits(), 0, U32.mul(3, Word.width_u32())}}}))
+
+def run.two(bytes: Array<U32>, +columns: Nat, profile: P.Profile, workspace: W.Workspace, +length: Nat, two: Bool) -> K.Run:
+  match two:
+    case False{}:
+      run.three(bytes, columns, profile, workspace, length, Nat.is_le(length, Nat.mul(Word.width(), 3n)))
+    case True{}:
+      Q.run_nw.two.result(workspace, columns, two.words(Nat.div(columns, BT.cell_bytes()), 0, Nat.mod(columns, BT.cell_bytes()), Word.padding(length),
+        TwoState{bytes, TW.State{profile, V.Block{Word.all_bits(), 0, U32.mul(1, Word.width_u32())}, V.Block{Word.all_bits(), 0, U32.mul(2, Word.width_u32())}}}))
+
 def run(target: BT.Target, profile: P.Profile, workspace: W.Workspace, +length: Nat, one: Bool) -> K.Run:
   BT.Target{bytes, +columns} = target
   match one:
@@ -115,9 +238,7 @@ def run(target: BT.Target, profile: P.Profile, workspace: W.Workspace, +length: 
       Q.run_nw.result(workspace, columns, one.words(Nat.div(columns, BT.cell_bytes()), 0, Nat.mod(columns, BT.cell_bytes()), Word.padding(length),
         OneState{bytes, SW.State{profile, V.Block{Word.all_bits(), 0, Word.width_u32()}}}))
     case False{}:
-      Q.run_nw.two.result(workspace, columns, two.words(Nat.div(columns, BT.cell_bytes()), 0, Nat.mod(columns, BT.cell_bytes()), Word.padding(length),
-        TwoState{bytes, TW.State{profile, V.Block{Word.all_bits(), 0, Word.width_u32()},
-          V.Block{Word.all_bits(), 0, U32.mul(2, Word.width_u32())}}}))
+      run.two(bytes, columns, profile, workspace, length, Nat.is_le(length, Nat.mul(Word.width(), 2n)))
 
 type Known is Type:
   Known{query: String, pairs: List<&2, E.EqualityPair>, length: Nat, profile: P.Profile, workspace: W.Workspace}
@@ -134,13 +255,17 @@ def view.choose(query: String, pairs: List<&2, E.EqualityPair>, length: Nat,
     case False{}:
       OtherOwner{Q.Prepared{query, pairs, length, Some{profile}, workspace}}
 
+def wide_word(+length: Nat, +blocks: U32, stride: U32, capacity: U32) -> Bool:
+  Bool.and(Bool.and(Nat.is_gt(length, Nat.mul(Word.width(), 2n)), Nat.is_le(length, maximum_query())),
+    Bool.and(U32.is_eq(stride, 4), Bool.and(U32.is_eq(blocks, U32.from_nat(Word.blocks(length))), U32.is_eq(capacity, blocks))))
+
 def view.profile(query: String, pairs: List<&2, E.EqualityPair>, +length: Nat,
                      profile: P.Profile, workspace: W.Workspace) -> View:
   P.Profile{lookup, masks, +stride, rows, +blocks, used} = profile
   W.Workspace{data, +capacity, first, last} = workspace
   view.choose(query, pairs, length, P.Profile{lookup, masks, stride, rows, blocks, used},
     W.Workspace{data, capacity, first, last}, Bool.or(Q.single_word(length, stride, blocks, capacity),
-      Q.two_word(length, stride, blocks, capacity)))
+      Bool.or(Q.two_word(length, stride, blocks, capacity), wide_word(length, blocks, stride, capacity))))
 
 def view(prepared: Q.Prepared) -> View:
   match prepared:

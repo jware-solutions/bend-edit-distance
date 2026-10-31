@@ -74,7 +74,7 @@ static int be_read_request(BeRequest *r) {
         expected += (uint64_t)r->query_length + r->target_length + 2ull * r->pair_count;
     else if (r->operation == 2 || r->operation == 6) expected += r->target_length;
     else if (r->operation == 5 || r->operation == 7) expected += r->pair_count;
-    else if (r->operation != 3 && r->operation != 4) expected = r->size;
+    else if (r->operation != 3 && r->operation != 4 && r->operation != 8) expected = r->size;
     if (expected != r->size) be_die("inconsistent request lengths");
     size_t body_size = r->size - BE_REQUEST_SIZE;
     r->data = (unsigned char *)malloc(body_size ? body_size : 1);
@@ -97,6 +97,7 @@ static int be_read_request(BeRequest *r) {
         case 1: return !r->target_length && r->query_length <= 1048576 && r->pair_count <= 65536 ? 1 : 2;
         case 2: case 6: return 1;
         case 3: return !r->target_length && !r->pair_count ? 1 : 2;
+        case 8: return !r->query_length && !r->target_length && !r->pair_count ? 1 : 2;
         case 4: return !r->target_length && !r->pair_count && r->query_length <= 65536 ? 1 : 2;
         case 5: case 7: {
             if (r->target_length > 65536) return 2;
@@ -220,6 +221,8 @@ static Term be_request(Env e, uint32_t target_cid) {
         Term result;
         if (r.operation == 6 || r.operation == 7) {
             result = target_cid ? be_owned_request(e, &r, target_cid) : term_pak(CID(InvalidControl), r.operation);
+        } else if (r.operation == 8) {
+            result = target_cid ? term_pak(CID(CapabilitiesRequest), 0) : term_pak(CID(InvalidControl), 8);
         } else if (r.operation == 1) {
             result = io_node(e, CID(PrepareRequest), be_byte_string(e, r.query, r.query_length),
                              io_list(e, (const char *)r.pairs, 2ull * r.pair_count));

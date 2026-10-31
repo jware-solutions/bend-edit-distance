@@ -126,6 +126,10 @@ def respond(~State: Type,
         batch(~State, ~many, handle, values, Q.Options{P.mode(m), P.task(t), P.threshold(k), P.format(f)}, exists)
     case T.InvalidControl{operation}:
       invalid(operation)
+    case T.OwnedPreparedRequest{_, _}:
+      invalid(6)
+    case T.OwnedPreparedBatchRequest{_, _}:
+      invalid(7)
     case _:
       do IO<Unit>:
         alive : Bool <- T.respond(~ordinary_single, request)

@@ -72,8 +72,8 @@ static int be_read_request(BeRequest *r) {
     uint64_t expected = BE_REQUEST_SIZE;
     if (r->version == 1 || r->operation == 1)
         expected += (uint64_t)r->query_length + r->target_length + 2ull * r->pair_count;
-    else if (r->operation == 2) expected += r->target_length;
-    else if (r->operation == 5) expected += r->pair_count;
+    else if (r->operation == 2 || r->operation == 6) expected += r->target_length;
+    else if (r->operation == 5 || r->operation == 7) expected += r->pair_count;
     else if (r->operation != 3 && r->operation != 4) expected = r->size;
     if (expected != r->size) be_die("inconsistent request lengths");
     size_t body_size = r->size - BE_REQUEST_SIZE;
@@ -87,16 +87,18 @@ static int be_read_request(BeRequest *r) {
     }
     if (r->version == 1)
         return r->mode <= 2 && r->task <= 2 && r->format <= 1 && !header[7] ? 1 : 2;
-    if (r->operation == 2 || r->operation == 5) {
+    if (r->operation == 2 || r->operation == 5 || r->operation == 6 || r->operation == 7) {
         if (r->mode > 2 || r->task > 2 || r->format > 1 ||
-            (r->operation == 2 && r->pair_count)) return 2;
+            ((r->operation == 2 || r->operation == 6) && r->pair_count)) return 2;
     } else if (r->mode || r->task || r->format || r->threshold) return 2;
+    if ((r->operation == 6 || r->operation == 7) &&
+        (r->mode || r->task || (int32_t)r->threshold >= 0)) return 2;
     switch (r->operation) {
         case 1: return !r->target_length && r->query_length <= 1048576 && r->pair_count <= 65536 ? 1 : 2;
-        case 2: return 1;
+        case 2: case 6: return 1;
         case 3: return !r->target_length && !r->pair_count ? 1 : 2;
         case 4: return !r->target_length && !r->pair_count && r->query_length <= 65536 ? 1 : 2;
-        case 5: {
+        case 5: case 7: {
             if (r->target_length > 65536) return 2;
             size_t pos = 0;
             for (uint32_t i = 0; i < r->target_length; ++i) {
@@ -130,6 +132,12 @@ static void be_write_frame(const unsigned char *data, uint64_t size) {
 
 
 #ifdef CID(read_request)
+#define BE_REQUEST_CODEC
+#endif
+#ifdef CID(read_owned_request_native)
+#define BE_REQUEST_CODEC
+#endif
+#ifdef BE_REQUEST_CODEC
 // A Char occupies one raw U32 field in the pinned runtime. io_str decodes
 // UTF-8 and cannot represent arbitrary wire bytes, including malformed UTF-8.
 static Term be_byte_string(Env e, const unsigned char *bytes, uint32_t length) {
@@ -139,7 +147,65 @@ static Term be_byte_string(Env e, const unsigned char *bytes, uint32_t length) {
     return string;
 }
 
-Term read_request_run(Env e, Term *f, IoWork *w) {
+// Pack validated bytes directly into a pinned-runtime U32 buffer. Logical
+// lengths accompany the single owner; unused physical capacity is zeroed.
+static Term be_byte_buffer(Env e, const unsigned char *bytes, uint32_t length) {
+    uint32_t words = (length + 3ull) / 4, depth = 0;
+    while ((1ull << depth) < words) ++depth;
+    Term zero = 0;
+    Term buffer = blk_new(e, false, depth, 0, 1, &zero);
+    if (err_peek(e.mem)) be_die("target buffer allocation failed");
+    uint64_t at = term_loc(buffer);
+#if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
+    memcpy((unsigned char *)(e.mem + at), bytes, length);
+#else
+    for (uint32_t i = 0; i < length; ++i) {
+        uint32_t word = i >> 2, shift = (i & 3) * 8;
+        uint32_t prior = (uint32_t)blk_read(e.mem, false, at, word);
+        blk_write(e.mem, false, at, word, prior | ((uint32_t)bytes[i] << shift));
+    }
+#endif
+    return buffer;
+}
+
+static Term be_owned_request(Env e, const BeRequest *r, uint32_t target_cid) {
+    if (r->operation == 6) {
+        u64 fields = heap_alloc(e, cls_fit(3));
+        if (err_peek(e.mem)) be_die("owned request allocation failed");
+        e.mem[fields] = r->query_length;
+        e.mem[fields + 1] = be_byte_buffer(e, r->target, r->target_length);
+        e.mem[fields + 2] = r->target_length;
+        return term_ctr(CID(OwnedPreparedRequest), fields);
+    }
+    uint32_t *offsets = malloc(((size_t)r->target_length + 1) * sizeof(uint32_t));
+    if (!offsets) be_die("batch offset allocation failed");
+    size_t pos = 0;
+    uint64_t units = 0;
+    uint32_t first = r->target_length ? be_u32(r->data) : 0, uniform = 1;
+    for (uint32_t i = 0; i < r->target_length; ++i) {
+        offsets[i] = (uint32_t)pos;
+        uint32_t length = be_u32(r->data + pos);
+        pos += 4ull + length;
+        units += 1ull + length;
+        uniform &= length == first;
+    }
+    Term targets = term_pak(CID(Nil), 0);
+    for (uint32_t i = r->target_length; i; --i) {
+        uint32_t off = offsets[i - 1], length = be_u32(r->data + off);
+        Term target = io_node(e, target_cid, be_byte_buffer(e, r->data + off + 4, length), length);
+        targets = io_node(e, CID(Con), target, targets);
+        if (err_peek(e.mem)) be_die("owned batch allocation failed");
+    }
+    free(offsets);
+    u64 fields = heap_alloc(e, cls_fit(5));
+    if (err_peek(e.mem)) be_die("owned request allocation failed");
+    e.mem[fields] = r->query_length; e.mem[fields + 1] = targets;
+    e.mem[fields + 2] = r->target_length; e.mem[fields + 3] = units;
+    e.mem[fields + 4] = uniform;
+    return term_ctr(CID(OwnedPreparedBatchRequest), fields);
+}
+
+static Term be_request(Env e, uint32_t target_cid) {
     BeRequest r;
     int state = be_read_request(&r);
     if (!state) return term_pak(CID(End), 0);
@@ -152,7 +218,9 @@ Term read_request_run(Env e, Term *f, IoWork *w) {
     }
     if (r.version == 2) {
         Term result;
-        if (r.operation == 1) {
+        if (r.operation == 6 || r.operation == 7) {
+            result = target_cid ? be_owned_request(e, &r, target_cid) : term_pak(CID(InvalidControl), r.operation);
+        } else if (r.operation == 1) {
             result = io_node(e, CID(PrepareRequest), be_byte_string(e, r.query, r.query_length),
                              io_list(e, (const char *)r.pairs, 2ull * r.pair_count));
         } else if (r.operation == 3 || r.operation == 4) {
@@ -208,6 +276,20 @@ Term read_request_run(Env e, Term *f, IoWork *w) {
     free(r.data);
     return term_ctr(CID(Bytes), fields);
 }
+
+#ifdef CID(read_request)
+Term read_request_run(Env e, Term *f, IoWork *w) {
+    return be_request(e, 0);
+}
+#endif
+#ifdef CID(read_owned_request_native)
+Term read_owned_request_native_run(Env e, Term *f, IoWork *w) {
+    if (term_tag(f[0]) != TAG_CTR) be_die("invalid owned-target prototype");
+    uint32_t cid = term_aux(f[0]);
+    term_drop(e, f[0]);
+    return be_request(e, cid);
+}
+#endif
 
 #endif
 
@@ -321,6 +403,9 @@ static void __attribute__((constructor)) byte_transport_effects(void) {
 #endif
 #ifdef CID(read_request)
     io_eff(CID(read_request), read_request_run);
+#endif
+#ifdef CID(read_owned_request_native)
+    io_eff(CID(read_owned_request_native), read_owned_request_native_run);
 #endif
 #ifdef CID(write_response)
     io_eff(CID(write_response), write_response_run);

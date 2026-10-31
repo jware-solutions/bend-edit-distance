@@ -1,6 +1,7 @@
 import Base
 import ../EdlibTypes.bend as E
 import ./ByteProtocol.bend as P
+import ./ByteTarget.bend as Own
 
 # The native bridge constructs one Char per raw byte, without UTF-8 decoding.
 type SizedTarget is Data:
@@ -17,9 +18,19 @@ type Request is Type:
   BatchRequest{count: U32}
   PreparedBatchRequest{handle: U32, mode: U32, task: U32, threshold: U32, format: U32, targets: List<&2, SizedTarget>}
   InvalidControl{operation: U32}
+  OwnedPreparedRequest{handle: U32, target: Own.Target}
+  OwnedPreparedBatchRequest{handle: U32, batch: Own.Batch}
 
 def read_request() -> IO(Request):
   import "./transport.c"
+
+# A typed empty prototype lets the pinned FFI pass its constructor identity
+# without coupling C to generated, cross-module identifier names.
+def read_owned_request_native(prototype: Own.Target) -> IO(Request):
+  import "./transport.c"
+
+def read_owned_request() -> IO(Request):
+  read_owned_request_native(Own.Target{[0 : U32*1n], 0n})
 
 def write_response(bytes: List<U32>) -> IO(Unit):
   import "./transport.c"

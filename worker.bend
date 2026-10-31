@@ -1,7 +1,7 @@
 import Base
 import ./src/Myers.bend as M
 import ./src/Cli.bend as CLI
-import ./src/PreparedTransport.bend as T
+import ./src/PreparedByteTransport.bend as Bytes
 import ./src/PoolTransport.bend as Pool
 
 # Keep foreign transport effects outside the proof-checked alignment library.
@@ -9,7 +9,7 @@ import ./src/PoolTransport.bend as Pool
 def run(args: List<String>) -> IO(Unit):
   match args:
     case _ <> "--worker" <> Nil{}:
-      T.serve()
+      Bytes.serve()
     case _ <> "--worker" <> "--shards" <> shards <> Nil{}:
       Pool.serve(shards)
     case _:

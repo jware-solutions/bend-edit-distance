@@ -2,9 +2,8 @@ import Base
 import ../EdlibTypes.bend as E
 import ../Prepared.bend as Q
 import ./PreparedPool.bend as P
-import ./PreparedTransport.bend as T
-import ./Myers.bend as M
-import ./Batch.bend as B
+import ./PreparedByteTransport.bend as Bytes
+import ./PreparedBytePool.bend as BytePool
 import ./Transport.bend as BT
 
 def prepare_one(query: String, pairs: List<&2, E.EqualityPair>) -> P.Pool:
@@ -41,7 +40,7 @@ def single(pool: P.Pool, target: BT.SizedTarget, options: Q.Options) -> P.Pool &
   P.single_result(batch_sized(pool, [target], options))
 
 def serve_with(~prepare: String -> List<&2, E.EqualityPair> -> P.Pool) -> IO(Unit):
-  T.serve_generic(~P.Pool, ~prepare, ~P.retained, ~single, ~batch_sized, ~M.edlib_align, ~B.align_batch)
+  Bytes.serve_generic(~P.Pool, ~prepare, ~P.retained, ~single, ~batch_sized, ~BytePool.single, ~BytePool.many)
 
 def serve(shards: String) -> IO(Unit):
   match shards:

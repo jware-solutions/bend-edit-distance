@@ -97,7 +97,7 @@ def encode_control(operation, *, handle=0, count=0, body=b"", config=AlignConfig
     if len(body) + REQUEST.size > MAX_FRAME_LENGTH:
         raise ValueError("Request exceeds maximum frame length")
     first = count if operation == 4 else handle
-    target = count if operation == 5 else len(body) if operation == 2 else 0
+    target = count if operation in (5, 7) else len(body) if operation in (2, 6) else 0
     payload = REQUEST.pack(b"BED2", list(Mode).index(config.mode), list(Task).index(config.task),
         list(CigarFormat).index(config.cigar_format), operation, config.threshold.to_edlib(), first, target, pairs)
     return LENGTH.pack(len(payload) + len(body)) + payload + body
@@ -133,7 +133,7 @@ class PreparedQuery:
 
 
 class AlignmentWorker:
-    """One executable, many byte requests. Failures close it; calls never retry."""
+    """One executable, many byte requests. Failures close it without retry."""
 
     def __init__(self, command, *, cwd: Path | None = None):
         if os.name == "nt":
@@ -142,6 +142,7 @@ class AlignmentWorker:
         self._lock = threading.RLock()
         self._closed = False
         self._prepared = {}
+        self._owned_supported = {6: None, 7: None}
         self._retained_bytes = 0
         self._read_buffer = b""
         self._read_offset = 0
@@ -248,7 +249,9 @@ class AlignmentWorker:
         return self._read(size, deadline)
 
     def _control(self, deadline, operation):
-        frame = self._frame(deadline, CONTROL.size)
+        return self._control_payload(self._frame(deadline, CONTROL.size), operation)
+
+    def _control_payload(self, frame, operation):
         if len(frame) != CONTROL.size:
             raise ValueError("Invalid control response length")
         magic, op, status, handle, retained, count = CONTROL.unpack(frame)
@@ -315,15 +318,42 @@ class AlignmentWorker:
         if config.equalities and config.equalities != prepared.equalities:
             raise ValueError("Prepared query equality definition is fixed")
 
+    def _owned_options(self, prepared, config, operation):
+        return (self._owned_supported[operation] is not False
+                and 0 < prepared.query_length <= 64 and config.mode == Mode.NW
+                and config.task == Task.DISTANCE and config.threshold.to_edlib() < 0)
+
+    def _owned_single(self, prepared, target, config, deadline):
+        payload = self._frame(deadline, CONTROL.size)
+        if payload[:4] == b"BER2":
+            control = self._control_payload(payload, 6)
+            if control[0] != 1 or control[1] or control[3]:
+                raise ValueError("Invalid owned-buffer rejection")
+            # A complete, explicit unsupported-operation reply has consumed
+            # the request. Negotiate legacy framing within the same deadline.
+            self._owned_supported[6] = False
+            self._retained_bytes = control[2]
+            self._write(encode_control(2, handle=prepared.handle, body=target, config=config), deadline)
+            return decode_response(self._frame(deadline))
+        result = decode_response(payload)
+        self._owned_supported[6] = True
+        return result
+
     def align_prepared(self, prepared, target, config=AlignConfig(), *, timeout=10):
         target = sequence_bytes(target)
         with self._lock:
             self._prepared_options(prepared, config)
+            if self._owned_options(prepared, config, 6):
+                frame = encode_control(6, handle=prepared.handle, body=target, config=config)
+                return self._exchange(frame,
+                    lambda deadline: self._owned_single(prepared, target, config, deadline), timeout)
             frame = encode_control(2, handle=prepared.handle, body=target, config=config)
             return self._exchange(frame, lambda deadline: decode_response(self._frame(deadline)), timeout)
 
     def _batch_response(self, operation, count, deadline):
-        control = self._control(deadline, operation)
+        return self._batch_values(self._control(deadline, operation), count, deadline)
+
+    def _batch_values(self, control, count, deadline):
         if control[0]:
             return control, []
         if control[3] != count:
@@ -345,6 +375,22 @@ class AlignmentWorker:
                 raise RuntimeError("Batch request rejected")
             return values
 
+    def _owned_batch(self, prepared, count, body, config, deadline):
+        control = self._control(deadline, 7)
+        if control[0] and (control[3] or control[1] not in (0, prepared.handle)):
+            raise ValueError("Invalid owned-buffer rejection")
+        if not control[0] and control[1] != prepared.handle:
+            raise ValueError("Invalid owned-buffer response handle")
+        if control[0] == 1 and control[1] == 0 and control[3] == 0:
+            self._owned_supported[7] = False
+            self._retained_bytes = control[2]
+            self._write(encode_control(5, handle=prepared.handle, count=count, body=body,
+                pairs=len(body), config=config), deadline)
+            return self._batch_response(5, count, deadline)
+        result = self._batch_values(control, count, deadline)
+        self._owned_supported[7] = True
+        return result
+
     def align_prepared_batch(self, prepared, targets, config=AlignConfig(), *, timeout=10):
         targets = [sequence_bytes(t) for t in targets]
         if len(targets) > MAX_BATCH_SIZE:
@@ -352,10 +398,15 @@ class AlignmentWorker:
         body = b"".join(LENGTH.pack(len(t)) + t for t in targets)
         with self._lock:
             self._prepared_options(prepared, config)
-            frame = encode_control(5, handle=prepared.handle, count=len(targets), body=body,
-                pairs=len(body), config=config)
-            control, values = self._exchange(frame,
-                lambda deadline: self._batch_response(5, len(targets), deadline), timeout)
+            if self._owned_options(prepared, config, 7):
+                frame = encode_control(7, handle=prepared.handle, count=len(targets), body=body,
+                    pairs=len(body), config=config)
+                read = lambda deadline: self._owned_batch(prepared, len(targets), body, config, deadline)
+            else:
+                frame = encode_control(5, handle=prepared.handle, count=len(targets), body=body,
+                    pairs=len(body), config=config)
+                read = lambda deadline: self._batch_response(5, len(targets), deadline)
+            control, values = self._exchange(frame, read, timeout)
             self._retained_bytes = control[2]
             if control[0]:
                 raise RuntimeError("Prepared batch request rejected")

@@ -163,8 +163,9 @@ The legacy text CLIs retain their non-NUL ASCII/4,096-character restrictions.
 
 The Bend CPU and persistent GPU workers accept `BED2`; BED1/BER1 remain compatible.
 BED2 uses the same 24-byte request header, with byte 7 holding an operation.
-Mode/task/format/threshold apply to operations 2 and 5; all four fields must be
-zero for other operations. The last three u32 fields are interpreted as follows:
+Mode/task/format/threshold apply to operations 2 and 5, with the restricted
+configuration below for optional operations 6/7. All four fields must be zero
+for the remaining operations. The last three u32 fields are interpreted as follows:
 
 | Operation | Offset 12 | Offset 16 | Offset 20 | Body |
 | --- | --- | --- | --- | --- |
@@ -173,20 +174,31 @@ zero for other operations. The last three u32 fields are interpreted as follows:
 | 3: release | handle | 0 | 0 | empty |
 | 4: ordinary batch | job count | 0 | 0 | empty; followed by that many BED1 frames |
 | 5: prepared batch | handle | target count | body bytes | repeated u32 length, then target bytes |
+| 6: owned prepared input (optional) | handle | target bytes | 0 | target |
+| 7: owned prepared batch (optional) | handle | target count | body bytes | repeated u32 length, then target bytes |
 
-Operation 2 returns BER1. Other operations return a 24-byte BER2 control frame:
+Recognized operations 2 and 6 return BER1. Other operations return a 24-byte BER2 control frame:
 magic `BER2`, operation, status (0 success, 1 rejected), handle, retained cache
 budget bytes, result count; each field after magic is u32. Successful operations
-4 and 5 then return exactly result-count BER1 frames in input order. Empty
+4, 5 and 7 then return exactly result-count BER1 frames in input order. Empty
 batches are valid. Invalid operation-2 handles/configurations return a BER1
 ERROR; other rejected controls return BER2 with no following results.
+
+CPU workers support optional operations 6/7 for unlimited NW DISTANCE. They use
+owned packed byte buffers; operation 6 returns BER1, and operation 7 returns
+BER2 followed by ordered BER1 results. Unsupported optional operations return
+BER2 with status 1, handle 0 and count 0. `AlignmentWorker` selects them for
+prepared queries of 1–64 bytes and negotiates operations 2/5 within the original
+deadline when a worker explicitly rejects support. GPU workers use that fallback.
 
 Preparation fixes the query, symmetric equality pairs, compact profile layout,
 and 32-bit word width. Mode, task, threshold and CIGAR format remain per-call.
 Prepared NW always profiles the prepared query, including when its target is
 shorter. Empty-input exceptions and PATH coordinates retain ordinary semantics.
-CPU prepared batches reuse one workspace serially; GPU prepared batches move
-independent owners into a balanced plan. Ordinary batches use independent forks.
+CPU workers use one workspace by default; sharded workers keep small byte
+batches serial and move independent owners into balanced plans for larger jobs.
+GPU prepared batches move independent owners into a balanced plan. Ordinary
+batches use independent forks.
 Use independently prepared workers or explicitly cloned Bend profiles for
 concurrent shards. One worker never shares mutable workspace between calls.
 
@@ -207,4 +219,4 @@ with AlignmentWorker(["build/bend-edit-distance", *runtime_prefix(threads=1), "-
 `worker.align_batch([(query, target, config), ...])` accepts mixed jobs.
 `worker.retained_entries` and `worker.retained_bytes` expose cache admission
 usage. Per-call equalities may be omitted or must equal the prepared definition.
-Failures and timeouts close the worker and invalidate its handles without retry.
+Framing errors and timeouts close the worker and invalidate its handles without retry.

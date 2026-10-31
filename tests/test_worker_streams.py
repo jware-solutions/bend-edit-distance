@@ -20,8 +20,8 @@ kind = sys.argv[1]
 source, output = sys.stdin.buffer, sys.stdout.buffer
 def frame(payload):
     return struct.pack('<I', len(payload)) + payload
-def control(op, count, status=0):
-    return frame(struct.pack('<4sIIIII', b'BER2', op, status, 17, 4096 if op != 3 else 0, count))
+def control(op, count, status=0, handle=17):
+    return frame(struct.pack('<4sIIIII', b'BER2', op, status, handle, 4096 if op != 3 else 0, count))
 def result(length, path=False):
     missing = 0xffffffff
     cigar = (str(length) + '=').encode() if path else b''
@@ -33,7 +33,7 @@ def result(length, path=False):
         body += struct.pack('<i', 0) + bytes(length) + cigar
     return frame(header + body)
 def send(data):
-    if kind == 'fragment':
+    if kind.endswith('fragment'):
         sizes = (1, 3, 2, 31, 4095, 65537)
         offset = index = 0
         while offset < len(data):
@@ -50,12 +50,36 @@ while True:
     payload = source.read(size)
     assert len(payload) == size
     version, mode, task, fmt, operation, maximum, query, target, pairs = struct.unpack_from('<4sBBBBiIII', payload)
+    if kind.startswith('owned_'):
+        print('request', operation, file=sys.stderr, flush=True)
     if version == b'BED1':
         send(result(target, task == 2))
     elif operation == 1:
         send(control(1, 1))
     elif operation == 2:
+        if kind == 'owned_deadline':
+            time.sleep(0.05)
         send(result(target))
+    elif operation in (6, 7):
+        if kind == 'owned_deadline':
+            time.sleep(0.05)
+        if kind == 'owned_bad_count':
+            send(control(operation, 1, 1, 0))
+        elif kind == 'owned_bad_status':
+            send(control(operation, 0, 2, 0))
+        elif kind == 'owned_bad_operation':
+            send(control(operation + 1, 0, 1, 0))
+        elif kind == 'owned_bad_magic':
+            bad = bytearray(control(operation, 0, 1, 0)); bad[4:8] = b'FAIL'
+            send(bad)
+        elif kind == 'owned_bad_handle':
+            send(control(operation, 0, 1, 42))
+        elif kind == 'owned_wrong_success_handle':
+            send(control(operation, 0, 0, 42))
+        elif kind == 'owned_rejected' and operation == 7:
+            send(control(operation, 0, 1, 17))
+        else:
+            send(control(operation, 0, 1, 0))
     elif operation == 3:
         send(control(3, 0))
     elif operation == 5:
@@ -145,6 +169,48 @@ def test_deadline_covers_already_buffered_frames(stream_worker, monkeypatch):
         monkeypatch.setattr(transport, "decode_response", slow_decode)
         with pytest.raises(RuntimeError, match="timed out"):
             prepared.align_batch([b"first", b"second"], timeout=0.04)
+        assert worker.closed and prepared.released
+
+
+@pytest.mark.parametrize("kind", ["owned_legacy", "owned_fragment"])
+def test_optional_buffer_operations_negotiate_legacy_once(stream_worker, kind):
+    with stream_worker(kind) as worker, worker.prepare(b"A") as prepared:
+        for _ in range(3):
+            assert prepared.align(b"next").edit_distance == 4
+            assert [r.edit_distance for r in prepared.align_batch([b"", b"A", b"longer"])] == [0, 1, 6]
+        assert worker._owned_supported == {6: False, 7: False}
+        assert prepared.align_batch([]) == []
+    lines = worker._diagnostics.splitlines()
+    assert lines.count("request 6") == lines.count("request 7") == 1
+
+
+@pytest.mark.parametrize("kind", ["owned_bad_count", "owned_bad_status", "owned_bad_operation", "owned_bad_magic",
+                                  "owned_bad_handle", "owned_wrong_success_handle"])
+@pytest.mark.parametrize("batch", [False, True])
+def test_malformed_optional_rejections_close_without_legacy_resend(stream_worker, kind, batch):
+    with stream_worker(kind) as worker:
+        prepared = worker.prepare(b"A")
+        with pytest.raises(ValueError):
+            prepared.align_batch([b"A"]) if batch else prepared.align(b"A")
+        assert worker.closed and prepared.released
+    lines = worker._diagnostics.splitlines()
+    assert "request 2" not in lines and "request 5" not in lines
+
+
+def test_recognized_owned_batch_rejection_preserves_connection_without_resend(stream_worker):
+    with stream_worker("owned_rejected") as worker, worker.prepare(b"A") as prepared:
+        with pytest.raises(RuntimeError, match="Prepared batch request rejected"):
+            prepared.align_batch([b"A"])
+        assert not worker.closed and not prepared.released
+        assert prepared.align(b"next").edit_distance == 4
+    assert "request 5" not in worker._diagnostics.splitlines()
+
+
+def test_optional_negotiation_keeps_original_deadline(stream_worker):
+    with stream_worker("owned_deadline") as worker:
+        prepared = worker.prepare(b"A")
+        with pytest.raises(RuntimeError, match="timed out"):
+            prepared.align(b"A", timeout=0.08)
         assert worker.closed and prepared.released
 
 

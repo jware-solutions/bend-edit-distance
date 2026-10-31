@@ -4,6 +4,9 @@ import ./src/Frontier.bend as F
 import ./src/SmallPath.bend as SP
 import ./src/SingleWord.bend as SW
 import ./src/TwoWord.bend as TW
+import ./src/ByteTarget.bend as Packed
+import ./src/PreparedBytes.bend as PB
+import ./src/PreparedBytePool.bend as PBP
 import ./src/PreparedPool.bend as PP
 import ./src/Word.bend as Word
 import ./src/TraceMatrix.bend as TM
@@ -110,6 +113,64 @@ law two_word_boundary_match:
 law two_word_nontransitive:
   {two_word_distance(TW.run("C", P.build("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", 33n,
     [E.EqualityPair{'A', 'N'}, E.EqualityPair{'N', 'C'}]), 31n)) == E.Found{33n} : E.EditDistance}
+
+law packed_byte_order:
+  {(Packed.byte(4286578689, 0), Packed.byte(4286578689, 1),
+    Packed.byte(4286578689, 2), Packed.byte(4286578689, 3)) == (1, 0, 128, 255) : U32 & U32 & U32 & U32}
+
+law packed_capacity_guards:
+  {(Packed.fits(0n, 0), Packed.fits(4n, 1), Packed.fits(5n, 1), Packed.fits(5n, 2)) ==
+    (True{}, True{}, False{}, True{}) : Bool & Bool & Bool & Bool}
+
+law packed_string_bytes:
+  {Packed.string(Packed.Target{[4286578689 : U32*1n], 4n}) ==
+    SCon{Chr{1}, SCon{Chr{0}, SCon{Chr{128}, SCon{Chr{255}, ""}}}} : String}
+
+law packed_string_partial:
+  {Packed.string(Packed.Target{[4286578689 : U32*1n], 3n}) ==
+    SCon{Chr{1}, SCon{Chr{0}, SCon{Chr{128}, ""}}} : String}
+
+law packed_one_word_steps:
+  for profile: P.Profile
+  for block: V.Block
+  for word: U32
+  {PB.one.word(word, SW.State{profile, block}) ==
+    PB.one.remaining(4n, word, SW.State{profile, block}) : SW.State}
+
+law packed_two_word_steps:
+  for profile: P.Profile
+  for first: V.Block
+  for second: V.Block
+  for word: U32
+  {PB.two.word(word, TW.State{profile, first, second}) ==
+    PB.two.remaining(4n, word, TW.State{profile, first, second}) : TW.State}
+
+law packed_invalid_length:
+  {Q.result(PB.align(Q.prepare("A", Nil{}), Packed.Target{[65 : U32*1n], 5n})) ==
+    E.AlignResult{E.Error{}, E.NotFound{}, Nil{}, None{}, None{}, None{}} : E.AlignResult}
+
+law packed_generic_query:
+  {Q.result(PB.align(Q.prepare(SCon{Chr{256}, ""}, Nil{}), Packed.Target{[65 : U32*1n], 1n})) ==
+    L.align(SCon{Chr{256}, ""}, "A", E.default_config()) : E.AlignResult}
+
+law packed_generic_pairs:
+  {Q.result(PB.align(Q.prepare(SCon{Chr{256}, ""}, [E.EqualityPair{Chr{256}, 'A'}]),
+    Packed.Target{[65 : U32*1n], 1n})) ==
+    L.align(SCon{Chr{256}, ""}, "A", E.AlignConfig{E.NW{}, E.Distance{}, E.Unlimited{},
+      [E.EqualityPair{Chr{256}, 'A'}], E.Extended{}}) : E.AlignResult}
+
+law packed_nontransitive:
+  {Q.result(PB.align(Q.prepare("A", [E.EqualityPair{'A', 'N'}, E.EqualityPair{'N', 'C'}]),
+    Packed.Target{[67 : U32*1n], 1n})) == E.distance_result(1n, E.Position{0n}, True{}) : E.AlignResult}
+
+law packed_pool_serial_small:
+  {PBP.active_owners(4n, 8n, 264n, 32n) == 1n : Nat}
+
+law packed_pool_parallel_large:
+  {PBP.active_owners(4n, 1024n, 33792n, 32n) == 4n : Nat}
+
+law packed_pool_empty_work:
+  {PBP.active_owners(4n, 8n, 8n, 64n) == 1n : Nat}
 
 # GPU batches prepare a complete plan on the host, execute it in one ! call,
 # then restore input order on the host. Bang changes scheduling, not values.
@@ -281,6 +342,29 @@ def small_ascii(sequence: SmallAscii) -> String:
       "aA"
     case LowerLowerAscii{}:
       "aa"
+
+def small_ascii_packed(sequence: SmallAscii) -> Packed.Target:
+  match sequence:
+    case EmptyAscii{}:
+      Packed.Target{[0 : U32*1n], 0n}
+    case UpperAscii{}:
+      Packed.Target{[65 : U32*1n], 1n}
+    case LowerAscii{}:
+      Packed.Target{[97 : U32*1n], 1n}
+    case UpperUpperAscii{}:
+      Packed.Target{[16705 : U32*1n], 2n}
+    case UpperLowerAscii{}:
+      Packed.Target{[24897 : U32*1n], 2n}
+    case LowerUpperAscii{}:
+      Packed.Target{[16737 : U32*1n], 2n}
+    case LowerLowerAscii{}:
+      Packed.Target{[24929 : U32*1n], 2n}
+
+law packed_prepared_equivalence:
+  for query: SmallAscii
+  for target: SmallAscii
+  {Q.result(PB.align(Q.prepare(small_ascii(query), Nil{}), small_ascii_packed(target))) ==
+    L.align(small_ascii(query), small_ascii(target), E.default_config()) : E.AlignResult}
 
 law tail_take_small_equivalence:
   for sequence: SmallAscii

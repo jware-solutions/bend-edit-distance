@@ -6,6 +6,7 @@ import ./src/BitVector.bend as V
 import ./src/Profile.bend as P
 import ./src/Workspace.bend as W
 import ./src/SearchKernel.bend as K
+import ./src/RetryHint.bend as Hint
 import ./src/SingleWord.bend as SW
 import ./src/TwoWord.bend as TW
 import ./src/Myers.bend as M
@@ -87,7 +88,7 @@ def run_nw.two(target: String, profile: P.Profile, workspace: W.Workspace,
     case True{}:
       run_nw.two.result(workspace, columns, TW.run(target, profile, Word.padding(length)))
     case False{}:
-      K.search(target, profile, workspace, length, columns, E.Unlimited{})
+      Hint.search(target, profile, workspace, length, columns)
 
 def run_nw.small(target: String, profile: P.Profile, workspace: W.Workspace,
                     +length: Nat, columns: Nat, stride: U32, blocks: U32, capacity: U32, one: Bool) -> K.Run:

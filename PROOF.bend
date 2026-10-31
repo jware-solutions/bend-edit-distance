@@ -44,6 +44,47 @@ def Laws.two_word_boundary_match():
 def Laws.two_word_nontransitive():
   {==}
 
+def Laws.retry_hint_empty(profile, index, limit):
+  {==}
+
+def Laws.retry_hint_logical_end(profile, symbol, tail, index, limit):
+  {==}
+
+def Laws.retry_hint_exceeded(fuel, target, index, limit, profile, distance):
+  match fuel target:
+    case 0n SNil{}:
+      {==}
+    case 0n SCon{_, _}:
+      {==}
+    case 1n+p SNil{}:
+      {==}
+    case 1n+p SCon{_, _}:
+      {==}
+
+def Laws.retry_hint_limit_conversion(length):
+  {==}
+
+def Laws.retry_hint_progress_conversion(length, consumed):
+  {==}
+
+def Laws.retry_hint_large_index():
+  {==}
+
+def Laws.retry_hint_limits():
+  {==}
+
+def Laws.retry_hint_progress():
+  {==}
+
+def Laws.retry_hint_unknown_padding():
+  {==}
+
+def Laws.retry_hint_nontransitive():
+  {==}
+
+def Laws.retry_hint_direct_equality():
+  {==}
+
 def Laws.block_transition_score_independence(positive, negative, score_a, score_b, mask, carry):
   match carry:
     case V.Carry{_, _}:

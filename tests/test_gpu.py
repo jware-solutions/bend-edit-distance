@@ -60,6 +60,20 @@ def session_results(binary, reference, *, gpu, repeats=2):
                     bangs += 1
                 assert word.align(query, timeout=120).edit_distance == 0
                 bangs += 1
+        # Successful diagonal retry bounds and ordinary retry fallback must
+        # complete across successive device requests with the same owner.
+        for length, stride in ((1024, 13), (4096, 43)):
+            query = (b"A\0\xffN" * (length // 4))
+            changed = bytearray(query)
+            for index in range(0, length, stride):
+                changed[index] ^= 0x55
+            values = [bytes(changed), query, b"Z" * length, bytes(changed)]
+            with w.prepare(query, pairs, timeout=60) as retry:
+                for task in (Task.DISTANCE, Task.LOC):
+                    config = AlignConfig(task=task, equalities=pairs)
+                    assert retry.align_batch(values, config, timeout=120) == [
+                        ref.align(query, value, config, timeout=120) for value in values]
+                    bangs += 1
         # Fixed-length start resolution must complete on the device even when
         # thousands of tied locations survive, including the empty prefix.
         for query, target, pairs in [(b"A", b"C" * 4097, ()),

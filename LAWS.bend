@@ -2,6 +2,7 @@ import ./src/Sequence.bend as S
 import ./src/PathList.bend as PL
 import ./src/Frontier.bend as F
 import ./src/SmallPath.bend as SP
+import ./src/RetryHint.bend as Hint
 import ./src/SingleWord.bend as SW
 import ./src/ThreeWord.bend as Three
 import ./src/FourWord.bend as Four
@@ -115,6 +116,73 @@ law two_word_boundary_match:
 law two_word_nontransitive:
   {two_word_distance(TW.run("C", P.build("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", 33n,
     [E.EqualityPair{'A', 'N'}, E.EqualityPair{'N', 'C'}]), 31n)) == E.Found{33n} : E.EditDistance}
+
+def retry_hint(value: Hint.Hinted) -> Hint.Hint:
+  Hint.Hinted{_, hint} = value
+  hint
+
+law retry_hint_empty:
+  for profile: P.Profile
+  for index: U32
+  for limit: Nat
+  {Hint.scan(0n, "", index, limit, Hint.Scanning{profile, 0n, False{}}) ==
+    Hint.Hinted{profile, Hint.Bounded{0n}} : Hint.Hinted}
+
+law retry_hint_logical_end:
+  for profile: P.Profile
+  for symbol: Char
+  for tail: String
+  for index: U32
+  for limit: Nat
+  {Hint.scan(0n, SCon{symbol, tail}, index, limit, Hint.Scanning{profile, 0n, False{}}) ==
+    Hint.Hinted{profile, Hint.Unavailable{}} : Hint.Hinted}
+
+law retry_hint_exceeded:
+  for fuel: Nat
+  for target: String
+  for index: U32
+  for limit: Nat
+  for profile: P.Profile
+  for distance: Nat
+  {Hint.scan(fuel, target, index, limit, Hint.Scanning{profile, distance, True{}}) ==
+    Hint.Hinted{profile, Hint.Unavailable{}} : Hint.Hinted}
+
+law retry_hint_limit_conversion:
+  for length: Nat
+  {Hint.hint_limit(length) == U32.to_nat(Hint.hint_limit_word(U32.from_nat(length))) : Nat}
+
+law retry_hint_progress_conversion:
+  for length: Nat
+  for consumed: Nat
+  {Hint.use_hint(length, consumed) == Hint.use_hint_word(U32.from_nat(length), U32.from_nat(consumed)) : Bool}
+
+law retry_hint_limits:
+  {(Hint.hint_limit_word(0), Hint.hint_limit_word(1024), Hint.hint_limit_word(4096), Hint.hint_limit_word(16384)) ==
+    (0, 128, 256, 512) : U32 & U32 & U32 & U32}
+
+law retry_hint_progress:
+  {(Hint.use_hint_word(4096, 0), Hint.use_hint_word(4096, 511), Hint.use_hint_word(4096, 512),
+    Hint.use_hint_word(4096, 1024), Hint.use_hint_word(4096, 2047), Hint.use_hint_word(4096, 2048),
+    Hint.use_hint_word(16384, 1023), Hint.use_hint_word(16384, 1024), Hint.use_hint_word(16384, 8192)) ==
+    (False{}, False{}, True{}, True{}, True{}, False{}, False{}, True{}, False{}) :
+    Bool & Bool & Bool & Bool & Bool & Bool & Bool & Bool & Bool}
+
+law retry_hint_large_index:
+  {(Hint.hint_limit_word(2147483647), Hint.minimum_columns(2147483647),
+    Hint.use_hint_word(2147483647, 1023), Hint.use_hint_word(2147483647, 1024)) ==
+    (67108863, 1024, False{}, True{}) : U32 & U32 & Bool & Bool}
+
+law retry_hint_unknown_padding:
+  {retry_hint(Hint.scan(1n, "Z", 0, 1n, Hint.Scanning{P.build("A", 1n, Nil{}), 0n, False{}})) ==
+    Hint.Bounded{1n} : Hint.Hint}
+
+law retry_hint_nontransitive:
+  {retry_hint(Hint.scan(1n, "C", 0, 1n, Hint.Scanning{P.build("A", 1n,
+    [E.EqualityPair{'A', 'N'}, E.EqualityPair{'N', 'C'}]), 0n, False{}})) == Hint.Bounded{1n} : Hint.Hint}
+
+law retry_hint_direct_equality:
+  {retry_hint(Hint.scan(1n, "N", 0, 1n, Hint.Scanning{P.build("A", 1n,
+    [E.EqualityPair{'A', 'N'}, E.EqualityPair{'N', 'C'}]), 0n, False{}})) == Hint.Bounded{0n} : Hint.Hint}
 
 # Scores do not participate in the bit transition or horizontal carry.
 def transition_differences(value: V.Block & V.Carry) -> U32 & U32 & V.Carry:

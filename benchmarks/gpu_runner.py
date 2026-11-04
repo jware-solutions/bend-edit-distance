@@ -394,6 +394,7 @@ def write_summary_csv(output, document):
 def legacy_main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--gate", action="store_true", help="Run paired baseline/candidate performance gates")
+    parser.add_argument("--no-report", action="store_true", help="Skip writing Markdown report files")
     parser.add_argument("--output", type=Path, default=Path(tempfile.mkdtemp(prefix="bend-gpu-results-")))
     parser.add_argument("--corpus", type=Path, default=ROOT / "benchmarks/corpus.json")
     parser.add_argument("--case", action="append", dest="cases")
@@ -438,7 +439,8 @@ def legacy_main(argv=None):
         "created_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "options": {"repeats": args.repeats, "warmups": args.warmups,
                     "batch_sizes": args.batch_sizes, "cases": [c["name"] for c in cases],
-                    "timeout": args.timeout, "check_build": args.check_build},
+                    "timeout": args.timeout, "check_build": args.check_build,
+                    "no_report": args.no_report},
         "records": [], "break_even": {}}
     document["environment"]["cpu_affinity"] = sorted(os.sched_getaffinity(0))
     document["environment"]["sources_sha256"] = {str(path.relative_to(ROOT)): hashlib.sha256(path.read_bytes()).hexdigest()
@@ -520,10 +522,14 @@ def legacy_main(argv=None):
     finally:
         (args.output / "results.json").write_text(json.dumps(document, indent=2) + "\n")
         write_summary_csv(args.output, document)
-        text = report(document) if document["status"] == "device_validated" else "# GPU validation failed\n\n" + document.get("reason", "Validation incomplete") + "\n\nNo GPU equivalence, transfer, VRAM or crossover claim is made.\n"
-        (args.output / "REPORT.md").write_text(text, encoding="utf-8")
-        (args.output / "summary.md").write_text(summary_markdown(document), encoding="utf-8")
-    print(f"Wrote {args.output / 'summary.md'}, {args.output / 'REPORT.md'}, {args.output / 'results.json'}, and {args.output / 'summary.csv'}", flush=True)
+        if not args.no_report:
+            text = report(document) if document["status"] == "device_validated" else "# GPU validation failed\n\n" + document.get("reason", "Validation incomplete") + "\n\nNo GPU equivalence, transfer, VRAM or crossover claim is made.\n"
+            (args.output / "REPORT.md").write_text(text, encoding="utf-8")
+            (args.output / "summary.md").write_text(summary_markdown(document), encoding="utf-8")
+    if args.no_report:
+        print(f"Wrote results.json and summary.csv in {args.output} (Markdown reports disabled)", flush=True)
+    else:
+        print(f"Wrote {args.output / 'summary.md'}, {args.output / 'REPORT.md'}, {args.output / 'results.json'}, and {args.output / 'summary.csv'}", flush=True)
     return 0
 
 
@@ -531,6 +537,7 @@ def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
     if "--gate" in argv:
         argv.remove("--gate")
+        argv = [arg for arg in argv if arg != "--no-report"]
         from benchmarks.gates import main as gate_main
         return gate_main(argv, device=True)
     return legacy_main([arg for arg in argv if arg != "--legacy"])

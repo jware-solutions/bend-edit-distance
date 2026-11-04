@@ -126,8 +126,10 @@ pure terms; native effects and backend execution require differential tests.
 ```bash
 python3 run_benchmarks.py --repeats 7 --warmups 2 --batch-size 16 --threads 1 2 4 \
   --output build/benchmarks/results
+python3 run_benchmarks.py --no-report --output build/benchmarks/no-report
 python3 run_gpu_benchmarks.py --check-build
 python3 run_gpu_benchmarks.py --case example --threads 4 --output build/gpu/example
+python3 run_gpu_benchmarks.py --no-report --case example --output build/gpu/no-report
 python3 run_benchmarks.py --gate --threads 1 4 --batch-sizes 1 16
 python3 -m benchmarks.compare_toolchains \
   --baseline /path/to/baseline/bin/bend \
@@ -146,7 +148,8 @@ The benchmark commands generate `REPORT.md` and a compact `summary.md` beside
 `results.json` and `summary.csv`. The CPU summary includes full and prepared
 workloads; the GPU summary includes full CUDA batches. Use `--gate` for paired
 baseline/candidate correctness and performance gates instead of the Bend/Edlib
-report.
+report. Markdown reports are enabled by default. Pass `--no-report` to skip both
+Markdown files; the flag defaults off, and JSON/CSV output is still written.
 
 GPU measurements require forced device execution, a newly generated sidecar and
 completed device work. The instrumentation rejects unknown runtime structure.

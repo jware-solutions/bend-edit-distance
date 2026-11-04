@@ -205,7 +205,7 @@ def environment(version, cxx, builds, args):
             "timer_resolution_seconds": time.get_clock_info("monotonic").resolution}
 
 
-def write_report(output, document):
+def write_report(output, document, *, write_markdown=True):
     output.mkdir(parents=True, exist_ok=True)
     (output / "results.json").write_text(json.dumps(document, indent=2) + "\n", encoding="utf-8")
     columns = ["case", "algorithm", "threads", "batch_size", "mode", "query_length", "target_length",
@@ -232,6 +232,8 @@ def write_report(output, document):
             elif record["mode"] == "lookup":
                 row["lookups_per_second"] = record["lookup_count"] * 1e9 / med["work_ns"] if med["work_ns"] else ""
             writer.writerow(row)
+    if not write_markdown:
+        return
     table = [
              "| Case | Workload | Bend threads | Bend work ms | Edlib work ms | Bend / Edlib | Bend E2E ms | Edlib E2E ms | Bend RSS KiB | Edlib RSS KiB |",
              "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |"]
@@ -267,6 +269,7 @@ def write_report(output, document):
 def legacy_main(argv=None):
     parser = argparse.ArgumentParser(description="Rebuild and benchmark native Bend versus pinned C++ Edlib")
     parser.add_argument("--gate", action="store_true", help="Run paired baseline/candidate performance gates")
+    parser.add_argument("--no-report", action="store_true", help="Skip writing Markdown report files")
     parser.add_argument("--corpus", default="benchmarks/corpus.json")
     parser.add_argument("--output", default=tempfile.mkdtemp(prefix="bend-cpu-results-"))
     parser.add_argument("--repeats", type=int, default=5)
@@ -351,8 +354,11 @@ def legacy_main(argv=None):
             print(f"Validated and measured {case['name']} ({len(jobs)} workloads)", flush=True)
     finally:
         os.sched_setaffinity(0, original_affinity)
-    write_report(output, document)
-    print(f"Wrote {output / 'summary.md'}, {output / 'REPORT.md'}, and raw results.json / summary.csv", flush=True)
+    write_report(output, document, write_markdown=not args.no_report)
+    if args.no_report:
+        print(f"Wrote results.json and summary.csv in {output} (Markdown reports disabled)", flush=True)
+    else:
+        print(f"Wrote {output / 'summary.md'}, {output / 'REPORT.md'}, and raw results.json / summary.csv", flush=True)
     return 0
 
 
@@ -360,6 +366,7 @@ def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
     if "--gate" in argv:
         argv.remove("--gate")
+        argv = [arg for arg in argv if arg != "--no-report"]
         from benchmarks.gates import main as gate_main
         return gate_main(argv)
     return legacy_main([arg for arg in argv if arg != "--legacy"])

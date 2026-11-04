@@ -1516,6 +1516,11 @@ law workspace_selected_padding:
    W.update(P.build("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", 33n, Nil{}),
     W.initialize(W.new(2n), 2n), 0, 1, V.Carry{1, 0}) : W.Updated}
 
+law workspace_row_selection:
+  {(W.select_row(0, 2), W.select_row(1, 2), W.select_row(2, 0),
+    W.select_row(2, 1), W.select_row(2, 2), W.select_row(3, 3)) ==
+    (False{}, False{}, False{}, False{}, True{}, True{}) : Bool & Bool & Bool & Bool & Bool & Bool}
+
 law workspace_selected_logical_guard:
   {W.column(P.build("A", 1n, Nil{}), W.initialize(W.new(32n), 32n), 65, V.Carry{1, 0}) ==
    W.column_reference(P.build("A", 1n, Nil{}), W.initialize(W.new(32n), 32n), 65, V.Carry{1, 0}) : W.Updated}

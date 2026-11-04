@@ -35,3 +35,20 @@ def test_owned_column_equivalence(column_probe, threads, alphabet):
             assert result.stderr == b""
             values = result.stdout.splitlines()
             assert len(values) == 2 and values[0] == values[1], (length, mode, first)
+
+
+@pytest.mark.parametrize("threads", [1, 2, 4])
+def test_narrow_selected_rows_match_guarded_columns(column_probe, threads):
+    pairs = (EqualityPair("A", "N"), EqualityPair("N", "C"), EqualityPair(0, 255))
+    for alphabet in (b"ACN\0\xff", bytes(range(256))):
+        for length in (base + tail for base in (32, 64, 128, 256, 1024) for tail in range(32)):
+            query = (alphabet * (length // len(alphabet) + 1))[:length]
+            count = (length + 31) // 32
+            for active in (value for value in (1, 2, 3, 4, 7, 8) if value <= count):
+                config = AlignConfig(threshold=MaxDistance(count - active), equalities=pairs)
+                result = subprocess.run([column_probe, *runtime_prefix(threads=threads)],
+                    input=encode_request(query, bytes(range(256)) + query[:65], config),
+                    capture_output=True, check=True, timeout=30)
+                assert not result.stderr
+                values = result.stdout.splitlines()
+                assert len(values) == 2 and values[0] == values[1], (length, active, threads)

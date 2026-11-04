@@ -81,8 +81,8 @@ def advance(fuel: Nat, +index: U32, +row: U32, state: Updated) -> Updated:
     case 1n+p Updated{profile, workspace, _, carry}:
       advance(p, U32.inc(index), row, update(profile, workspace, row, index, carry))
 
-# Wide active bands select and validate a symbol's row once per column.
-# The offset is invariant across its sequential block updates. Small bands
+# Multiple active blocks select and validate a symbol's row once per column.
+# The offset is invariant across its sequential block updates. Single blocks
 # retain the original transition, including unknown-symbol padding masks.
 def selected.read(lookup: Array<U32>, stride: U32, rows: U32, +blocks: U32, +used: U32,
                      +index: U32, carry: V.Carry, workspace: Workspace, result: Array<U32> & U32) -> Updated:
@@ -133,12 +133,16 @@ def column.choose(profile: P.Profile, workspace: Workspace, symbol: U32,
     case False{}:
       column.row(workspace, first, count, carry, P.row(profile, symbol))
 
+# Two active blocks amortize selection of a mask row.
+def select_row(capacity: U32, count: U32) -> Bool:
+  Bool.and(U32.is_ge(capacity, 2), U32.is_ge(count, 2))
+
 def column(profile: P.Profile, workspace: Workspace, symbol: U32,
               carry: V.Carry) -> Updated:
   Workspace{data, +capacity, +first, +last} = workspace
   +count = U32.sub(last, first)
   column.choose(profile, Workspace{data, capacity, first, last}, symbol, first,
-    U32.to_nat(count), carry, Bool.and(U32.is_ge(capacity, 32), U32.is_ge(count, 8)))
+    U32.to_nat(count), carry, select_row(capacity, count))
 
 # The original guarded transition remains an executable equivalence oracle.
 def column_reference(profile: P.Profile, workspace: Workspace, symbol: U32,

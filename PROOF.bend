@@ -402,6 +402,9 @@ def Laws.workspace_selected_padding():
 def Laws.workspace_selected_logical_guard():
   {==}
 
+def Laws.workspace_row_selection():
+  {==}
+
 def Laws.transport_coordinate_values():
   {==}
 

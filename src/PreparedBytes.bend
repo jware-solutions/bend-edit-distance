@@ -12,6 +12,7 @@ import ./BitVector.bend as V
 import ./Word.bend as Word
 import ./SearchKernel.bend as K
 import ./ByteKernel.bend as ByteK
+import ./RetryHint.bend as Hint
 
 # Search columns and block carries remain sequential. A target's one array
 # owner passes through the scan, then is disposed in constant space.
@@ -302,6 +303,32 @@ def aligned(query: String, pairs: List<&2, E.EqualityPair>, length: Nat, columns
 def error() -> E.AlignResult:
   E.AlignResult{E.Error{}, E.NotFound{}, Nil{}, None{}, None{}, None{}}
 
+# Equal lengths and at most one diagonal mismatch certify the NW optimum.
+# No block transitions are needed; the owned workspace remains reusable.
+def known.scanned(query: String, pairs: List<&2, E.EqualityPair>, +length: Nat, +columns: Nat,
+                      workspace: W.Workspace, value: ByteK.HintRun) -> Known & E.AlignResult:
+  match value:
+    case ByteK.HintRun{_, Hint.Hinted{profile, Hint.Bounded{0n}}}:
+      (Known{query, pairs, length, profile, workspace}, E.distance_result(0n, E.end_coordinate(columns), True{}))
+    case ByteK.HintRun{_, Hint.Hinted{profile, Hint.Bounded{1n}}}:
+      (Known{query, pairs, length, profile, workspace}, E.distance_result(1n, E.end_coordinate(columns), True{}))
+    case ByteK.HintRun{bytes, Hint.Hinted{profile, _}}:
+      aligned(query, pairs, length, columns,
+        run(BT.Target{bytes, columns}, profile, workspace, length, Nat.is_le(length, Word.width())))
+
+def known.search(query: String, pairs: List<&2, E.EqualityPair>, +length: Nat, +columns: Nat,
+                     profile: P.Profile, workspace: W.Workspace, bytes: Array<U32>, scan: Bool) -> Known & E.AlignResult:
+  match scan:
+    case False{}:
+      aligned(query, pairs, length, columns,
+        run(BT.Target{bytes, columns}, profile, workspace, length, Nat.is_le(length, Word.width())))
+    case True{}:
+      known.scanned(query, pairs, length, columns, workspace,
+        ByteK.witness(length, profile, bytes))
+
+def witness_eligible(+length: Nat, columns: Nat) -> Bool:
+  Bool.and(Nat.is_gt(length, Nat.mul(Word.width(), 4n)), Nat.is_eq(length, columns))
+
 def known.checked(state: Known, target: BT.Checked) -> Known & E.AlignResult:
   match state target:
     case _ BT.Checked{_, False{}}:
@@ -309,8 +336,8 @@ def known.checked(state: Known, target: BT.Checked) -> Known & E.AlignResult:
     case Known{query, pairs, +length, profile, workspace} BT.Checked{BT.Target{_, 0n}, True{}}:
       (Known{query, pairs, length, profile, workspace}, E.distance_result(length, E.BeforeStart{}, True{}))
     case Known{query, pairs, +length, profile, workspace} BT.Checked{BT.Target{bytes, +columns}, True{}}:
-      aligned(query, pairs, length, columns,
-        run(BT.Target{bytes, columns}, profile, workspace, length, Nat.is_le(length, Word.width())))
+      known.search(query, pairs, length, columns, profile, workspace, bytes,
+        witness_eligible(length, columns))
 
 def known(state: Known, target: BT.Target) -> Known & E.AlignResult:
   known.checked(state, BT.checked(target))

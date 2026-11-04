@@ -98,6 +98,33 @@ def hint.scan(fuel: Nat, +index: U32, +limit: Nat, state: HintState) -> HintRun:
       hint.scan(p, U32.inc(index), limit,
         hint.word(profile, index, limit, distance, bytes[U32.shrn(index, BT.log_cell_bytes())]))
 
+# Inspect the first query word before walking the remaining diagonal backward.
+# The two ranges are disjoint and together cover every real query position.
+def witness.prefix(fuel: Nat, +index: U32, state: HintState) -> HintState:
+  match fuel state:
+    case _ HintState{bytes, Hint.Scanning{profile, distance, True{}}}:
+      HintState{bytes, Hint.Scanning{profile, distance, True{}}}
+    case 0n _:
+      state
+    case 1n+p HintState{bytes, Hint.Scanning{profile, distance, False{}}}:
+      witness.prefix(p, U32.inc(index), hint.word(profile, index, 1n, distance,
+        bytes[U32.shrn(index, BT.log_cell_bytes())]))
+
+def witness.reverse(fuel: Nat, +index: U32, state: HintState) -> HintRun:
+  match fuel state:
+    case _ HintState{bytes, Hint.Scanning{profile, _, True{}}}:
+      HintRun{bytes, Hint.Hinted{profile, Hint.Unavailable{}}}
+    case 0n HintState{bytes, Hint.Scanning{profile, distance, False{}}}:
+      HintRun{bytes, Hint.Hinted{profile, Hint.Bounded{distance}}}
+    case 1n+p HintState{bytes, Hint.Scanning{profile, distance, False{}}}:
+      witness.reverse(p, U32.sub(index, 1), hint.word(profile, index, 1n, distance,
+        bytes[U32.shrn(index, BT.log_cell_bytes())]))
+
+def witness(+length: Nat, profile: P.Profile, bytes: Array<U32>) -> HintRun:
+  +prefix = Nat.min(length, Word.width())
+  witness.reverse(Nat.sub(length, prefix), U32.from_nat(Nat.sub(length, 1n)),
+    witness.prefix(prefix, 0, HintState{bytes, Hint.Scanning{profile, 0n, False{}}}))
+
 def retry(+length: Nat, workspace: W.Workspace, stats: K.Stats, value: HintRun) -> Run:
   match value:
     case HintRun{bytes, Hint.Hinted{profile, Hint.Unavailable{}}}:

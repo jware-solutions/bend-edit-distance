@@ -153,6 +153,44 @@ def Laws.byte_hint_exceeded(fuel, bytes, profile, index, limit, distance):
 def Laws.byte_band_counter_accumulation(bytes, profile, workspace, before, after):
   {==}
 
+def Laws.packed_witness_eligibility():
+  {==}
+
+def Laws.packed_witness_zero_owner(query, pairs, length, columns, profile, workspace, bytes):
+  {==}
+
+def Laws.packed_witness_one_owner(query, pairs, length, columns, profile, workspace, bytes):
+  {==}
+
+def Laws.packed_witness_many_fallback(query, pairs, length, columns, profile, workspace, bytes, extra):
+  {==}
+
+def Laws.packed_witness_empty(bytes, profile):
+  {==}
+
+def Laws.packed_witness_prefix_exceeded(fuel, index, bytes, profile, distance):
+  match fuel:
+    case 0n:
+      {==}
+    case 1n+p:
+      {==}
+
+def Laws.packed_witness_reverse_exceeded(fuel, index, bytes, profile, distance):
+  match fuel:
+    case 0n:
+      {==}
+    case 1n+p:
+      {==}
+
+def Laws.packed_witness_direct_dp():
+  {==}
+
+def Laws.packed_witness_nontransitive_dp():
+  {==}
+
+def Laws.packed_witness_nul_high_dp():
+  {==}
+
 def Laws.packed_wide_shapes():
   {==}
 

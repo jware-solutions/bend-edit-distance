@@ -5,7 +5,8 @@ import ./Workspace.bend as W
 import ./SearchKernel.bend as K
 import ./Word.bend as Word
 
-# A bounded diagonal alignment gives an upper bound, never an optimum.
+# A bounded diagonal alignment gives an upper bound. For equal lengths,
+# bounds zero and one are exact.
 # Only the owned masks are read; literal/equality matches share one definition.
 type Hint is Data:
   Unavailable{}

@@ -357,6 +357,98 @@ law byte_band_counter_accumulation:
   {ByteK.accumulated(before, ByteK.Run{bytes, K.Run{profile, workspace, after}}) ==
     ByteK.Run{bytes, K.accumulated(before, K.Run{profile, workspace, after})} : ByteK.Run}
 
+law packed_witness_eligibility:
+  {(PB.witness_eligible(0n, 0n), PB.witness_eligible(128n, 128n),
+    PB.witness_eligible(129n, 129n), PB.witness_eligible(129n, 128n),
+    PB.witness_eligible(129n, 130n), PB.witness_eligible(257n, 257n)) ==
+    (False{}, False{}, True{}, False{}, False{}, True{}) : Bool & Bool & Bool & Bool & Bool & Bool}
+
+law packed_witness_zero_owner:
+  for query: String
+  for pairs: List<&2, E.EqualityPair>
+  for length: Nat
+  for columns: Nat
+  for profile: P.Profile
+  for workspace: W.Workspace
+  for bytes: Array<U32>
+  {PB.known.scanned(query, pairs, length, columns, workspace,
+    ByteK.HintRun{bytes, Hint.Hinted{profile, Hint.Bounded{0n}}}) ==
+    (PB.Known{query, pairs, length, profile, workspace},
+      E.distance_result(0n, E.end_coordinate(columns), True{})) : PB.Known & E.AlignResult}
+
+law packed_witness_one_owner:
+  for query: String
+  for pairs: List<&2, E.EqualityPair>
+  for length: Nat
+  for columns: Nat
+  for profile: P.Profile
+  for workspace: W.Workspace
+  for bytes: Array<U32>
+  {PB.known.scanned(query, pairs, length, columns, workspace,
+    ByteK.HintRun{bytes, Hint.Hinted{profile, Hint.Bounded{1n}}}) ==
+    (PB.Known{query, pairs, length, profile, workspace},
+      E.distance_result(1n, E.end_coordinate(columns), True{})) : PB.Known & E.AlignResult}
+
+law packed_witness_many_fallback:
+  for query: String
+  for pairs: List<&2, E.EqualityPair>
+  for length: Nat
+  for columns: Nat
+  for profile: P.Profile
+  for workspace: W.Workspace
+  for bytes: Array<U32>
+  for extra: Nat
+  {PB.known.scanned(query, pairs, length, columns, workspace,
+    ByteK.HintRun{bytes, Hint.Hinted{profile, Hint.Bounded{Nat.add(2n, extra)}}}) ==
+    PB.aligned(query, pairs, length, columns,
+      PB.run(Packed.Target{bytes, columns}, profile, workspace, length, Nat.is_le(length, Word.width()))) : PB.Known & E.AlignResult}
+
+law packed_witness_empty:
+  for bytes: Array<U32>
+  for profile: P.Profile
+  {ByteK.witness(0n, profile, bytes) ==
+    ByteK.HintRun{bytes, Hint.Hinted{profile, Hint.Bounded{0n}}} : ByteK.HintRun}
+
+law packed_witness_prefix_exceeded:
+  for fuel: Nat
+  for index: U32
+  for bytes: Array<U32>
+  for profile: P.Profile
+  for distance: Nat
+  {ByteK.witness.prefix(fuel, index, ByteK.HintState{bytes, Hint.Scanning{profile, distance, True{}}}) ==
+    ByteK.HintState{bytes, Hint.Scanning{profile, distance, True{}}} : ByteK.HintState}
+
+law packed_witness_reverse_exceeded:
+  for fuel: Nat
+  for index: U32
+  for bytes: Array<U32>
+  for profile: P.Profile
+  for distance: Nat
+  {ByteK.witness.reverse(fuel, index, ByteK.HintState{bytes, Hint.Scanning{profile, distance, True{}}}) ==
+    ByteK.HintRun{bytes, Hint.Hinted{profile, Hint.Unavailable{}}} : ByteK.HintRun}
+
+def packed_witness_value(value: ByteK.HintRun) -> Hint.Hint:
+  ByteK.HintRun{_, Hint.Hinted{_, hint}} = value
+  hint
+
+law packed_witness_direct_dp:
+  {packed_witness_value(ByteK.witness(1n, P.build("A", 1n,
+    [E.EqualityPair{'A', 'N'}, E.EqualityPair{'N', 'C'}]), [78 : U32*1n])) ==
+    Hint.Bounded{DP.distance_with_equalities("A", "N",
+      [E.EqualityPair{'A', 'N'}, E.EqualityPair{'N', 'C'}])} : Hint.Hint}
+
+law packed_witness_nontransitive_dp:
+  {packed_witness_value(ByteK.witness(1n, P.build("A", 1n,
+    [E.EqualityPair{'A', 'N'}, E.EqualityPair{'N', 'C'}]), [67 : U32*1n])) ==
+    Hint.Bounded{DP.distance_with_equalities("A", "C",
+      [E.EqualityPair{'A', 'N'}, E.EqualityPair{'N', 'C'}])} : Hint.Hint}
+
+law packed_witness_nul_high_dp:
+  {packed_witness_value(ByteK.witness(1n, P.build(SCon{Chr{0}, ""}, 1n,
+    [E.EqualityPair{Chr{0}, Chr{255}}]), [255 : U32*1n])) ==
+    Hint.Bounded{DP.distance_with_equalities(SCon{Chr{0}, ""}, SCon{Chr{255}, ""},
+      [E.EqualityPair{Chr{0}, Chr{255}}])} : Hint.Hint}
+
 law packed_wide_shapes:
   {(PB.wide_word(64n, 2, 4, 2), PB.wide_word(65n, 3, 4, 3),
     PB.wide_word(96n, 3, 4, 3), PB.wide_word(97n, 4, 4, 4),

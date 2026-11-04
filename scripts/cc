@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# Bend 2.0.39 accepts CC as one executable, without additional compiler flags.
+set -euo pipefail
+exec "${BEND_CC:-clang-19}" \
+  -mllvm -inline-threshold=1000 -mllvm -inlinehint-threshold=2000 "$@"

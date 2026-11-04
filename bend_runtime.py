@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-import shutil
 import subprocess
 import re
 
@@ -38,8 +37,8 @@ def configure_toolchain(root: Path) -> None:
     os.environ["BENDRTS"] = ""
     os.environ["BEND_NO_TELEMETRY"] = "1"
     # Preserve and validate an explicit compiler selection.
-    if "CC" not in os.environ and shutil.which("clang-19"):
-        os.environ["CC"] = "clang-19"
+    if "CC" not in os.environ:
+        os.environ["CC"] = str(root / "scripts/cc")
     require_clang(os.environ.get("CC", "clang"))
     version = subprocess.check_output([str(compiler), "version"], text=True).strip()
     expected = "bend " + (root / ".bend-version").read_text().strip()

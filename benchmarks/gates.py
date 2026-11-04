@@ -459,6 +459,8 @@ def parser(device):
                    help="Additive tolerance for paired timing noise (default: 50 microseconds)")
     p.add_argument("--gate-metric", action="append", choices=(*PHASES, "startup_ns", "total_cost_ns", "persistent_worker_latency_ns", "end_to_end_ns"))
     p.add_argument("--cflags", default="-std=c2x -O3 -pthread", help="Identical C options for baseline and candidate")
+    p.add_argument("--baseline-cflags", help="Override C options for the baseline build")
+    p.add_argument("--candidate-cflags", help="Override C options for the candidate build")
     p.add_argument("--allocations", action="store_true", help="Separate untimed CPU allocation diagnostics")
     if device:
         p.add_argument("--heap", default="1GB")
@@ -558,10 +560,12 @@ def main(argv=None, *, device=False):
             binaries, document["builds"] = {}, {}
             kinds = ["cpu", *( ["cuda"] if device else []), *( ["allocations"] if args.allocations else [])]
             for variant, root in (("baseline", args.baseline), ("candidate", args.candidate)):
+                override = args.baseline_cflags if variant == "baseline" else args.candidate_cflags
+                flags = shlex.split(args.cflags if override is None else override)
                 for kind in kinds:
                     print(f"Building {variant} {kind}...", flush=True)
                     binary, metadata = build(root.resolve(), scratch / variant / kind, bend, cc,
-                        shlex.split(args.cflags), device=kind == "cuda", allocations=kind == "allocations")
+                        flags, device=kind == "cuda", allocations=kind == "allocations")
                     binaries[variant, kind] = binary
                     document["builds"][variant + "/" + kind] = metadata
             source = ROOT / "vendor/edlib/edlib"

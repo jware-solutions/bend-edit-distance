@@ -47,7 +47,7 @@ mkdir -p "$tools" "$root/build/downloads"
 export BEND_NO_TELEMETRY=1
 export BENDRTS=
 # Clang 14+ suffices for CPU code; the suite also builds programs with ! (19+).
-export CC=${CC:-clang-19}
+export CC=${CC:-"$root/scripts/cc"}
 "$CC" --version | grep -E 'clang version (19|[2-9][0-9])\.' >/dev/null || {
   echo 'Setup requires a valid Clang 19+ in CC (the suite includes ! programs).' >&2; exit 2;
 }

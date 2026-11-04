@@ -13,12 +13,14 @@ Use the pinned Bend 2.0.39. The setup script provisions Debian/Ubuntu developmen
 ```bash
 bash scripts/setup.sh
 export PATH="$PWD/build/tools/bend/bin:$PATH"
-export CC=clang-19 BENDRTS=
+export CC="$PWD/scripts/cc" BENDRTS=
 ```
 
 Setup verifies the release checksums, installs Lean 4.34.0, builds the project
 proof kernel and provisions Clang 19+ for programs with `!`. The Python runners
-select and check the project compiler automatically.
+select and check the project compiler automatically. The `scripts/cc` wrapper
+uses Clang 19 with inlining settings for the generated CPU code. Set `BEND_CC`
+to select another Clang executable, or set `CC` directly to use its defaults.
 
 ## Usage
 

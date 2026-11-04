@@ -19,7 +19,8 @@ concurrency:
 env:
   BEND_NO_TELEMETRY: '1'
   BENDRTS: ''
-  CC: clang-19
+  CC: ${{ github.workspace }}/scripts/cc
+  BEND_CC: clang-19
 
 jobs:
   fast:

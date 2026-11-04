@@ -145,14 +145,21 @@ def test_native_stages_and_persistent_results(gate_binary, cpp_binary, name):
 
 def test_gate_cli_records_pairing_and_temp_artifacts(gate_binary, tmp_path, monkeypatch):
     binary, metadata = gate_binary
-    monkeypatch.setattr(gates, "build", lambda *a, **kw: (binary, metadata))
+    flags = []
+    def build(*args, **kwargs):
+        flags.append(args[4])
+        return binary, metadata
+    monkeypatch.setattr(gates, "build", build)
     output = tmp_path / "results"
     code = gates.main(["--threads", "1", "--batch-sizes", "1", "--reuse-counts", "1",
         "--workload", "example/1", "--warmups", "1", "--repeats", "2",
-        "--max-regression", "100000", "--output", str(output)])
+        "--max-regression", "100000", "--output", str(output),
+        "--baseline-cflags=-std=c2x -O2 -pthread",
+        "--candidate-cflags=-std=c2x -O3 -pthread"])
     assert code == 0
     document = json.loads((output / "results.json").read_text())
     assert document["status"] == "passed"
+    assert flags == [["-std=c2x", "-O2", "-pthread"], ["-std=c2x", "-O3", "-pthread"]]
     assert len(document["records"]) == 8
     for record in document["records"]:
         assert [s["repetition"] for s in record["samples"]] == [0, 1]

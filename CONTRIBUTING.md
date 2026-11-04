@@ -12,7 +12,7 @@ On Debian/Ubuntu:
 ```bash
 bash scripts/setup.sh
 export PATH="$PWD/build/tools/bend/bin:$PATH"
-export CC=clang-19 BENDRTS=
+export CC="$PWD/scripts/cc" BENDRTS=
 ```
 
 Setup installs native dependencies, initializes Edlib at its recorded gitlink,
@@ -23,7 +23,7 @@ Other environments can provision compatible tools separately. Windows Python
 entry points forward commands to WSL.
 
 Native CPU builds require Clang 14+; GPU builds require Clang 19+. The runners
-select the project-local Bend, verify its version, select `clang-19` when `CC`
+select the project-local Bend, verify its version, select `scripts/cc` when `CC`
 is unset, and reject an invalid explicit compiler. They clear `BENDRTS` for
 reproducible runs. Keep Lean's bundled compiler out of the native build PATH.
 

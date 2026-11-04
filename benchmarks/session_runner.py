@@ -1,13 +1,15 @@
 """Synchronized device evidence for persistent, prepared CUDA workers."""
 
 import json
+import os
 import re
+import shlex
 
 from benchmarks.gpu_runner import BUILD, ROOT, command, instrument, prerequisites
 
 
 def build_session_probe(cc=None):
-    cc = cc or ["clang-19"]
+    cc = cc or shlex.split(os.environ.get("CC", "clang-19"))
     source = BUILD / "session.c"
     binary = BUILD / "gpu-session"
     command(["bend", ROOT / "gpu_batch.bend", "-o", source])

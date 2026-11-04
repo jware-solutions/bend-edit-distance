@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import csv
 import hashlib
 import json
 import math
@@ -10,6 +11,7 @@ import os
 from pathlib import Path
 import platform
 import re
+import signal
 import shlex
 import statistics
 import subprocess
@@ -183,15 +185,57 @@ def build_edlib_reference():
     return binary, command([*cxx, "--version"]).splitlines()[0]
 
 
-def measure_edlib(binary, jobs, *, timeout=180):
-    payload = b"".join(encode_request(*job) for job in jobs)
+def run_wrapped(argv, payload, timeout):
     started = time.monotonic_ns()
-    result = subprocess.run([str(binary), "--worker"], cwd=ROOT, input=payload,
-                            capture_output=True, timeout=timeout, env=reproducible_env())
-    ended = time.monotonic_ns()
-    if result.returncode:
-        raise RuntimeError(f"Edlib reference exited {result.returncode}: {result.stderr.decode(errors='replace')}")
-    return decode_batch(result.stdout, len(jobs)), {"end_to_end_ns": ended - started}
+    process = subprocess.Popen(list(map(str, argv)), cwd=ROOT, stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=reproducible_env(),
+        start_new_session=True)
+    try:
+        output, error = process.communicate(payload, timeout=timeout)
+    except subprocess.TimeoutExpired as timeout_error:
+        os.killpg(process.pid, signal.SIGKILL)
+        process.communicate()
+        raise TimeoutError(f"Benchmark exceeded {timeout}s: {argv[:4]!r}") from timeout_error
+    return process.returncode, output, error, time.monotonic_ns() - started
+
+
+def split_launcher_usage(output):
+    index = output.rfind(b"usage,")
+    if index < 0:
+        raise RuntimeError("Benchmark launcher did not report process usage")
+    framed = output[:index]
+    lines = output[index:].splitlines()
+    if len(lines) != 1:
+        raise RuntimeError(f"Malformed benchmark launcher usage: {output[index:index + 200]!r}")
+    fields = lines[0].split(b",")
+    if len(fields) != 5 or fields[0] != b"usage":
+        raise RuntimeError(f"Malformed benchmark launcher usage: {lines[0]!r}")
+    try:
+        rss = int(fields[3])
+    except ValueError as error:
+        raise RuntimeError(f"Malformed benchmark launcher RSS: {lines[0]!r}") from error
+    if rss < 0:
+        raise RuntimeError(f"Invalid benchmark launcher RSS: {rss}")
+    return framed, rss
+
+
+def measure_edlib(binary, jobs, *, launcher, timeout=180):
+    payload = b"".join(encode_request(*job) for job in jobs)
+    code, output, error, elapsed = run_wrapped([launcher, binary, "--timed-worker"], payload, timeout)
+    if code:
+        raise RuntimeError(f"Edlib reference exited {code}: {error.decode(errors='replace')}")
+    framed, rss = split_launcher_usage(output)
+    work_lines = [line[len(b"BEND_EDLIB_WORK_NS "):]
+                  for line in error.splitlines() if line.startswith(b"BEND_EDLIB_WORK_NS ")]
+    other_errors = [line for line in error.splitlines() if not line.startswith(b"BEND_EDLIB_WORK_NS ")]
+    if len(work_lines) != 1 or other_errors:
+        raise RuntimeError(f"Malformed Edlib timing output: {error.decode(errors='replace')}")
+    try:
+        work_ns = int(work_lines[0])
+    except ValueError as error:
+        raise RuntimeError("Malformed Edlib work duration") from error
+    return decode_batch(framed, len(jobs)), {"work_ns": work_ns,
+        "end_to_end_ns": elapsed, "peak_rss_kib": rss}
 
 
 def parse_metrics(stderr, *, device):
@@ -229,20 +273,32 @@ def parse_metrics(stderr, *, device):
     return metrics
 
 
-def measure(binary, jobs, *, device, threads=1, heap="1GB", prefetch=False, timeout=180):
+def measure(binary, jobs, *, launcher=None, device, threads=1, heap="1GB", prefetch=False, timeout=180):
     payload = b"".join(encode_request(*job) for job in jobs)
-    argv = [str(binary), *runtime_prefix(threads=threads, gpu=heap if device else "off"), "prefetch" if prefetch else "demand", str(len(jobs))]
-    started = time.monotonic_ns()
-    result = subprocess.run(argv, cwd=ROOT, input=payload, capture_output=True, timeout=timeout, env=reproducible_env())
-    ended = time.monotonic_ns()
-    if result.returncode:
+    argv = [binary, *runtime_prefix(threads=threads, gpu=heap if device else "off"),
+            "prefetch" if prefetch else "demand", str(len(jobs))]
+    if launcher:
+        code, output, error, elapsed = run_wrapped([launcher, *argv], payload, timeout)
+    else:
+        started = time.monotonic_ns()
+        result = subprocess.run(list(map(str, argv)), cwd=ROOT, input=payload,
+            capture_output=True, timeout=timeout, env=reproducible_env())
+        code, output, error = result.returncode, result.stdout, result.stderr
+        elapsed = time.monotonic_ns() - started
+    if code:
         backend = "CUDA" if device else "CPU"
         raise RuntimeError(f"{backend} probe {binary.name}, batch {len(jobs)}, "
-                           f"prefetch={prefetch}, exited {result.returncode}: "
-                           f"{result.stderr.decode(errors='replace')}")
-    metrics = parse_metrics(result.stderr.decode(errors="replace"), device=device)
-    metrics["end_to_end_ns"] = ended - started
-    return decode_batch(result.stdout, len(jobs)), metrics
+                           f"prefetch={prefetch}, exited {code}: "
+                           f"{error.decode(errors='replace')}")
+    if launcher:
+        framed, rss = split_launcher_usage(output)
+    else:
+        framed, rss = output, None
+    metrics = parse_metrics(error.decode(errors="replace"), device=device)
+    metrics["end_to_end_ns"] = elapsed
+    if rss is not None:
+        metrics["peak_rss_kib"] = rss
+    return decode_batch(framed, len(jobs)), metrics
 
 
 def crossover(records, cases, sizes):
@@ -286,8 +342,58 @@ def report(document):
     return "\n".join(lines) + "\n"
 
 
+def summary_markdown(document):
+    lines = [
+        "# GPU benchmark summary", "",
+        "Full rows compare the forced CUDA run with single-process Edlib. Work and end-to-end values are medians; RSS is the measured child-process peak.", "",
+        "| Case | Workload | Bend threads | Bend work ms | Edlib work ms | Bend / Edlib | Bend E2E ms | Edlib E2E ms | Bend RSS KiB | Edlib RSS KiB |",
+        "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+    ]
+    if document.get("status") != "device_validated":
+        lines.extend(["", "No validated GPU measurements are available."])
+        return "\n".join(lines) + "\n"
+    if not document.get("records"):
+        lines.extend(["", "No corpus timing rows were collected in build-check mode."])
+        return "\n".join(lines) + "\n"
+    references = {(record["case"], record["batch_size"]): record
+                  for record in document["records"]
+                  if record["backend"] == "edlib" and record["transfer"] == "demand"}
+    for record in document["records"]:
+        if record["backend"] != "cuda" or record["transfer"] != "demand":
+            continue
+        reference = references[(record["case"], record["batch_size"])]
+        bend, edlib = record["summary"], reference["summary"]
+        bend_work, edlib_work = bend["work_ns"]["median"], edlib["work_ns"]["median"]
+        ratio = f"{bend_work / edlib_work:.2f}" if edlib_work else "∞"
+        lines.append(f"| {record['case']} | full × {record['batch_size']} | "
+            f"{document['environment']['threads']} | {bend_work / 1e6:.4f} | "
+            f"{edlib_work / 1e6:.4f} | {ratio} | "
+            f"{bend['end_to_end_ns']['median'] / 1e6:.3f} | "
+            f"{edlib['end_to_end_ns']['median'] / 1e6:.3f} | "
+            f"{bend['peak_rss_kib']['median']:.0f} | "
+            f"{edlib['peak_rss_kib']['median']:.0f} |")
+    return "\n".join(lines) + "\n"
+
+
+def write_summary_csv(output, document):
+    base_columns = ["case", "batch_size", "backend", "transfer"]
+    rows = []
+    for record in document.get("records", []):
+        row = {key: record[key] for key in base_columns}
+        row.update({name: values["median"] for name, values in record["summary"].items()})
+        rows.append(row)
+    columns = list(base_columns)
+    if rows:
+        columns += sorted(set().union(*(row.keys() for row in rows)) - set(columns))
+    with (output / "summary.csv").open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=columns)
+        writer.writeheader()
+        writer.writerows(rows)
+
+
 def legacy_main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--gate", action="store_true", help="Run paired baseline/candidate performance gates")
     parser.add_argument("--output", type=Path, default=Path(tempfile.mkdtemp(prefix="bend-gpu-results-")))
     parser.add_argument("--corpus", type=Path, default=ROOT / "benchmarks/corpus.json")
     parser.add_argument("--case", action="append", dest="cases")
@@ -309,13 +415,21 @@ def legacy_main(argv=None):
     cases = [c for c in corpus["cases"] if not args.cases or c["name"] in args.cases]
     if not cases or args.cases and set(args.cases) - {c["name"] for c in cases}:
         parser.error("Unknown or empty case selection")
-    if (args.output / "results.json").exists() or (args.output / "REPORT.md").exists():
-        parser.error("Output already contains a result; choose a fresh --output directory")
+    output_files = ("results.json", "summary.csv", "REPORT.md", "summary.md")
+    if any((args.output / name).exists() for name in output_files):
+        try:
+            previous = json.loads((args.output / "results.json").read_text(encoding="utf-8"))
+            previous_schema = previous.get("schema") if isinstance(previous, dict) else None
+        except (OSError, ValueError):
+            previous_schema = None
+        if previous_schema != 3:
+            parser.error("Output already contains a result; choose a fresh --output directory")
+        print("Replacing prior paired-gate results with report benchmark results.", flush=True)
     args.output.mkdir(parents=True, exist_ok=True)
-    if any((args.output / name).exists() for name in ("results.json", "REPORT.md")):
-        parser.error("Output already contains a result; choose a fresh --output directory")
     BUILD.mkdir(parents=True, exist_ok=True)
     cc = shlex.split(os.environ.get("CC", "clang"))
+    launcher = BUILD / "launch"
+    command([*cc, "-std=c11", "-O2", ROOT / "benchmarks/launch.c", "-o", launcher])
     cuda, cc_version, problems = prerequisites(cc)
     document = {"schema": 2, "status": "unvalidated", "environment": {
         "platform": platform.platform(), "compiler": cc_version, "bend": command(["bend", "version"]),
@@ -356,8 +470,8 @@ def legacy_main(argv=None):
         document["probe_device_program"] = require_gpu_build(binary)
         # One nonempty call must execute before a build-only run can pass.
         jobs = [(b"kitten", b"sitting", AlignConfig())]
-        cpu, _ = measure(cpu_binary, jobs, device=False, threads=args.threads, timeout=args.timeout)
-        gpu, evidence = measure(binary, jobs, device=True, threads=args.threads, heap=args.heap, timeout=args.timeout)
+        cpu, _ = measure(cpu_binary, jobs, launcher=launcher, device=False, threads=args.threads, timeout=args.timeout)
+        gpu, evidence = measure(binary, jobs, launcher=launcher, device=True, threads=args.threads, heap=args.heap, timeout=args.timeout)
         if gpu != cpu or gpu[0].require_distance() != 3:
             raise RuntimeError("Device smoke result differs from CPU/known distance")
         document["device_smoke"] = evidence
@@ -375,10 +489,10 @@ def legacy_main(argv=None):
                         offset = repeat % len(backends)
                         for backend in backends[offset:] + backends[:offset]:
                             if backend == "edlib":
-                                values, metrics = measure_edlib(edlib_binary, jobs, timeout=args.timeout)
+                                values, metrics = measure_edlib(edlib_binary, jobs, launcher=launcher, timeout=args.timeout)
                             else:
                                 device = backend == "cuda"
-                                values, metrics = measure(binary if device else cpu_binary, jobs, device=device, threads=args.threads, heap=args.heap, timeout=args.timeout)
+                                values, metrics = measure(binary if device else cpu_binary, jobs, launcher=launcher, device=device, threads=args.threads, heap=args.heap, timeout=args.timeout)
                             if any(v.require_distance() != case["distance"] for v in values):
                                 raise RuntimeError(f"Corpus distance mismatch: {case['name']}")
                             pair[backend] = values
@@ -387,7 +501,7 @@ def legacy_main(argv=None):
                             raise RuntimeError(f"Full result mismatch: {case['name']} batch {count}")
                         if pair["edlib"] != pair["cpu"]:
                             raise RuntimeError(f"Edlib result mismatch: {case['name']} batch {count}")
-                        values, metrics = measure(binary, jobs, device=True, prefetch=True, threads=args.threads, heap=args.heap, timeout=args.timeout)
+                        values, metrics = measure(binary, jobs, launcher=launcher, device=True, prefetch=True, threads=args.threads, heap=args.heap, timeout=args.timeout)
                         if values != pair["cpu"]:
                             raise RuntimeError("Prefetch result mismatch")
                         if repeat >= args.warmups: samples["prefetch"].append(metrics)
@@ -405,14 +519,18 @@ def legacy_main(argv=None):
         raise
     finally:
         (args.output / "results.json").write_text(json.dumps(document, indent=2) + "\n")
+        write_summary_csv(args.output, document)
         text = report(document) if document["status"] == "device_validated" else "# GPU validation failed\n\n" + document.get("reason", "Validation incomplete") + "\n\nNo GPU equivalence, transfer, VRAM or crossover claim is made.\n"
         (args.output / "REPORT.md").write_text(text, encoding="utf-8")
+        (args.output / "summary.md").write_text(summary_markdown(document), encoding="utf-8")
+    print(f"Wrote {args.output / 'summary.md'}, {args.output / 'REPORT.md'}, {args.output / 'results.json'}, and {args.output / 'summary.csv'}", flush=True)
     return 0
 
 
 def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
-    if "--legacy" in argv:
-        return legacy_main([arg for arg in argv if arg != "--legacy"])
-    from benchmarks.gates import main as gate_main
-    return gate_main(argv, device=True)
+    if "--gate" in argv:
+        argv.remove("--gate")
+        from benchmarks.gates import main as gate_main
+        return gate_main(argv, device=True)
+    return legacy_main([arg for arg in argv if arg != "--legacy"])

@@ -232,13 +232,7 @@ def write_report(output, document):
             elif record["mode"] == "lookup":
                 row["lookups_per_second"] = record["lookup_count"] * 1e9 / med["work_ns"] if med["work_ns"] else ""
             writer.writerow(row)
-    lines = ["# Native performance observation", "",
-             f"Corpus SHA-256: `{document['corpus_sha256']}`. "
-             f"{document['repeats']} measured runs after {document['warmups']} discarded warmups per workload.", "",
-             "Wall times use median samples; Bend full uses the public align_batch API, including planning and ordering; "
-             "full includes profile construction per pair, prepared reuses one profile. "
-             "Edlib is single threaded. All distances/checksums were validated. Peak RSS covers the entire child process. "
-             "E2E includes the native RSS launcher; launcher/native startup times are recorded separately.", "",
+    table = [
              "| Case | Workload | Bend threads | Bend work ms | Edlib work ms | Bend / Edlib | Bend E2E ms | Edlib E2E ms | Bend RSS KiB | Edlib RSS KiB |",
              "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |"]
     references = {(r["case"], r["mode"], r["batch_size"]): r for r in document["records"] if r["algorithm"] == "edlib"}
@@ -248,10 +242,21 @@ def write_report(output, document):
         reference = references[(record["case"], record["mode"], record["batch_size"])]
         b, e = record["summary"], reference["summary"]
         bn, en = b["work_ns"]["median"], e["work_ns"]["median"]
-        lines.append(f"| {record['case']} | {record['mode']} × {record['batch_size']} | {record['threads']} | "
-                     f"{bn / 1e6:.4f} | {en / 1e6:.4f} | {bn / en:.2f} | "
+        ratio = f"{bn / en:.2f}" if en else "∞"
+        table.append(f"| {record['case']} | {record['mode']} × {record['batch_size']} | {record['threads']} | "
+                     f"{bn / 1e6:.4f} | {en / 1e6:.4f} | {ratio} | "
                      f"{b['end_to_end_ns']['median'] / 1e6:.3f} | {e['end_to_end_ns']['median'] / 1e6:.3f} | "
                      f"{b['peak_rss_kib']['median']:.0f} | {e['peak_rss_kib']['median']:.0f} |")
+    (output / "summary.md").write_text("\n".join(table) + "\n", encoding="utf-8")
+
+    lines = ["# Native performance observation", "",
+             f"Corpus SHA-256: `{document['corpus_sha256']}`. "
+             f"{document['repeats']} measured runs after {document['warmups']} discarded warmups per workload.", "",
+             "Wall times use median samples; Bend full uses the public align_batch API, including planning and ordering; "
+             "full includes profile construction per pair, prepared reuses one profile. "
+             "Edlib is single threaded. All distances/checksums were validated. Peak RSS covers the entire child process. "
+             "E2E includes the native RSS launcher; launcher/native startup times are recorded separately.", "",
+             *table]
     lines.extend(["", "A ratio above 1 means Bend took longer. These observations establish no general speedup. "
                   "The corpus includes different similarity/alphabet/length regimes; do not combine them into a universal ratio.", "",
                   "Raw samples, dispersion, CPU affinity, source/binary hashes, build commands, tool versions and host details "
@@ -259,8 +264,9 @@ def write_report(output, document):
     (output / "REPORT.md").write_text("\n".join(lines), encoding="utf-8")
 
 
-def legacy_main():
+def legacy_main(argv=None):
     parser = argparse.ArgumentParser(description="Rebuild and benchmark native Bend versus pinned C++ Edlib")
+    parser.add_argument("--gate", action="store_true", help="Run paired baseline/candidate performance gates")
     parser.add_argument("--corpus", default="benchmarks/corpus.json")
     parser.add_argument("--output", default=tempfile.mkdtemp(prefix="bend-cpu-results-"))
     parser.add_argument("--repeats", type=int, default=5)
@@ -270,7 +276,7 @@ def legacy_main():
     parser.add_argument("--cpus", help="Comma-separated distinct allowed CPU IDs; default uses first allowed CPUs")
     parser.add_argument("--case", action="append", help="Select corpus case by exact name; repeatable")
     parser.add_argument("--timeout", type=float, default=120, help="Maximum seconds for one native process")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     if platform.system() != "Linux":
         parser.error("Run through run_benchmarks.py on Windows/WSL or Linux")
     if args.repeats < 1 or args.warmups < 0 or not math.isfinite(args.timeout) or args.timeout <= 0:
@@ -288,8 +294,16 @@ def legacy_main():
     if not cases or args.case and set(args.case) - {c["name"] for c in cases}:
         parser.error("Unknown --case")
     output = (ROOT / args.output).resolve()
-    if output.exists() and any((output / name).exists() for name in ("results.json", "summary.csv", "REPORT.md")):
-        parser.error("Output already contains a result; choose a fresh --output directory")
+    if output.exists() and any((output / name).exists() for name in ("results.json", "summary.csv", "summary.md", "REPORT.md")):
+        result_path = output / "results.json"
+        try:
+            previous = json.loads(result_path.read_text(encoding="utf-8"))
+            previous_schema = previous.get("schema") if isinstance(previous, dict) else None
+        except (OSError, ValueError):
+            previous_schema = None
+        if previous_schema != 3:
+            parser.error("Output already contains a result; choose a fresh --output directory")
+        print("Replacing prior paired-gate results with report benchmark results.", flush=True)
     cxx = shlex.split(os.environ.get("CXX", "g++"))
     print("Rebuilding benchmark executables...", flush=True)
     version, builds = build(cxx)
@@ -338,14 +352,14 @@ def legacy_main():
     finally:
         os.sched_setaffinity(0, original_affinity)
     write_report(output, document)
-    print(f"Wrote {output / 'REPORT.md'} and raw results.json / summary.csv", flush=True)
+    print(f"Wrote {output / 'summary.md'}, {output / 'REPORT.md'}, and raw results.json / summary.csv", flush=True)
     return 0
 
 
 def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
-    if "--legacy" in argv:
-        sys.argv = [sys.argv[0], *(arg for arg in argv if arg != "--legacy")]
-        return legacy_main()
-    from benchmarks.gates import main as gate_main
-    return gate_main(argv)
+    if "--gate" in argv:
+        argv.remove("--gate")
+        from benchmarks.gates import main as gate_main
+        return gate_main(argv)
+    return legacy_main([arg for arg in argv if arg != "--legacy"])

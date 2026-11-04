@@ -7,6 +7,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <chrono>
 #include <string>
 #include <vector>
 
@@ -75,8 +76,9 @@ void binary_result(const EdlibAlignResult& result, EdlibCigarFormat format) {
     std::free(cigar);
 }
 
-int worker() {
+int worker(bool timed = false) {
     BeRequest request;
+    uint64_t work_ns = 0;
     while (int state = be_read_request(&request)) {
         if (state == 2) {
             EdlibAlignResult error{};
@@ -91,20 +93,25 @@ int worker() {
                 request.threshold > INT_MAX ? -1 : static_cast<int>(request.threshold),
                 static_cast<EdlibAlignMode>(request.mode), static_cast<EdlibAlignTask>(request.task),
                 pairs.empty() ? nullptr : pairs.data(), static_cast<int>(pairs.size()));
+            const auto started = std::chrono::steady_clock::now();
             auto result = edlibAlign(
                 reinterpret_cast<const char*>(request.query), static_cast<int>(request.query_length),
                 reinterpret_cast<const char*>(request.target), static_cast<int>(request.target_length), config);
+            work_ns += std::chrono::duration_cast<std::chrono::nanoseconds>(
+                std::chrono::steady_clock::now() - started).count();
             binary_result(result, static_cast<EdlibCigarFormat>(request.format));
             edlibFreeAlignResult(result);
         }
         std::free(request.data);
     }
+    if (timed) std::fprintf(stderr, "BEND_EDLIB_WORK_NS %llu\n", static_cast<unsigned long long>(work_ns));
     return 0;
 }
 }  // namespace
 
 int main(int argc, char** argv) {
     if (argc == 2 && std::strcmp(argv[1], "--worker") == 0) return worker();
+    if (argc == 2 && std::strcmp(argv[1], "--timed-worker") == 0) return worker(true);
     auto config = edlibDefaultAlignConfig();
     auto format = EDLIB_CIGAR_EXTENDED;
     std::string query;

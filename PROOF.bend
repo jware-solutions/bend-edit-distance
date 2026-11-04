@@ -1,5 +1,6 @@
 import ./Prepared.bend as Q
 import ./src/BitVector.bend as V
+import ./src/Workspace.bend as W
 import Base
 import ./LAWS.bend as Laws
 import ./src/DistanceDP.bend as DP
@@ -121,6 +122,35 @@ def Laws.four_word_mask_2(lookup, masks, rows, used, row):
   {==}
 
 def Laws.four_word_mask_3(lookup, masks, rows, used, row):
+  {==}
+
+def Laws.packed_band_shapes():
+  {==}
+
+def Laws.packed_band_serial_cutoff():
+  {==}
+
+def Laws.byte_band_rejection_preserves_owners(bytes, profile, workspace, length, columns, maximum):
+  {==}
+
+def Laws.byte_band_empty_band(fuel, bytes, profile, workspace, index, length, columns, padding, column, blocks, work):
+  match fuel workspace:
+    case 0n W.Workspace{_, _, _, _}:
+      {==}
+    case 1n+p W.Workspace{_, _, _, _}:
+      {==}
+
+def Laws.byte_hint_empty(bytes, profile, index, limit):
+  {==}
+
+def Laws.byte_hint_exceeded(fuel, bytes, profile, index, limit, distance):
+  match fuel:
+    case 0n:
+      {==}
+    case 1n+p:
+      {==}
+
+def Laws.byte_band_counter_accumulation(bytes, profile, workspace, before, after):
   {==}
 
 def Laws.packed_wide_shapes():

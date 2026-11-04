@@ -189,10 +189,10 @@ CPU workers support optional operations 6/7 for unlimited NW DISTANCE. They use
 owned packed byte buffers; operation 6 returns BER1, and operation 7 returns
 BER2 followed by ordered BER1 results. Unsupported optional operations return
 BER2 with status 1, handle 0 and count 0. `AlignmentWorker` selects them for
-prepared queries of 1–128 bytes on current CPU workers. For queries above 64
+prepared queries of 1–65,536 bytes on current CPU workers. For queries above 64
 bytes, it first sends operation 8 once per worker. Success returns the word width
 in the control handle field and maximum supported query length in its count
-field (currently 32 and 128). Explicit rejection preserves the 64-byte limit.
+field (currently 32 and 65,536). Explicit rejection preserves the 64-byte limit.
 Operations 2/5 are used outside the advertised range or after explicit rejection
 of operations 6/7. Negotiation and alignment share one deadline. GPU workers
 reject these optional operations and use that fallback.

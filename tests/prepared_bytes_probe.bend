@@ -69,10 +69,13 @@ def reused(value: Q.Prepared & E.AlignResult) -> List<&2, E.AlignResult>:
   (prepared, result) = value
   [result, Q.result(PB.align(prepared, BT.Target{[65 : U32*1n], 1n}))]
 
-def bounds() -> List<&2, E.AlignResult>:
+def bounds.query(+query: String) -> List<&2, E.AlignResult>:
   List.append(&2, E.AlignResult,
-    reused(PB.align(Q.prepare("A", Nil{}), BT.Target{[65 : U32*1n], 5n})),
-    reused(PB.align(Q.prepare("A", Nil{}), BT.Target{[65 : U32*1n], 2147483648n})))
+    reused(PB.align(Q.prepare(query, Nil{}), BT.Target{[65 : U32*1n], 5n})),
+    reused(PB.align(Q.prepare(query, Nil{}), BT.Target{[65 : U32*1n], 2147483648n})))
+
+def bounds() -> List<&2, E.AlignResult>:
+  bounds.query("A")
 
 def run(value: E.AlignJob, kind: String) -> List<&2, E.AlignResult>:
   E.AlignJob{+query, +target, E.AlignConfig{_, _, _, +pairs, _}} = value
@@ -87,6 +90,8 @@ def run(value: E.AlignJob, kind: String) -> List<&2, E.AlignResult>:
           0, V.Carry{1, 0}}))
     case "bounds":
       bounds()
+    case "band-bounds":
+      bounds.query(query)
     case "query":
       compare(SCon{Chr{256}, query}, target, pairs)
     case "pairs":

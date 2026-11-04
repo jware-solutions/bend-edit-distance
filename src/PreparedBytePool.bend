@@ -129,7 +129,7 @@ def ready(shards: Nat, length: Nat, budget: Nat, +active: Nat, values: List<&1, 
 # one owner; the other cached shards remain idle until a larger batch.
 def serial_cutoff(+length: Nat) -> Nat:
   Bool.pick(Nat, Bool.and(Nat.is_gt(length, Nat.mul(Word.width(), 3n)),
-    Nat.is_le(length, Bytes.maximum_query())), 32768n, 65536n)
+    Nat.is_le(length, Nat.mul(Word.width(), 4n))), 32768n, 65536n)
 
 def active_owners(+shards: Nat, +count: Nat, units: Nat, +length: Nat) -> Nat:
   +columns = Nat.sub(units, count)

@@ -11,11 +11,12 @@ import ./FourWord.bend as Four
 import ./BitVector.bend as V
 import ./Word.bend as Word
 import ./SearchKernel.bend as K
+import ./ByteKernel.bend as ByteK
 
 # Search columns and block carries remain sequential. A target's one array
 # owner passes through the scan, then is disposed in constant space.
 def maximum_query() -> Nat:
-  Nat.mul(Word.width(), 4n)
+  65536n
 
 type OneState is Type:
   OneState{bytes: Array<U32>, state: SW.State}
@@ -219,10 +220,17 @@ def run.three(bytes: Array<U32>, +columns: Nat, profile: P.Profile, workspace: W
       three.result(workspace, columns, three.words(Nat.div(columns, BT.cell_bytes()), 0, Nat.mod(columns, BT.cell_bytes()), Word.padding(length),
         ThreeState{bytes, Three.State{profile, V.Block{Word.all_bits(), 0, U32.mul(1, Word.width_u32())}, V.Block{Word.all_bits(), 0, U32.mul(2, Word.width_u32())}, V.Block{Word.all_bits(), 0, U32.mul(3, Word.width_u32())}}}))
 
+def run.more(bytes: Array<U32>, +columns: Nat, profile: P.Profile, workspace: W.Workspace, +length: Nat, small: Bool) -> K.Run:
+  match small:
+    case True{}:
+      run.three(bytes, columns, profile, workspace, length, Nat.is_le(length, Nat.mul(Word.width(), 3n)))
+    case False{}:
+      ByteK.search(BT.Target{bytes, columns}, profile, workspace, length, E.Unlimited{})
+
 def run.two(bytes: Array<U32>, +columns: Nat, profile: P.Profile, workspace: W.Workspace, +length: Nat, two: Bool) -> K.Run:
   match two:
     case False{}:
-      run.three(bytes, columns, profile, workspace, length, Nat.is_le(length, Nat.mul(Word.width(), 3n)))
+      run.more(bytes, columns, profile, workspace, length, Nat.is_le(length, Nat.mul(Word.width(), 4n)))
     case True{}:
       Q.run_nw.two.result(workspace, columns, two.words(Nat.div(columns, BT.cell_bytes()), 0, Nat.mod(columns, BT.cell_bytes()), Word.padding(length),
         TwoState{bytes, TW.State{profile, V.Block{Word.all_bits(), 0, U32.mul(1, Word.width_u32())}, V.Block{Word.all_bits(), 0, U32.mul(2, Word.width_u32())}}}))
@@ -252,8 +260,13 @@ def view.choose(query: String, pairs: List<&2, E.EqualityPair>, length: Nat,
       OtherOwner{Q.Prepared{query, pairs, length, Some{profile}, workspace}}
 
 def wide_word(+length: Nat, +blocks: U32, stride: U32, capacity: U32) -> Bool:
-  Bool.and(Bool.and(Nat.is_gt(length, Nat.mul(Word.width(), 2n)), Nat.is_le(length, maximum_query())),
+  Bool.and(Bool.and(Nat.is_gt(length, Nat.mul(Word.width(), 2n)), Nat.is_le(length, Nat.mul(Word.width(), 4n))),
     Bool.and(U32.is_eq(stride, 4), Bool.and(U32.is_eq(blocks, U32.from_nat(Word.blocks(length))), U32.is_eq(capacity, blocks))))
+
+def band_shape(+length: Nat, +blocks: U32, stride: U32, capacity: U32) -> Bool:
+  Bool.and(Bool.and(Nat.is_gt(length, Nat.mul(Word.width(), 4n)), Nat.is_le(length, maximum_query())),
+    Bool.and(U32.is_eq(blocks, U32.from_nat(Word.blocks(length))),
+      Bool.and(U32.is_ge(stride, blocks), U32.is_eq(capacity, blocks))))
 
 def view.profile(query: String, pairs: List<&2, E.EqualityPair>, +length: Nat,
                      profile: P.Profile, workspace: W.Workspace) -> View:
@@ -261,7 +274,7 @@ def view.profile(query: String, pairs: List<&2, E.EqualityPair>, +length: Nat,
   W.Workspace{data, +capacity, first, last} = workspace
   view.choose(query, pairs, length, P.Profile{lookup, masks, stride, rows, blocks, used},
     W.Workspace{data, capacity, first, last}, Bool.or(Q.single_word(length, stride, blocks, capacity),
-      Bool.or(Q.two_word(length, stride, blocks, capacity), wide_word(length, blocks, stride, capacity))))
+      Bool.or(Q.two_word(length, stride, blocks, capacity), Bool.or(wide_word(length, blocks, stride, capacity), band_shape(length, blocks, stride, capacity)))))
 
 def view(prepared: Q.Prepared) -> View:
   match prepared:

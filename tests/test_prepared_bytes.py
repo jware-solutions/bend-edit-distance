@@ -38,7 +38,7 @@ def test_every_query_padding_and_packed_target_tail(bend_binary, threads):
                 assert prepared.align(targets[-1]) == results[-1]
                 assert pooled._owned_supported == {6: True, 7: True}
                 if length > 64:
-                    assert pooled._owned_limit == 128
+                    assert pooled._owned_limit == 65536
                 assert pooled.retained_bytes == retained
 
 

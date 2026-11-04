@@ -8,6 +8,7 @@ import ./src/ThreeWord.bend as Three
 import ./src/FourWord.bend as Four
 import ./src/TwoWord.bend as TW
 import ./src/ByteTarget.bend as Packed
+import ./src/ByteKernel.bend as ByteK
 import ./src/PreparedBytes.bend as PB
 import ./src/PreparedBytePool.bend as PBP
 import ./src/PreparedPool.bend as PP
@@ -293,6 +294,68 @@ law four_word_mask_3:
   for row: U32
   {Four.mask(P.Profile{lookup, masks, 4, rows, 4, used}, row, 3) ==
     P.mask(P.Profile{lookup, masks, 4, rows, 4, used}, row, 3) : P.Profile & U32}
+
+law packed_band_shapes:
+  {(PB.band_shape(128n, 4, 4, 4), PB.band_shape(129n, 5, 8, 5),
+    PB.band_shape(129n, 5, 4, 5), PB.band_shape(129n, 5, 8, 4),
+    PB.band_shape(129n, 4, 8, 4), PB.band_shape(257n, 9, 16, 9)) ==
+    (False{}, True{}, False{}, False{}, False{}, True{}) : Bool & Bool & Bool & Bool & Bool & Bool}
+
+law packed_band_serial_cutoff:
+  {PBP.serial_cutoff(129n) == 65536n : Nat}
+
+law byte_band_rejection_preserves_owners:
+  for bytes: Array<U32>
+  for profile: P.Profile
+  for workspace: W.Workspace
+  for length: Nat
+  for columns: Nat
+  for maximum: Nat
+  {ByteK.finite(bytes, profile, workspace, length, columns, maximum, True{}) ==
+    ByteK.Run{bytes, K.Run{profile, workspace, K.Stats{E.NotFound{}, 0n, 0n, 0n}}} : ByteK.Run}
+
+law byte_band_empty_band:
+  for fuel: Nat
+  for bytes: Array<U32>
+  for profile: P.Profile
+  for workspace: W.Workspace
+  for index: U32
+  for length: Nat
+  for columns: Nat
+  for padding: Nat
+  for column: Nat
+  for blocks: Nat
+  for work: Nat
+  {ByteK.nw(fuel, index, length, columns, padding, column, blocks,
+    ByteK.ByteColumn{bytes, K.ColumnReady{profile, workspace, 0n, work, True{}}}) ==
+    ByteK.Run{bytes, K.Run{profile, workspace, K.Stats{E.NotFound{}, Nat.add(blocks, work), column, 1n}}} : ByteK.Run}
+
+law byte_hint_empty:
+  for bytes: Array<U32>
+  for profile: P.Profile
+  for index: U32
+  for limit: Nat
+  {ByteK.hint.scan(0n, index, limit, ByteK.HintState{bytes, Hint.Scanning{profile, 0n, False{}}}) ==
+    ByteK.HintRun{bytes, Hint.Hinted{profile, Hint.Bounded{0n}}} : ByteK.HintRun}
+
+law byte_hint_exceeded:
+  for fuel: Nat
+  for bytes: Array<U32>
+  for profile: P.Profile
+  for index: U32
+  for limit: Nat
+  for distance: Nat
+  {ByteK.hint.scan(fuel, index, limit, ByteK.HintState{bytes, Hint.Scanning{profile, distance, True{}}}) ==
+    ByteK.HintRun{bytes, Hint.Hinted{profile, Hint.Unavailable{}}} : ByteK.HintRun}
+
+law byte_band_counter_accumulation:
+  for bytes: Array<U32>
+  for profile: P.Profile
+  for workspace: W.Workspace
+  for before: K.Stats
+  for after: K.Stats
+  {ByteK.accumulated(before, ByteK.Run{bytes, K.Run{profile, workspace, after}}) ==
+    ByteK.Run{bytes, K.accumulated(before, K.Run{profile, workspace, after})} : ByteK.Run}
 
 law packed_wide_shapes:
   {(PB.wide_word(64n, 2, 4, 2), PB.wide_word(65n, 3, 4, 3),

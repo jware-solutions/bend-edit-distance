@@ -131,6 +131,10 @@ python3 run_gpu_benchmarks.py --check-build
 python3 run_gpu_benchmarks.py --case example --threads 4 --output build/gpu/example
 python3 run_gpu_benchmarks.py --no-report --case example --output build/gpu/no-report
 python3 run_benchmarks.py --gate --threads 1 4 --batch-sizes 1 16
+CC=clang-19 CXX=clang++-19 python3 run_benchmarks.py --gate --no-report \
+  --mode string-batch --mode owned-worker-batch --mode compatible-worker-batch \
+  --family sparse:4096 --batch-sizes 0 1 2 8 32 128 512 --reuse-counts 1 2 4 8 16 32 64 \
+  --threads 1 2 4 --output /tmp/bend-production-gate-01
 python3 -m benchmarks.compare_toolchains \
   --baseline /path/to/baseline/bin/bend \
   --candidate /path/to/candidate/bin/bend \
@@ -150,6 +154,45 @@ workloads; the GPU summary includes full CUDA batches. Use `--gate` for paired
 baseline/candidate correctness and performance gates instead of the Bend/Edlib
 report. Markdown reports are enabled by default. Pass `--no-report` to skip both
 Markdown files; the flag defaults off, and JSON/CSV output is still written.
+
+The paired gate's repeatable `--mode` selects `ordinary-single`, `batch`,
+`string-single`, `string-batch` (pooled), `string-serial-batch` (one owner), or `ordinary-worker-single/batch`,
+`owned-worker-single/batch`, `compatible-worker-single/batch` (spell out the
+suffix). `phases` and `prepared` retain legacy profile/search diagnostics;
+their search timings do not describe production prepared execution. Single
+modes require one target. Empty batches have no per-target rate. `--family
+NAME:LENGTH` selects seeded `identical`, `one`, `two`, `sparse`, `indel`,
+`two-adjacent`, `dna-random`, `bytes-random`, `bytes-one`, `bytes-two`,
+`bytes-sparse`, or `equalities` inputs. Each non-identical family
+rotates three target batches. `--reuse-counts` counts batch calls per sample;
+total targets equal calls times batch size. `--seed` defaults to 4862.
+`--shards` overrides requested owners; otherwise it follows runtime threads.
+Add repeatable `--configuration MODE:TASK:K:CIGAR` to select family options,
+for example `--configuration NW:PATH:2:EXTENDED` or
+`--configuration HW:LOC:-1:STANDARD`. Negative K means unlimited. Owned modes
+mark incompatible configurations inapplicable; compatible modes measure 2/5.
+Default gate affinity selects distinct physical cores. Explicit `--cpus` must
+also select distinct physical cores for scaling comparisons.
+
+Production gates retain emitted C, source snapshots, binaries and build costs
+with JSON/CSV under the fresh temporary output directory. Public Edlib U64
+calls (including disposal) and the internal cached NW profile control use
+persistent C++ threads. The cached control supports NW DISTANCE only; its
+target mapping buffer is reused, but Edlib block scratch is allocated per call.
+Every timed result is validated against public Edlib. Route observations run
+outside timing; fallback cannot satisfy an owned-path measurement. Service
+latency includes Python codec and transport. Native API timing includes
+planning/search/restoration/result construction; legacy diagnostics cannot
+attribute those production costs. Cache budget, current RSS and peak RSS are
+separate quantities. A passing selected performance gate is not full semantic
+or CUDA acceptance.
+`--allocations` adds a separately compiled production String pool diagnostic
+with forced planning/execution/ordering boundaries and allocator call counts.
+These intrusive timings are reported separately from API samples. Search,
+result construction and pool stages have separate diagnostics. The serial
+search diagnostic calls production `Prepared.run_nw` for byte NW, then the
+shipped reconstruction and path-validation/result functions. Other modes retain
+combined execution timing. PATH validation and CIGAR construction share result timing.
 
 GPU measurements require forced device execution, a newly generated sidecar and
 completed device work. The instrumentation rejects unknown runtime structure.

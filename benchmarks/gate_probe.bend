@@ -7,6 +7,8 @@ import ../src/Alignment.bend as A
 import ../src/Reconstruction.bend as R
 import ../src/Transport.bend as BT
 import ./gate_metrics.bend as T
+import ./gate_input.bend as Input
+import ../lib.bend as L
 
 # The harness substitutes only this body in its temporary GPU source copy.
 def execute(plan: B.Plan) -> List<&2, B.IndexedResult>:
@@ -150,8 +152,17 @@ def prepared(jobs: List<&2, E.AlignJob>) -> IO(List<&2, E.AlignResult>):
         profiles : List<&2, V.Peq> <- T.mark(List<&2, V.Peq>, 3, profile(input, pairs))
         reused(job <> tail, profiles)
 
+def ordinary(jobs: List<&2, E.AlignJob>) -> List<&2, E.AlignResult>:
+  match jobs:
+    case Nil{}:
+      Nil{}
+    case E.AlignJob{q, t, config} <> tail:
+      L.align(q, t, config) <> ordinary(tail)
+
 def compute(mode: String, jobs: List<&2, E.AlignJob>) -> IO(List<&2, E.AlignResult>):
   match mode:
+    case "ordinary-single":
+      T.mark(List<&2, E.AlignResult>, 1, ordinary(jobs))
     case "phases":
       phased(jobs)
     case "prepared":
@@ -170,7 +181,7 @@ def rounds(fuel: Nat, +count: Nat, +mode: String) -> IO(Unit):
       IO.pure(Unit, Unit{})
     case 1n+p:
       do IO<Unit>:
-        jobs : List<&2, E.AlignJob> <- BT.read_batch(count)
+        jobs : List<&2, E.AlignJob> <- Input.read(count)
         T.reset()
         values : List<&2, E.AlignResult> <- compute(mode, jobs)
         BT.write_batch(values)
@@ -194,6 +205,7 @@ def run(args: List<String>) -> IO(Unit):
 
 def main() -> IO(Unit):
   do IO<Unit>:
+    T.owners(Unit, Unit{}, 0)
     T.ready()
     args : List<String> <- IO.args()
     run(args)

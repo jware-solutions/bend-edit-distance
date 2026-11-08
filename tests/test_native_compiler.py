@@ -36,3 +36,18 @@ def test_explicit_invalid_compiler_is_rejected(monkeypatch, tmp_path):
     with pytest.raises(RuntimeError, match="is not runnable"):
         configure_toolchain(ROOT)
     assert os.environ["CC"] == missing
+
+
+def test_explicit_compiler_remains_authoritative(monkeypatch):
+    monkeypatch.setenv("CC", "clang-19")
+    monkeypatch.setenv("BEND_CC", "/not/a/compiler")
+    configure_toolchain(ROOT)
+    assert os.environ["CC"] == "clang-19"
+
+
+def test_compiler_provenance_resolves_wrapper(monkeypatch):
+    from benchmarks.production_gate import executable
+    compiler = executable('clang-19')
+    assert Path(compiler['path']).is_absolute()
+    assert len(compiler['sha256']) == 64
+    assert 'clang version 19' in compiler['version']

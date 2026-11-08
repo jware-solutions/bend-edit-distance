@@ -167,12 +167,13 @@ def lookup_checksum(case, count, *, tree):
 
 
 def summarize(samples):
-    metrics = [key for key in samples[0] if key.endswith("_ns") or key == "peak_rss_kib"]
+    metrics = [key for key in samples[0] if key.endswith("_ns") or key.endswith("_per_second") or key in ("peak_rss_kib", "rss_kib")]
     summary = {}
     for metric in metrics:
         values = sorted(sample[metric] for sample in samples)
         summary[metric] = {"median": statistics.median(values), "min": values[0],
-                           "max": values[-1], "p95": values[math.ceil(.95 * len(values)) - 1]}
+                           "max": values[-1], "p95": values[math.ceil(.95 * len(values)) - 1],
+                           "mad": statistics.median(abs(v - statistics.median(values)) for v in values)}
     return summary
 
 

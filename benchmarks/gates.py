@@ -12,6 +12,7 @@ import math
 import os
 from pathlib import Path
 import platform
+import random
 import selectors
 import shlex
 import shutil
@@ -36,12 +37,29 @@ def digest(data):
     return hashlib.sha256(data).hexdigest()
 
 
+def physical_cpus(allowed):
+    """One allowed logical CPU per physical core; never select SMT siblings."""
+    seen, selected = set(), []
+    for cpu in sorted(allowed):
+        topology = Path(f"/sys/devices/system/cpu/cpu{cpu}/topology")
+        key = ((topology / "physical_package_id").read_text().strip(),
+               (topology / "core_id").read_text().strip())
+        if key not in seen:
+            seen.add(key)
+            selected.append(cpu)
+    return selected
+
+
 @dataclass(frozen=True)
 class Workload:
     name: str
     jobs: tuple
     distances: tuple | None = None
     reuse: bool = False
+    batches: tuple = ()
+    reuse_count: int = 1
+    prepared_query: tuple | None = None
+    seed: int | None = None
 
     @property
     def payload(self):
@@ -157,12 +175,37 @@ def validate(values, expected, workload, *, exact=False):
             (actual.status, actual.distance, actual.end_locations, actual.start_locations) !=
                 (oracle.status, oracle.distance, oracle.end_locations, oracle.start_locations)):
             raise RuntimeError(f"Ordered result mismatch: {workload.name}, job {i}")
+        if ((actual.alignment is None, actual.cigar is None) !=
+                (oracle.alignment is None, oracle.cigar is None)):
+            raise RuntimeError(f"Optional field presence mismatch: {workload.name}, job {i}")
         validate_path(job, actual)
         validate_path(job, oracle)
+        if max(len(sequence_bytes(job[0])), len(sequence_bytes(job[1]))) <= 64:
+            if actual.edit_distance != dp_distance(*job):
+                raise RuntimeError(f"Independent DP distance mismatch: {workload.name}, job {i}")
         if exact and actual != oracle:
             raise RuntimeError(f"Complete baseline/candidate result mismatch: {workload.name}, job {i}")
         if workload.distances is not None and actual.edit_distance != workload.distances[i]:
             raise RuntimeError(f"Corpus distance mismatch: {workload.name}, job {i}")
+
+
+def dp_distance(query, target, config):
+    """Small independent unit-cost oracle, including Edlib's empty exceptions."""
+    q, t = sequence_bytes(query), sequence_bytes(target)
+    if not q or not t:
+        return max(len(q), len(t)) if config.mode == Mode.NW else len(q)
+    pairs = {tuple(p.to_bytes()) for p in config.equalities}
+    pairs |= {(b, a) for a, b in pairs}
+    previous = list(range(len(t) + 1)) if config.mode != Mode.HW else [0] * (len(t) + 1)
+    for i, a in enumerate(q, 1):
+        row = [i]
+        for j, b in enumerate(t, 1):
+            row.append(min(previous[j] + 1, row[-1] + 1,
+                           previous[j - 1] + (a != b and (a, b) not in pairs)))
+        previous = row
+    optimum = previous[-1] if config.mode == Mode.NW else min(previous)
+    limit = config.threshold.to_edlib()
+    return optimum if limit < 0 or optimum <= limit else -1
 
 
 @contextmanager
@@ -218,16 +261,29 @@ class Worker:
 
     def ready(self, started):
         line = self.line()
+        self.backend_pid = self.process.pid
+        native_spawned = None
+        if line.startswith(b"BEND_GATE_CHILD "):
+            pid, native_spawned = map(int, line.split()[1:])
+            self.backend_pid = pid
+            line = self.line()
         if not line.startswith(READY):
             raise RuntimeError(f"Missing benchmark startup handshake: {line!r}")
         ready = int(line[len(READY):])
         observed = time.monotonic_ns()
         if not started <= ready <= observed:
             raise RuntimeError("Benchmark clocks do not share an epoch")
-        return {"startup_ns": ready - started, "startup_handshake_ns": observed - started}
+        result = {"startup_ns": ready - started, "startup_handshake_ns": observed - started}
+        if native_spawned is not None:
+            if not started <= native_spawned <= ready:
+                raise RuntimeError("Invalid native launcher clock")
+            result.update(launcher_ns=native_spawned - started, native_startup_ns=ready - native_spawned)
+        return result
 
     def request(self, payload, count, *, metrics=True):
         self.deadline = time.monotonic() + self.timeout
+        if metrics and count == 0 and not payload:
+            payload = encode_request(b"", b"", AlignConfig())
         started = time.monotonic_ns()
         view = memoryview(payload)
         while view:
@@ -263,17 +319,46 @@ class Worker:
             sample.update(zip(PHASES, phases))
             sample.update(data)
             sample["total_cost_ns"] = sum(phases) - sample["serialization_ns"]
-            sample["amortized_total_ns"] = sample["total_cost_ns"] / count
-            sample["search_per_query_ns"] = sample["search_ns"] / count
+            if count:
+                sample["amortized_total_ns"] = sample["total_cost_ns"] / count
+                sample["search_per_query_ns"] = sample["search_ns"] / count
         return [decode_response(frame) for frame in values], sample
 
     def finish(self):
         self.process.stdin.close()
         try:
-            code = self.process.wait(timeout=self.timeout)
+            # Wait without reaping first, so wait4 reports this child's peak
+            # RSS rather than Python's or an earlier child's cumulative peak.
+            descriptor = None
+            try:
+                descriptor = os.pidfd_open(self.process.pid)
+            except (AttributeError, OSError):
+                pass
+            if descriptor is None:
+                code = self.process.wait(timeout=self.timeout)
+                self.exit_usage = {"status": "wait4 unavailable"}
+            else:
+                try:
+                    with selectors.DefaultSelector() as selector:
+                        selector.register(descriptor, selectors.EVENT_READ)
+                        if not selector.select(self.timeout):
+                            raise RuntimeError("Benchmark worker exit timed out")
+                    _, status, usage = os.wait4(self.process.pid, 0)
+                    code = os.waitstatus_to_exitcode(status)
+                    self.process.returncode = code
+                    self.exit_usage = {"spawn_to_exit_peak_rss_kib": usage.ru_maxrss,
+                        "spawn_to_exit_cpu_ns": int((usage.ru_utime + usage.ru_stime) * 1e9)}
+                finally:
+                    os.close(descriptor)
             # Exact count, no trailing result or diagnostic can go unchecked.
             extra = self.process.stdout.read() or b""
             error = self.process.stderr.read() or b""
+            if error.startswith(b"BEND_GATE_USAGE ") and error.count(b"\n") == 1:
+                usage = json.loads(error[len(b"BEND_GATE_USAGE "):])
+                if set(usage) != {"process_peak_rss_kib", "process_cpu_ns"} or any(type(v) is not int or v < 0 for v in usage.values()):
+                    raise RuntimeError("Invalid native launcher usage")
+                self.exit_usage.update(usage)
+                error = b""
             if code or extra or error:
                 raise RuntimeError(f"Worker exit={code}, trailing stdout={extra[:200]!r}, stderr={error[:1000]!r}")
         finally:
@@ -309,7 +394,7 @@ def snapshot(root, destination):
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(path, target)
         hashes[str(relative)] = digest(target.read_bytes())
-    for name in ("gate_probe.bend", "gate_metrics.bend", "gate_metrics.c"):
+    for name in ("gate_probe.bend", "gate_input.bend", "gate_metrics.bend", "gate_metrics.c", "production_api.bend", "production_diagnostics.bend", "compatible_worker.bend"):
         target = destination / "benchmarks" / name
         target.parent.mkdir(exist_ok=True)
         shutil.copyfile(ROOT / "benchmarks" / name, target)
@@ -325,19 +410,21 @@ def allocation_source(source):
         "\n  atomic_fetch_add_explicit(&gate_allocations, 1, memory_order_relaxed);")
 
 
-def build(root, directory, bend, cc, flags, *, device=False, allocations=False):
+def build(root, directory, bend, cc, flags, *, device=False, allocations=False, entry_name="benchmarks/gate_probe.bend"):
     from benchmarks.gpu_runner import instrument, prerequisites, require_gpu_build
     hashes = snapshot(root, directory / "source")
-    entry = directory / "source/benchmarks/gate_probe.bend"
+    entry = directory / "source" / entry_name
     if device:
         text = entry.read_text()
         if text.count("  B.execute(plan)") != 1:
             raise RuntimeError("Review GPU benchmark entry substitution")
         entry.write_text(text.replace("  B.execute(plan)", "  B.execute!(plan)"))
-    hashes["benchmarks/gate_probe.bend"] = digest(entry.read_bytes())
+    hashes[entry_name] = digest(entry.read_bytes())
     source, binary = directory / "probe.c", directory / "probe"
     commands = [[bend, entry, "-o", source]]
+    started = time.monotonic_ns()
     run_command(commands[0])
+    emission_ns = time.monotonic_ns() - started
     emitted = source.read_text()
     if device:
         emitted = instrument(emitted)
@@ -357,9 +444,13 @@ def build(root, directory, bend, cc, flags, *, device=False, allocations=False):
     if allocations:
         argv.append("-DGATE_ALLOCATIONS=1")
     commands.append(argv)
+    started = time.monotonic_ns()
     run_command(argv)
+    compile_ns = time.monotonic_ns() - started
     metadata = {"sources_sha256": hashes, "emitted_c_sha256": digest(source.read_bytes()),
         "binary_sha256": digest(binary.read_bytes()), "allocations": allocations,
+        "emission_ns": emission_ns, "compile_ns": compile_ns,
+        "emitted_c_bytes": source.stat().st_size, "binary_bytes": binary.stat().st_size,
         "commands": [list(map(str, cmd)) for cmd in commands]}
     if device:
         metadata["device_program"] = require_gpu_build(binary)
@@ -382,11 +473,28 @@ def ordered_variants(repetition):
     return ("baseline", "candidate") if repetition % 2 == 0 else ("candidate", "baseline")
 
 
+def observation(differences, floor):
+    """Deterministic paired bootstrap; tolerance policy is separate from parity."""
+    rng = random.Random(7391)
+    medians = sorted(statistics.median(rng.choices(differences, k=len(differences))) for _ in range(1000))
+    low, high = medians[24], medians[974]
+    classification = ("faster" if high < -floor else "slower" if low > floor else
+        "indistinguishable_within_measured_uncertainty" if low <= 0 <= high else "inconclusive")
+    return {"median_difference_ns": statistics.median(differences),
+            "paired_difference_bootstrap95_ns": [low, high], "classification": classification,
+            "uncertainty_method": "1000 paired resamples, seed 7391; signed CI crossing zero denotes observed uncertainty; nonzero differences below the configured floor remain inconclusive"}
+
+
 def paired_gate(records, maximum, selected_metrics=None, noise_floor_ns=0):
     groups = {}
     for r in records:
         key = (r["workload"], r["mode"], r["lifetime"], r["backend"], r["threads"])
-        groups.setdefault(key, {})[r["variant"]] = r
+        pair = groups.setdefault(key, {})
+        if r["variant"] in pair:
+            raise RuntimeError("Duplicate benchmark variant")
+        pair[r["variant"]] = r
+    if not groups:
+        raise RuntimeError("Missing benchmark coverage")
     comparisons = []
     for key, pair in groups.items():
         if set(pair) != {"baseline", "candidate"}:
@@ -397,10 +505,11 @@ def paired_gate(records, maximum, selected_metrics=None, noise_floor_ns=0):
             raise RuntimeError("Missing or duplicate paired repetitions")
         metrics = selected_metrics or (["persistent_worker_latency_ns"] if key[2] == "persistent" else
             ["search_ns", "total_cost_ns"] if key[1] == "prepared" else
-            ["work_ns"] if key[1] == "batch" else ["total_cost_ns"])
+            ["work_ns"] if key[1] in ("batch", "ordinary-single") else ["total_cost_ns"])
         for metric in metrics:
-            if metric not in base["samples"][0]:
-                continue
+            if any(type(s.get(metric)) not in (int, float) or not math.isfinite(s[metric])
+                   or s[metric] < 0 for r in (base, new) for s in r["samples"]):
+                raise RuntimeError(f"Missing or invalid required metric: {metric}")
             ratios = []
             excesses = []
             for b, c in zip(base["samples"], new["samples"]):
@@ -411,21 +520,22 @@ def paired_gate(records, maximum, selected_metrics=None, noise_floor_ns=0):
                 ratios.append(c[metric] / b[metric] if b[metric] else math.inf)
                 excesses.append(c[metric] - maximum * b[metric])
             if not ratios:
-                continue
+                raise RuntimeError(f"No nonzero samples for required metric: {metric}")
             ratio = statistics.median(ratios)
             comparisons.append({"workload": key[0], "mode": key[1], "lifetime": key[2],
                 "backend": key[3], "threads": key[4], "metric": metric,
                 "candidate_over_baseline": ratio if math.isfinite(ratio) else None,
                 "median_excess_ns": statistics.median(excesses), "noise_floor_ns": noise_floor_ns,
                 "passed": statistics.median(excesses) <= noise_floor_ns,
-                "paired_ratios": [r if math.isfinite(r) else None for r in ratios]})
+                "paired_ratios": [r if math.isfinite(r) else None for r in ratios],
+                **observation([c[metric] - b[metric] for b, c in zip(base["samples"], new["samples"])], noise_floor_ns)})
     return comparisons
 
 
 def write_results(output, document):
     (output / "results.json").write_text(json.dumps(document, indent=2, allow_nan=False) + "\n")
     rows = []
-    for record in document["records"]:
+    for record in [*document["records"], *document.get("references", [])]:
         row = {key: record[key] for key in ("workload", "variant", "mode", "lifetime", "backend", "threads", "batch_size")}
         row.update({key: value["median"] for key, value in record["summary"].items()})
         rows.append(row)
@@ -441,6 +551,14 @@ def parser(device):
     p = argparse.ArgumentParser(description="Paired correctness/performance gates; generated artifacts stay in temporary directories")
     p.add_argument("--baseline", type=Path, default=ROOT, help="Baseline source checkout (default: current checkout)")
     p.add_argument("--candidate", type=Path, default=ROOT, help="Candidate source checkout (default: current checkout)")
+    p.add_argument("--mode", action="append", choices=("batch", "phases", "prepared", "ordinary-single",
+        "string-single", "string-batch", "string-serial-batch", "ordinary-worker-single", "ordinary-worker-batch",
+        "owned-worker-single", "owned-worker-batch", "compatible-worker-single", "compatible-worker-batch"),
+        help="Select gate execution boundary; repeatable. Default retains legacy controls")
+    p.add_argument("--family", action="append", help="Seeded production family NAME:LENGTH; repeatable")
+    p.add_argument("--configuration", action="append", help="Family configuration MODE:TASK:K:CIGAR, e.g. NW:PATH:2:EXTENDED; repeatable")
+    p.add_argument("--seed", type=int, default=4862)
+    p.add_argument("--shards", type=int, choices=(1, 2, 4), help="Requested owners (default: runtime threads)")
     p.add_argument("--bend", default="bend", help="One pinned Bend compiler for both source trees")
     p.add_argument("--corpus", type=Path, default=ROOT / "benchmarks/corpus.json")
     p.add_argument("--output", type=Path, help="Fresh result directory under the system temporary directory")
@@ -457,7 +575,8 @@ def parser(device):
     p.add_argument("--max-regression", type=float, default=1.10, help="Maximum median paired candidate/baseline ratio")
     p.add_argument("--noise-floor-ns", type=int, default=50000,
                    help="Additive tolerance for paired timing noise (default: 50 microseconds)")
-    p.add_argument("--gate-metric", action="append", choices=(*PHASES, "startup_ns", "total_cost_ns", "persistent_worker_latency_ns", "end_to_end_ns"))
+    p.add_argument("--gate-metric", action="append", choices=(*PHASES, "startup_ns", "total_cost_ns", "persistent_worker_latency_ns", "end_to_end_ns",
+        "call_ns", "native_api_ns", "native_serialization_ns", "total_with_prepare_ns", "amortized_per_target_ns", "validation_ns"))
     p.add_argument("--cflags", default="-std=c2x -O3 -pthread", help="Identical C options for baseline and candidate")
     p.add_argument("--baseline-cflags", help="Override C options for the baseline build")
     p.add_argument("--candidate-cflags", help="Override C options for the candidate build")
@@ -476,18 +595,21 @@ def main(argv=None, *, device=False):
         p.error("Run through the Linux/WSL benchmark entry point")
     original = os.sched_getaffinity(0)
     try:
-        cpus = list(map(int, args.cpus.split(","))) if args.cpus else sorted(original)
+        cpus = list(map(int, args.cpus.split(","))) if args.cpus else physical_cpus(original)
     except ValueError:
         p.error("--cpus requires comma-separated integers")
     threads = sorted(set(args.threads))
+    args.threads = threads
     sizes = sorted(set([1, args.batch_size] if args.batch_size is not None else args.batch_sizes))
     reuses = sorted(set(args.reuse_counts))
     if (not cpus or len(set(cpus)) != len(cpus) or not set(cpus) <= original or
             not threads or min(threads) < 1 or max(threads) > min(len(cpus), 128) or
             args.repeats < 1 or args.warmups < 0 or not math.isfinite(args.timeout) or args.timeout <= 0 or
             not math.isfinite(args.max_regression) or args.max_regression <= 0 or args.noise_floor_ns < 0 or
-            not sizes or not reuses or min(sizes + reuses) < 1 or max(sizes + reuses) > 512):
+            not sizes or not reuses or min(sizes) < 0 or min(reuses) < 1 or max(sizes + reuses) > 512):
         p.error("Invalid affinity, thread, repetition, timeout, regression ratio or batch/reuse count")
+    if len(physical_cpus(cpus)) != len(cpus):
+        p.error("--cpus must select distinct physical cores, not SMT siblings")
     if device:
         import re
         if not re.fullmatch(r"[1-9][0-9]*(?:MB|GB)", args.heap):
@@ -498,6 +620,33 @@ def main(argv=None, *, device=False):
             p.error("Unknown --case")
         corpus = {**corpus, "cases": [c for c in corpus["cases"] if c["name"] in args.case]}
     suite = workloads(corpus, sizes, reuses)
+    if args.family:
+        from benchmarks.production_workloads import family
+        suite = []
+        for specification in args.family:
+            try:
+                name, length = specification.split(":")
+                length = int(length)
+                for count in sizes:
+                    query, config, batches = family(name, length, count, args.seed)
+                    configurations = [("", config)]
+                    if args.configuration:
+                        configurations = []
+                        for specification in args.configuration:
+                            mode, task, limit, format = specification.split(":")
+                            limit = int(limit)
+                            configured = AlignConfig(Mode(mode), Task(task), Unlimited() if limit < 0 else MaxDistance(limit),
+                                config.equalities, CigarFormat(format))
+                            configurations.append(("/" + specification, configured))
+                    for suffix, configured in configurations:
+                        configured_batches = tuple(tuple((q, t, configured) for q, t, _ in batch) for batch in batches)
+                        for reuse in reuses:
+                            suite.append(Workload(f"{name}-{length}/{count}/r{reuse}{suffix}", configured_batches[0],
+                                batches=configured_batches, reuse_count=reuse, prepared_query=(query, configured), seed=args.seed))
+            except ValueError as error:
+                p.error(str(error))
+    elif args.configuration:
+        p.error("--configuration requires --family")
     if args.workload:
         if set(args.workload) - {w.name for w in suite}:
             p.error("Unknown --workload")
@@ -523,10 +672,10 @@ def main(argv=None, *, device=False):
             "corpus_sha256": digest(args.corpus.read_bytes()), "runtime_environment": {
                 k: reproducible_env()[k] for k in ("BENDRTS", "BEND_NO_TELEMETRY")}},
         "phase_semantics": {"batch": "Batch.prepare / execute / ordered, measured with forced boundaries",
-            "phases": "Serial diagnostic composition of Myers profile/search and configured result restoration; not public batch throughput",
+            "phases": "LEGACY V.build_peq / M.search_profiles serial diagnostic composition of Myers profile/search and configured result restoration; not public batch throughput",
             "reconstruction_ns": "PATH reconstruction only; validation and CIGAR are in result_ns",
             "locations_ns": "Location restoration and threshold acceptance; HW includes reversed profile and start searches",
-            "prepared": "One NW profile per request, reused by identical query/config with varying targets",
+            "prepared": "LEGACY V.build_peq / M.search_profiles: one NW profile per request, reused by identical query/config with varying targets",
             "total_cost_ns": "Sum of measured compute phases including profile and input preparation, excluding serialization",
             "startup_ns": "Popen start to native monotonic ready handshake, before argument/input decoding",
             "persistent_worker_latency_ns": "Pre-encoded request write to complete response bytes on an initialized worker; decoding/validation excluded",
@@ -555,6 +704,14 @@ def main(argv=None, *, device=False):
                 raise RuntimeError("; ".join(problems))
             os.environ["CUDA_HOME"] = str(cuda)
             document["environment"]["nvidia_smi"] = run_command(["nvidia-smi", "--query-gpu=name,uuid,driver_version,memory.total", "--format=csv,noheader"])
+        from benchmarks.production_gate import provenance, run as run_production
+        document["provenance"] = provenance(args, cc, cxx, bend)
+        if args.mode or args.family:
+            if device:
+                raise ValueError("Explicit production modes currently require the CPU gate")
+            run_production(args, document, suite, cpus, bend, cc, cxx, output)
+            write_results(output, document)
+            return int(document["status"] != "passed")
         with tempfile.TemporaryDirectory(prefix="bend-gate-build-") as temporary:
             scratch = Path(temporary)
             binaries, document["builds"] = {}, {}

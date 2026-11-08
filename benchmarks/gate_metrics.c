@@ -4,6 +4,7 @@
 #include <inttypes.h>
 
 static uint64_t gate_last, gate_phases[10];
+static uint32_t gate_owners;
 static uint64_t gate_now(void) {
   struct timespec ts;
   if (clock_gettime(CLOCK_MONOTONIC, &ts)) abort();
@@ -40,7 +41,7 @@ Term finish_run(Env e, Term* f, IoWork* w) {
   fprintf(stderr, "BEND_GATE_METRICS {\"schema\":1,\"phases\":[");
   for (unsigned i = 0; i < 10; ++i)
     fprintf(stderr, "%s%" PRIu64, i ? "," : "", gate_phases[i]);
-  fprintf(stderr, "]");
+  fprintf(stderr, "],\"effective_owners\":%u", gate_owners);
 #ifdef GATE_DEVICE_EVIDENCE
   fprintf(stderr, ",\"device_completed_bangs\":%" PRIu64
     ",\"device_scheduler_ns\":%" PRIu64
@@ -57,9 +58,15 @@ Term finish_run(Env e, Term* f, IoWork* w) {
   return term_pak(CID(Unit), 0);
 }
 
+Term owners_run(Env e, Term* f, IoWork* w) {
+  gate_owners = (u32)f[1];
+  return f[0];
+}
+
 static void __attribute__((constructor)) gate_effects(void) {
   io_eff(CID(ready), ready_run);
   io_eff(CID(reset), reset_run);
   io_eff(CID(mark), mark_run);
   io_eff(CID(finish), finish_run);
+  io_eff(CID(owners), owners_run);
 }

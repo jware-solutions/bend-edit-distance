@@ -5,6 +5,7 @@
 #include <stdint.h>
 #include <inttypes.h>
 #include <stdlib.h>
+#include <string.h>
 #include <time.h>
 #include <unistd.h>
 #include <sys/wait.h>
@@ -18,11 +19,18 @@ static uint64_t now_ns(void) {
 
 int main(int argc, char** argv) {
     if (argc < 2) return 2;
+    int gate = !strcmp(argv[1], "--gate");
+    int entry = gate ? 2 : 1;
+    if (argc <= entry) return 2;
     uint64_t spawned = now_ns();
     pid_t child = fork();
     if (child < 0) { perror("fork"); return 2; }
     if (!child) {
-        execv(argv[1], &argv[1]);
+        if (gate) {
+            fprintf(stderr, "BEND_GATE_CHILD %ld %" PRIu64 "\n", (long)getpid(), spawned);
+            fflush(stderr);
+        }
+        execv(argv[entry], &argv[entry]);
         perror("execv");
         _exit(2);
     }
@@ -32,7 +40,10 @@ int main(int argc, char** argv) {
     uint64_t ended = now_ns();
     uint64_t cpu_ns = (usage.ru_utime.tv_sec + usage.ru_stime.tv_sec) * 1000000000ull
                      + (usage.ru_utime.tv_usec + usage.ru_stime.tv_usec) * 1000ull;
-    printf("usage,%" PRIu64 ",%" PRIu64 ",%ld,%" PRIu64 "\n",
-           spawned, ended, usage.ru_maxrss, cpu_ns);
+    if (gate)
+        fprintf(stderr, "BEND_GATE_USAGE {\"process_peak_rss_kib\":%ld,\"process_cpu_ns\":%" PRIu64 "}\n", usage.ru_maxrss, cpu_ns);
+    else
+        printf("usage,%" PRIu64 ",%" PRIu64 ",%ld,%" PRIu64 "\n",
+               spawned, ended, usage.ru_maxrss, cpu_ns);
     return WIFEXITED(status) ? WEXITSTATUS(status) : 128 + WTERMSIG(status);
 }

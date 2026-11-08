@@ -12,3 +12,6 @@ def mark(-A: Type, phase: U32, value: A) -> IO(A):
 
 def finish() -> IO(Unit):
   import "./gate_metrics.c"
+
+def owners(-A: Type, value: A, count: U32) -> IO(A):
+  import "./gate_metrics.c"

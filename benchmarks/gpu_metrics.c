@@ -1,4 +1,4 @@
-// Validation-only Bend 2.0.39 ABI. Count only fully drained device bangs,
+// Validation-only Bend 2.0.39/2.0.40 ABI. Count only fully drained device bangs,
 // plus CUDA batches AFTER successful synchronization (not logical rounds).
 // CPU fallback cannot increment this counter. Keep production code untouched.
 #include <inttypes.h>

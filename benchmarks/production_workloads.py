@@ -5,7 +5,7 @@ import random
 from alignment import AlignConfig, EqualityPair
 
 BOUNDARIES = (31, 32, 33, 63, 64, 65, 95, 96, 97, 127, 128, 129, 4097, 65536, 65537)
-FAMILIES = ("identical", "one", "two", "two-adjacent", "sparse", "indel", "dna-random", "bytes-random", "equalities",
+FAMILIES = ("identical", "bytes-identical", "one", "two", "two-adjacent", "sparse", "indel", "dna-random", "bytes-random", "equalities",
             "bytes-one", "bytes-two", "bytes-sparse", "rotation", "burst", "dense-prefix", "dense-suffix",
             "dna-10pct", "dna-25pct", "dna-50pct")
 

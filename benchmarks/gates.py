@@ -13,6 +13,7 @@ import os
 from pathlib import Path
 import platform
 import random
+import re
 import selectors
 import shlex
 import shutil
@@ -383,6 +384,44 @@ def run_command(argv):
     return result.stdout.strip()
 
 
+def compiler_command(command):
+    """Keep an explicitly selected executable path (including spaces) intact."""
+    return [command] if Path(command).is_file() else shlex.split(command)
+
+
+def select_compilers(args):
+    """A release override requires both an executable and an expected version.
+
+    Merely changing PATH or --bend never bypasses either source tree's pin.
+    """
+    selections = {}
+    for variant in ("baseline", "candidate"):
+        root = getattr(args, variant).resolve()
+        pin = (root / ".bend-version").read_text().strip()
+        command = getattr(args, variant + "_bend")
+        expected = getattr(args, variant + "_bend_version")
+        if expected is not None and command is None:
+            raise ValueError(f"--{variant}-bend-version requires --{variant}-bend")
+        expected = expected if expected is not None else pin
+        if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", expected):
+            raise ValueError(f"Invalid expected {variant} Bend release: {expected!r}")
+        path = Path(shutil.which(command or args.bend) or command or args.bend).resolve()
+        if not path.is_file() or not os.access(path, os.X_OK):
+            raise ValueError(f"{variant} Bend is not executable: {path}")
+        version = run_command([path, "version"])
+        if version != "bend " + expected:
+            raise RuntimeError(f"{variant} compiler mismatch: expected bend {expected}, found {version}; "
+                               "an intentional release comparison needs an explicit executable and --" +
+                               variant + "-bend-version")
+        bundled = path.parent.parent / "bend2"
+        selections[variant] = {"path": str(path), "version": version, "expected_release": expected,
+            "source_pin": pin, "release_override": expected != pin,
+            "sha256": digest(path.read_bytes()),
+            "bundled_sources_sha256": {str(p.relative_to(bundled)): digest(p.read_bytes())
+                for p in sorted(bundled.rglob("*")) if p.is_file()} if bundled.is_dir() else {}}
+    return selections
+
+
 def snapshot(root, destination):
     destination.mkdir(parents=True)
     paths = [*root.glob("*.bend"), *root.glob("src/**/*.bend"),
@@ -410,8 +449,14 @@ def allocation_source(source):
         "\n  atomic_fetch_add_explicit(&gate_allocations, 1, memory_order_relaxed);")
 
 
-def build(root, directory, bend, cc, flags, *, device=False, allocations=False, entry_name="benchmarks/gate_probe.bend"):
+def build(root, directory, bend, cc, flags, *, device=False, allocations=False,
+          entry_name="benchmarks/gate_probe.bend", compiler_identity=None):
     from benchmarks.gpu_runner import instrument, prerequisites, require_gpu_build
+    bend = Path(shutil.which(str(bend)) or bend).resolve()
+    identity = {"path": str(bend), "version": run_command([bend, "version"]),
+                "sha256": digest(bend.read_bytes())}
+    if compiler_identity is not None and any(identity[k] != compiler_identity[k] for k in identity):
+        raise RuntimeError("Selected Bend compiler changed before build")
     hashes = snapshot(root, directory / "source")
     entry = directory / "source" / entry_name
     if device:
@@ -447,11 +492,21 @@ def build(root, directory, bend, cc, flags, *, device=False, allocations=False, 
     started = time.monotonic_ns()
     run_command(argv)
     compile_ns = time.monotonic_ns() - started
-    metadata = {"sources_sha256": hashes, "emitted_c_sha256": digest(source.read_bytes()),
+    if digest(bend.read_bytes()) != identity["sha256"]:
+        raise RuntimeError("Selected Bend compiler changed during build")
+    metadata = {"bend": identity,
+        "sources_sha256": hashes, "emitted_c_sha256": digest(source.read_bytes()),
         "binary_sha256": digest(binary.read_bytes()), "allocations": allocations,
         "emission_ns": emission_ns, "compile_ns": compile_ns,
         "emitted_c_bytes": source.stat().st_size, "binary_bytes": binary.stat().st_size,
         "commands": [list(map(str, cmd)) for cmd in commands]}
+    # Clang's dry run expands wrappers and implicit target/link options without
+    # adding the wrapper's policy flags a second time to the timed executable.
+    trace = subprocess.run(list(map(str, [*argv, "-###"])), cwd=ROOT,
+        capture_output=True, text=True, timeout=30, env=reproducible_env())
+    if trace.returncode:
+        raise RuntimeError(f"Cannot record effective host compiler options: {trace.stderr}")
+    metadata["host_driver_trace"] = trace.stdout + trace.stderr
     if device:
         metadata["device_program"] = require_gpu_build(binary)
     return binary, metadata
@@ -560,6 +615,9 @@ def parser(device):
     p.add_argument("--seed", type=int, default=4862)
     p.add_argument("--shards", type=int, choices=(1, 2, 4), help="Requested owners (default: runtime threads)")
     p.add_argument("--bend", default="bend", help="One pinned Bend compiler for both source trees")
+    for variant in ("baseline", "candidate"):
+        p.add_argument(f"--{variant}-bend", help=f"Separate {variant} Bend executable (pin enforced by default)")
+        p.add_argument(f"--{variant}-bend-version", help="Expected release for an intentional compiler override; requires the corresponding executable")
     p.add_argument("--corpus", type=Path, default=ROOT / "benchmarks/corpus.json")
     p.add_argument("--output", type=Path, help="Fresh result directory under the system temporary directory")
     p.add_argument("--threads", nargs="+", type=int, default=[1] if device else [1, 4])
@@ -689,17 +747,17 @@ def main(argv=None, *, device=False):
         "jobs": [digest(encode_request(*j)) for j in w.jobs], "known_distances": w.distances} for w in suite]
     document["suite_sha256"] = digest(json.dumps(document["workloads"], sort_keys=True).encode())
     try:
-        cc = shlex.split(os.environ.get("CC", "clang-19"))
-        cxx = shlex.split(os.environ.get("CXX", "g++"))
-        bend = Path(shutil.which(args.bend) or args.bend).resolve()
-        version = run_command([bend, "version"])
-        for root in (args.baseline, args.candidate):
-            if version != "bend " + (root / ".bend-version").read_text().strip():
-                raise RuntimeError(f"Source pin disagrees with the common compiler: {root}")
-        document["environment"].update(bend=version, bend_sha256=digest(bend.read_bytes()),
+        cc = compiler_command(os.environ.get("CC", "clang-19"))
+        cxx = compiler_command(os.environ.get("CXX", "g++"))
+        compilers = select_compilers(args)
+        bends = {v: Path(info["path"]) for v, info in compilers.items()}
+        document["environment"].update(bend_compilers=compilers,
             cc=run_command([*cc, "--version"]), cxx=run_command([*cxx, "--version"]),
             cpu_topology=run_command(["lscpu", "-p=CPU,CORE,SOCKET"]),
             git_commit=run_command(["git", "-C", ROOT, "rev-parse", "HEAD"]))
+        if bends["baseline"] == bends["candidate"]:
+            document["environment"].update(bend=compilers["baseline"]["version"],
+                                           bend_sha256=compilers["baseline"]["sha256"])
         if device:
             from benchmarks.gpu_runner import prerequisites
             cuda, _, problems = prerequisites(cc)
@@ -708,11 +766,11 @@ def main(argv=None, *, device=False):
             os.environ["CUDA_HOME"] = str(cuda)
             document["environment"]["nvidia_smi"] = run_command(["nvidia-smi", "--query-gpu=name,uuid,driver_version,memory.total", "--format=csv,noheader"])
         from benchmarks.production_gate import provenance, run as run_production
-        document["provenance"] = provenance(args, cc, cxx, bend)
+        document["provenance"] = provenance(args, cc, cxx, compilers)
         if args.mode or args.family:
             if device:
                 raise ValueError("Explicit production modes currently require the CPU gate")
-            run_production(args, document, suite, cpus, bend, cc, cxx, output)
+            run_production(args, document, suite, cpus, bends, cc, cxx, output)
             write_results(output, document)
             return int(document["status"] != "passed")
         with tempfile.TemporaryDirectory(prefix="bend-gate-build-") as temporary:
@@ -724,8 +782,9 @@ def main(argv=None, *, device=False):
                 flags = shlex.split(args.cflags if override is None else override)
                 for kind in kinds:
                     print(f"Building {variant} {kind}...", flush=True)
-                    binary, metadata = build(root.resolve(), scratch / variant / kind, bend, cc,
-                        flags, device=kind == "cuda", allocations=kind == "allocations")
+                    binary, metadata = build(root.resolve(), scratch / variant / kind, bends[variant], cc,
+                        flags, device=kind == "cuda", allocations=kind == "allocations",
+                        compiler_identity=compilers[variant])
                     binaries[variant, kind] = binary
                     document["builds"][variant + "/" + kind] = metadata
             source = ROOT / "vendor/edlib/edlib"

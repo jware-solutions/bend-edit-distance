@@ -29,7 +29,7 @@ _BUILD = tempfile.TemporaryDirectory(prefix="bend-gpu-bench-")
 BUILD = Path(_BUILD.name)
 PREFIX = "BEND_GPU_METRICS "
 
-# Instrument the reviewed 2.0.39 CUDA scheduler, failing closed on changes.
+# Instrument the reviewed 2.0.39/2.0.40 CUDA schedulers, failing closed on changes.
 # A gpu_pass(H) drains an entire bang; CUDA syncs batches of submitted rounds.
 # Submitted rounds may be no-ops after the frontier empties; they are NOT work.
 HOOK = """
@@ -63,6 +63,12 @@ CUDA_PASS = """static void gpu_pass(u64* H) {
     }
   }
 }"""
+# v2.0.40 seeds the device-resident frontier before the dispatch-entry check.
+# Synchronization and the fully drained/root_done completion test are unchanged.
+CUDA_PASS_2040 = CUDA_PASS.replace("static void gpu_pass(u64* H) {\n",
+    "static void gpu_pass(u64* H) {\n"
+    "  if (cuMemcpyHtoD(gpu_front, &H[H_FRONT], 8) != CUDA_SUCCESS) {\n"
+    '    err_fail("device fault");\n  }\n')
 GPU_RUN = """static void gpu_run(void) {
   for (u32 i = 0; i < 5; i += 1) {
     gpu_kernel((u32[]){ 0, 0, 1, 3, 2 }[i], i);
@@ -93,18 +99,22 @@ COMPLETED = """    if (gpu) {
 
 def instrument(source, *, bang_required=True):
     anchor = "#if BEND_METAL || BEND_CUDA\n\nstatic void gpu_kernel(u32 pass, u32 at);"
-    regions = (anchor, CUDA_PASS, GPU_RUN, CUDA_KERNEL, BRANCH)
+    passes = [region for region in (CUDA_PASS, CUDA_PASS_2040) if source.count(region) == 1]
+    if len(passes) != 1:
+        raise RuntimeError("Pinned Bend runtime changed; review GPU instrumentation")
+    cuda_pass = passes[0]
+    regions = (anchor, cuda_pass, GPU_RUN, CUDA_KERNEL, BRANCH)
     if any(source.count(region) != 1 for region in regions):
         raise RuntimeError("Pinned Bend runtime changed; review GPU instrumentation")
     if source.count("static void cube_run(u64* H, bool gpu) {") != 1:
         raise RuntimeError("Pinned Bend runtime changed; review GPU instrumentation")
     if not re.search(r"#define BANGS\s+" + ("1" if bang_required else "0") + r"\b", source):
         raise RuntimeError("Probe has an unexpected reachable-bang setting")
-    counted = CUDA_PASS.replace('      err_fail("device fault");\n    }',
+    counted = cuda_pass.replace('      err_fail("device fault");\n    }',
         '      err_fail("device fault");\n    }\n'
         '    bend_sync_batches += 1;\n    bend_rounds_submitted += n;')
     return (source.replace(anchor, HOOK + "\n" + anchor)
-            .replace(CUDA_PASS, counted).replace(BRANCH, COMPLETED))
+            .replace(cuda_pass, counted).replace(BRANCH, COMPLETED))
 
 
 def prerequisites(cc):

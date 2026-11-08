@@ -87,6 +87,26 @@ def test_cuda_evidence_rejects_fallback():
         device_sync_batches=2, device_rounds_submitted=3), True)
 
 
+@pytest.mark.parametrize('release', ['2.0.39', '2.0.40'])
+def test_reviewed_cuda_instrumentation_anchors(release):
+    from benchmarks import gpu_runner as gpu
+    cuda_pass = gpu.CUDA_PASS if release == '2.0.39' else gpu.CUDA_PASS_2040
+    source = '\n'.join(['#define BANGS 1',
+        '#if BEND_METAL || BEND_CUDA\n\nstatic void gpu_kernel(u32 pass, u32 at);',
+        cuda_pass, gpu.GPU_RUN, gpu.CUDA_KERNEL, gpu.BRANCH,
+        'static void cube_run(u64* H, bool gpu) {'])
+    measured = gpu.instrument(source)
+    assert measured.count('bend_sync_batches += 1;') == 1
+    assert measured.count('bend_completed_bangs += 1;') == 1
+    assert 'root_done(H)' in measured
+    if release == '2.0.40':
+        assert 'cuMemcpyHtoD(gpu_front, &H[H_FRONT], 8)' in measured
+    with pytest.raises(RuntimeError, match='runtime changed'):
+        gpu.instrument(source.replace('cuCtxSynchronize()', 'unreviewed_sync()'))
+    with pytest.raises(RuntimeError, match='runtime changed'):
+        gpu.instrument(source + cuda_pass)
+
+
 @pytest.fixture(scope="module")
 def gate_binary(bend_tool, tmp_path_factory):
     import os
@@ -189,8 +209,10 @@ def test_production_families_dna_and_batch_identities():
         q, config, batches = family(name, 129, 8, 42)
         assert (q, config, batches) == family(name, 129, 8, 42)
         assert len(batches) == 3
-        if name != "identical":
+        if name not in ("identical", "bytes-identical"):
             assert len(set(batches)) == 3
+        else:
+            assert all(t == q for batch in batches for _, t, _ in batch)
         if not name.startswith("bytes-"):
             assert set(q) <= set(b"ACGT")
             for batch in batches:
@@ -396,8 +418,19 @@ def test_configuration_option_and_empty_metric_rejection():
 
 def test_production_cli_end_to_end(production_binaries, bend_binary, tmp_path, monkeypatch):
     from benchmarks import production_gate
+    import shutil
     api, _, refs = production_binaries
+    compilers = {v: tmp_path / v / 'bin/bend' for v in ('baseline', 'candidate')}
+    for path in compilers.values():
+        path.parent.mkdir(parents=True)
+        shutil.copyfile(shutil.which('bend'), path)
+        path.chmod(0o755)
+        shutil.copytree(Path(shutil.which('bend')).resolve().parent.parent / 'bend2', path.parent.parent / 'bend2')
+    routed = []
     def build(root, directory, bend, cc, flags, **kwargs):
+        variant = directory.parent.name
+        assert bend == compilers[variant]
+        routed.append((variant, kwargs['entry_name'], directory))
         binary = bend_binary if kwargs['entry_name'] == 'worker.bend' else api
         return binary, {'allocations': False, 'commands': [], 'binary_sha256': gates.digest(binary.read_bytes())}
     monkeypatch.setattr(gates, 'build', build)
@@ -405,10 +438,16 @@ def test_production_cli_end_to_end(production_binaries, bend_binary, tmp_path, m
     output = tmp_path / 'production-results'
     code = gates.main(['--mode', 'owned-worker-batch', '--mode', 'ordinary-worker-batch', '--mode', 'string-batch',
         '--family', 'one:129', '--batch-sizes', '0', '1', '--reuse-counts', '1', '--threads', '1',
+        '--baseline-bend', str(compilers['baseline']), '--candidate-bend', str(compilers['candidate']),
         '--warmups', '1', '--repeats', '2', '--max-regression', '100000', '--output', str(output)])
     assert code == 0
     document = json.loads((output / 'results.json').read_text())
     assert document['status'] == 'passed' and len(document['coverage']) == 6
+    assert {(v, entry) for v, entry, _ in routed} == {
+        (v, entry) for v in compilers for entry in ('benchmarks/production_api.bend', 'worker.bend')}
+    assert len({directory for _, _, directory in routed}) == len(routed)
+    assert {v: info['path'] for v, info in document['provenance']['bend_compilers'].items()} == {
+        v: str(path) for v, path in compilers.items()}
     assert len(document['records']) == 12
     for record in document['records']:
         if record['mode'] == 'string-batch':
@@ -425,6 +464,37 @@ def test_production_cli_end_to_end(production_binaries, bend_binary, tmp_path, m
     assert (output / 'summary.csv').exists()
     assert not (output / 'REPORT.md').exists()
     assert not (output / 'summary.md').exists()
+
+
+def test_every_production_build_kind_routes_its_compiler(tmp_path, monkeypatch):
+    from benchmarks import production_gate as production
+    args = gates.parser(False).parse_args(['--mode', 'batch', '--mode', 'string-batch',
+        '--mode', 'owned-worker-batch', '--allocations'])
+    bends = {v: tmp_path / (v + '-bend') for v in ('baseline', 'candidate')}
+    identities = {v: {'path': str(p), 'version': 'bend 2.0.' + str(39 + i)}
+        for i, (v, p) in enumerate(bends.items())}
+    document = {'provenance': {'driver_sha256': {}, 'bend_compilers': identities},
+                'phase_semantics': {}, 'records': []}
+    calls = []
+    def build(root, directory, bend, cc, flags, **kwargs):
+        variant, kind = directory.parent.name, directory.name
+        assert bend == bends[variant]
+        assert kwargs['compiler_identity'] == identities[variant]
+        assert kwargs['allocations'] == (kind == 'diagnostic')
+        calls.append((variant, kind, directory))
+        return directory / 'unused', {}
+    class BeforeMeasurements(Exception):
+        pass
+    def stop(*args, **kwargs):
+        raise BeforeMeasurements
+    monkeypatch.setattr(gates, 'build', build)
+    monkeypatch.setattr(production, 'build_references', lambda *a, **k: ({'oracle': 'unused'}, {}))
+    monkeypatch.setattr(production, 'AlignmentWorker', stop)
+    with pytest.raises(BeforeMeasurements):
+        production.run(args, document, [], [0], bends, ['clang-19'], ['clang++-19'], tmp_path)
+    assert {(v, k) for v, k, _ in calls} == {
+        (v, k) for v in bends for k in ('api', 'core', 'diagnostic', 'worker')}
+    assert len({d for _, _, d in calls}) == 8
 
 
 def test_native_empty_round_waits_for_request(gate_binary):

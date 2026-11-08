@@ -8,7 +8,7 @@ A Bend implementation of Edlib's edit-distance and alignment features.
 
 ## Setup
 
-Use the pinned Bend 2.0.39. The setup script provisions Debian/Ubuntu development environments:
+Use the pinned Bend 2.0.40. The setup script provisions Debian/Ubuntu development environments:
 
 ```bash
 bash scripts/setup.sh

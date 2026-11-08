@@ -32,7 +32,7 @@ def executable(command):
             "version": G.run_command([path, "--version"])}
 
 
-def provenance(args, cc, cxx, bend):
+def provenance(args, cc, cxx, compilers):
     wrapper = G.ROOT / "scripts/cc"
     lean = G.ROOT / "build/tools/lean/bin/lean"
     roots = {}
@@ -42,9 +42,10 @@ def provenance(args, cc, cxx, bend):
             "status": G.run_command(["git", "-C", root, "status", "--porcelain", "--untracked-files=normal"]),
             "diff_sha256": G.digest(G.run_command(["git", "-C", root, "diff", "HEAD"]).encode())}
     return {"roots": roots, "cc": executable(cc[0]), "cxx": executable(cxx[0]),
+        **({"bend": compilers["baseline"]} if compilers["baseline"]["path"] == compilers["candidate"]["path"] else {}),
         "underlying_cc": executable(os.environ.get("BEND_CC", "clang-19")) if Path(cc[0]).resolve() == wrapper.resolve() else executable(cc[0]),
         "wrapper": {"path": str(wrapper), "content": wrapper.read_text(), "sha256": G.digest(wrapper.read_bytes())},
-        "bend": {"path": str(bend), "sha256": G.digest(bend.read_bytes()), "version": G.run_command([bend, "version"])},
+        "bend_compilers": compilers,
         "lean": executable(lean) if lean.exists() else {"status": "unavailable", "pin": (G.ROOT / ".lean-version").read_text().strip()},
         "edlib_gitlink": G.run_command(["git", "ls-tree", "HEAD", "vendor/edlib"]),
         "edlib_head": G.run_command(["git", "-C", G.ROOT / "vendor/edlib", "rev-parse", "HEAD"]),
@@ -296,7 +297,7 @@ def reference_supported(w):
         return False
 
 
-def run(args, document, suite, cpus, bend, cc, cxx, output):
+def run(args, document, suite, cpus, bends, cc, cxx, output):
     modes = tuple(dict.fromkeys(args.mode or DEFAULT_MODES))
     document.update(references=[], inapplicable=[], coverage=[], builds={},
                     configured_timing_floor_ns=args.noise_floor_ns,
@@ -358,7 +359,9 @@ def run(args, document, suite, cpus, bend, cc, cxx, output):
         for kind in sorted(kinds):
             print(f"Building {variant} production {kind}...", flush=True)
             entry = {"api": "benchmarks/production_api.bend", "core": "benchmarks/gate_probe.bend", "worker": "worker.bend", "diagnostic": "benchmarks/production_diagnostics.bend"}[kind]
-            binary, meta = G.build(root.resolve(), scratch / variant / kind, bend, cc, flags[variant], entry_name=entry, allocations=kind == "diagnostic")
+            binary, meta = G.build(root.resolve(), scratch / variant / kind, bends[variant], cc, flags[variant],
+                entry_name=entry, allocations=kind == "diagnostic",
+                compiler_identity=document["provenance"]["bend_compilers"][variant])
             binaries[variant, kind] = binary
             document["builds"][variant + "/" + kind] = meta
     oracle = AlignmentWorker([refs["oracle"], "--worker"])

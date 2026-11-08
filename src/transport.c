@@ -128,7 +128,7 @@ static void be_write_frame(const unsigned char *data, uint64_t size) {
 #endif
 
 #if !defined(BEND_EDLIB_ORACLE) && !defined(BEND_EDLIB_CONTROL)
-// Native effects for the pinned Bend 2.0.39 runtime. Core alignment stays Bend.
+// Native effects for the reviewed Bend 2.0.39/2.0.40 ABI. Core alignment stays Bend.
 // The compiler splices this source into its generated C translation unit.
 
 

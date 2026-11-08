@@ -513,3 +513,25 @@ def test_native_empty_round_waits_for_request(gate_binary):
         worker.finish()
     finally:
         worker.close()
+
+
+@pytest.mark.parametrize("seed", [42, 4862, 9081])
+def test_certificate_placements_have_distinct_batches_and_independent_distances(seed):
+    from benchmarks.production_workloads import family, CERTIFICATE_FAMILIES
+    from tests.test_small_paths import distance_dp
+    for name in CERTIFICATE_FAMILIES:
+        query, config, batches = family(name, 129, 1, seed)
+        assert len(set(batches)) == 3
+        scan = list(range(32)) + list(range(128, 31, -1))
+        for batch in batches:
+            _, target, _ = batch[0]
+            assert set(target) <= set(b"ACGT")
+            mismatches = [i for i, (a, b) in enumerate(zip(query, target)) if a != b]
+            optimum = distance_dp(query, target, config.equalities)
+            if name.startswith("two-") or name == "short-shift":
+                assert optimum == 2
+            if name.startswith("three-"):
+                assert len(mismatches) == 3
+                third = max(scan.index(p) for p in mismatches)
+                assert third == {"three-early": 2, "three-middle": 96, "three-late": 128, "three-tail": 128}[name]
+                assert 2 <= optimum <= 3

@@ -1889,3 +1889,73 @@ law dense_work_guard:
   for +columns: Nat
   {Bool.and(Dense.budget(length, columns), Dense.work_room(length, columns)) ==
     Dense.budget(length, columns) : Bool}
+
+# Mathematical certificate bounds, separate from dispatch equations above.
+# Every equal-length edit script has equally many insertions and deletions.
+# If there is a gap, at least one of each costs two, irrespective of matches.
+# Otherwise every unequal diagonal position needs its own substitution.
+# These facts use only literal/direct symmetric matches, never transitivity.
+law certificate_add_successor:
+  for a: Nat
+  for b: Nat
+  {Nat.add(a, 1n+b) == 1n+Nat.add(a, b) : Nat}
+
+law certificate_nonnegative:
+  for value: Nat
+  {Nat.is_lt(value, 0n) == False{} : Bool}
+
+law certificate_gap_pair_lower_bound:
+  for +extra_pairs: Nat
+  for +substitutions: Nat
+  {Nat.is_lt(Nat.add(Nat.add(1n+extra_pairs, 1n+extra_pairs), substitutions), 2n) == False{} : Bool}
+
+law certificate_two_substitutions_bounds:
+  {(Nat.add(1n, 1n), Nat.is_lt(2n, 2n)) == (2n, False{}) : Nat & Bool}
+
+# A gapless script for a two-mismatch diagonal needs two substitutions;
+# every competing equal-length script with gaps has at least one gap pair.
+type TwoMismatchScript is Data:
+  DiagonalTwo{}
+  GapPairs{extra: Nat, substitutions: Nat}
+
+def certificate_script_cost(script: TwoMismatchScript) -> Nat:
+  match script:
+    case DiagonalTwo{}:
+      2n
+    case GapPairs{+extra, substitutions}:
+      Nat.add(Nat.add(1n+extra, 1n+extra), substitutions)
+
+law certificate_script_lower_bound:
+  for script: TwoMismatchScript
+  {Nat.is_lt(certificate_script_cost(script), 2n) == False{} : Bool}
+
+# General diagonal hints remain upper bounds; only the admitted production
+# witness may construct a result without running the normal search.
+law two_diagonal_direct_nontransitive_dp:
+  {packed_witness_value(ByteK.hint.scan(2n, 0, 2n,
+    ByteK.HintState{[17219 : U32*1n], Hint.Scanning{P.build("AA", 2n,
+      [E.EqualityPair{'A', 'N'}, E.EqualityPair{'N', 'C'}]), 0n, False{}}})) ==
+    Hint.Bounded{DP.distance_with_equalities("AA", "CC",
+      [E.EqualityPair{'A', 'N'}, E.EqualityPair{'N', 'C'}])} : Hint.Hint}
+
+law packed_witness_two_inconclusive:
+  {packed_witness_value(ByteK.witness(129n, P.build(String.repeat("A", 129n), 129n, Nil{}),
+    Array.set(U32, [1094795585 : U32*64n], 8, 1094796098))) == Hint.Unavailable{} : Hint.Hint}
+
+law packed_witness_rotation_inconclusive:
+  {(packed_witness_value(ByteK.witness(3n, P.build("ABC", 3n, Nil{}), [4277058 : U32*1n])),
+    DP.distance("ABC", "BCA")) == (Hint.Unavailable{}, 2n) : Hint.Hint & Nat}
+
+law diagonal_three_is_only_upper_bound:
+  {(packed_witness_value(ByteK.hint.scan(3n, 0, 3n,
+      ByteK.HintState{[4277058 : U32*1n], Hint.Scanning{P.build("ABC", 3n, Nil{}), 0n, False{}}})),
+    DP.distance("ABC", "BCA")) == (Hint.Bounded{3n}, 2n) : Hint.Hint & Nat}
+
+law two_diagonal_third_mismatch:
+  for profile: P.Profile
+  {Hint.bits(0, 2n, 2n, (profile, 0)) == Hint.Scanning{profile, 3n, True{}} : Hint.Scanning}
+
+law packed_witness_invalid_owner:
+  for state: PB.Known
+  for target: Packed.Target
+  {PB.known.checked(state, Packed.Checked{target, False{}}) == (state, PB.error()) : PB.Known & E.AlignResult}

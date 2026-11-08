@@ -9,6 +9,8 @@ import ../src/Workspace.bend as W
 import ../src/BitVector.bend as V
 import ../src/Word.bend as Word
 import ../src/SearchKernel.bend as K
+import ../src/ByteKernel.bend as ByteK
+import ../src/RetryHint.bend as Hint
 
 def blocks.read(tail: W.Workspace -> List<V.Block>, value: W.Workspace & V.Block) -> List<V.Block>:
   (workspace, block) = value
@@ -77,9 +79,91 @@ def bounds.query(+query: String) -> List<&2, E.AlignResult>:
 def bounds() -> List<&2, E.AlignResult>:
   bounds.query("A")
 
+def same_words(a: List<U32>, b: List<U32>) -> Bool:
+  match a b:
+    case Nil{} Nil{}:
+      True{}
+    case x <> xs y <> ys:
+      Bool.and(U32.is_eq(x, y), same_words(xs, ys))
+    case _ _:
+      False{}
+
+# Consume every physical cell as well as metadata, including stale search state.
+def profile_words(profile: P.Profile) -> List<U32>:
+  P.Profile{lookup, masks, stride, rows, blocks, used} = profile
+  stride <> rows <> blocks <> used <> List.append(&1, U32,
+    Array.to_list(~U32, lookup), Array.to_list(~U32, masks))
+
+def workspace_words(workspace: W.Workspace) -> List<V.Block>:
+  W.Workspace{data, capacity, first, last} = workspace
+  V.Block{capacity, first, last} <> Array.to_list(~V.Block, data)
+
+type Saved is Type:
+  Saved{profile: List<U32>, workspace: List<V.Block>}
+
+def saved(owner: Q.Prepared) -> Saved:
+  match owner:
+    case Q.Prepared{_, _, _, Some{profile}, workspace}:
+      Saved{profile_words(profile), workspace_words(workspace)}
+    case _:
+      Saved{Nil{}, Nil{}}
+
+def same_saved(a: Saved, b: Saved) -> Bool:
+  Saved{ap, aw} = a
+  Saved{bp, bw} = b
+  Bool.and(same_words(ap, bp), same_blocks(aw, bw))
+
+def witness_checked(before: Saved, value: Q.Prepared & E.AlignResult) -> List<&2, E.AlignResult>:
+  (after, result) = value
+  good = same_saved(before, saved(after))
+  [result, E.distance_result(Bool.pick(Nat, good, 1n, 0n), E.BeforeStart{}, True{})]
+
+def witness_copied(target: String, query: String, pairs: List<&2, E.EqualityPair>, length: Nat,
+                   +capacity: U32, +first: U32, +last: U32,
+                   profiles: P.Profile & P.Profile, blocks: Array<V.Block> & Array<V.Block>) -> List<&2, E.AlignResult>:
+  (profile, before_profile) = profiles
+  (data, before_data) = blocks
+  witness_checked(Saved{profile_words(before_profile), workspace_words(W.Workspace{before_data, capacity, first, last})},
+    PB.align(Q.Prepared{query, pairs, length, Some{profile}, W.Workspace{data, capacity, first, last}}, packed(target)))
+
+def witness_seeded(target: String, value: Q.Prepared & E.AlignResult) -> List<&2, E.AlignResult>:
+  (owner, _) = value
+  match owner:
+    case Q.Prepared{query, pairs, length, Some{profile}, W.Workspace{data, capacity, first, last}}:
+      witness_copied(target, query, pairs, length, capacity, first, last, P.clone(profile), Array.clone(V.Block, data))
+    case _:
+      [E.not_found(), E.not_found()]
+
+
+def witness_hint(value: ByteK.HintRun) -> List<&2, E.AlignResult>:
+  match value:
+    case ByteK.HintRun{_, Hint.Hinted{_, Hint.Bounded{distance}}}:
+      [E.distance_result(distance, E.BeforeStart{}, True{})]
+    case _:
+      [E.not_found()]
+
+def witness_packed(+length: Nat, profile: P.Profile, target: BT.Target, complete: Bool) -> List<&2, E.AlignResult>:
+  BT.Target{bytes, _} = target
+  match complete:
+    case False{}:
+      witness_hint(ByteK.witness(length, profile, bytes))
+    case True{}:
+      witness_hint(ByteK.hint.scan(length, 0, 2n,
+        ByteK.HintState{bytes, Hint.Scanning{profile, 0n, False{}}}))
+
+def witness_probe(+query: String, target: String, pairs: List<&2, E.EqualityPair>, complete: Bool) -> List<&2, E.AlignResult>:
+  +length = String.length(query)
+  witness_packed(length, P.build(query, length, pairs), packed(target), complete)
+
 def run(value: E.AlignJob, kind: String) -> List<&2, E.AlignResult>:
   E.AlignJob{+query, +target, E.AlignConfig{_, _, _, +pairs, _}} = value
   match kind:
+    case "witness":
+      witness_probe(query, target, pairs, False{})
+    case "witness-math":
+      witness_probe(query, target, pairs, True{})
+    case "witness-owner":
+      witness_seeded(target, Q.align(Q.prepare(query, pairs), "Z", Q.default_options()))
     case "workspace":
       +length = String.length(query)
       +count = Word.blocks(length)

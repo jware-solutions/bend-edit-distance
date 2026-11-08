@@ -1,4 +1,6 @@
 import ./Prepared.bend as Q
+import ./src/PreparedBytes.bend as PB
+import ./src/ByteTarget.bend as Packed
 import ./src/BitVector.bend as V
 import ./src/Workspace.bend as W
 import ./src/Word.bend as Word
@@ -1680,3 +1682,57 @@ def Laws.dense_guard_left(a, b):
 def Laws.dense_work_guard(length, columns):
   Laws.dense_guard_left(Dense.work_room(length, columns),
     Nat.is_le(Nat.add(Nat.mul(Word.blocks(length), Word.width()), columns), 4294967294n))
+
+def Laws.certificate_add_successor(a, b):
+  match a:
+    case 0n:
+      {==}
+    case 1n+p:
+      %Laws.certificate_add_successor(p, b) : {1n+Nat.add(p, 1n+b) == 1n+_ : Nat}
+      {==}
+
+def Laws.certificate_nonnegative(value):
+  match value:
+    case 0n:
+      {==}
+    case 1n+p:
+      {==}
+
+def Laws.certificate_gap_pair_lower_bound(extra_pairs, substitutions):
+  %Equal.sym(Nat, Nat.add(extra_pairs, 1n+extra_pairs), 1n+Nat.add(extra_pairs, extra_pairs),
+    Laws.certificate_add_successor(extra_pairs, extra_pairs)) :
+    {Nat.is_lt(Nat.add(1n+_, substitutions), 2n) == False{} : Bool}
+  Laws.certificate_nonnegative(Nat.add(Nat.add(extra_pairs, extra_pairs), substitutions))
+
+
+def Laws.certificate_two_substitutions_bounds():
+  {==}
+
+def Laws.certificate_script_lower_bound(script):
+  match script:
+    case Laws.DiagonalTwo{}:
+      {==}
+    case Laws.GapPairs{extra, substitutions}:
+      Laws.certificate_gap_pair_lower_bound(extra, substitutions)
+
+def Laws.two_diagonal_direct_nontransitive_dp():
+  {==}
+
+def Laws.packed_witness_two_inconclusive():
+  {==}
+
+def Laws.packed_witness_rotation_inconclusive():
+  {==}
+
+def Laws.diagonal_three_is_only_upper_bound():
+  {==}
+
+def Laws.two_diagonal_third_mismatch(profile):
+  {==}
+
+def Laws.packed_witness_invalid_owner(state, target):
+  match state target:
+    case PB.Known{_, _, _, _, _} Packed.Target{_, 0n}:
+      {==}
+    case PB.Known{_, _, _, _, _} Packed.Target{_, 1n+p}:
+      {==}

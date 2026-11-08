@@ -9,7 +9,9 @@ import ../src/Profile.bend as P
 import ../src/Workspace.bend as W
 import ../src/Word.bend as Word
 import ../src/Transport.bend as T
+import ../src/Myers.bend as M
 import ./prepared_bytes_probe.bend as Packed
+import ./dense_kernel.bend as Dense
 
 def distance(value: E.EditDistance) -> E.AlignResult:
   match value:
@@ -218,12 +220,153 @@ def run_transitions(job: E.AlignJob) -> List<&2, E.AlignResult>:
     compare_steps(K.Step{P.build(query, length, pairs), W.initialize(W.new(blocks), count), maximum, 0n},
       K.Step{P.build(query, length, pairs), W.initialize(W.new(blocks), count), maximum, 0n})), 1n, 0n))]
 
+# Full-width oracle uses guarded mask access and owns a separate initial
+# frontier. Unlike a trimmed band, every logical block must match exactly.
+def full_reference(target: String, state: W.Updated) -> W.Updated:
+  match target state:
+    case SNil{} _:
+      state
+    case SCon{h, t} W.Updated{profile, workspace, _, _}:
+      full_reference(t, W.column_reference(profile, workspace, Char.to_u32(h), V.Carry{1, 0}))
+
+def full_finish(+length: Nat, +columns: Nat, state: W.Updated) -> K.Run:
+  W.Updated{profile, workspace, _, _} = state
+  K.finish(profile, workspace, 4294967295n, Word.padding(length),
+    Nat.mul(Word.blocks(length), columns), columns, True{})
+
+def full(target: String, profile: P.Profile, workspace: W.Workspace, +length: Nat, columns: Nat) -> K.Run:
+  match length:
+    case 0n:
+      K.Run{profile, workspace, K.Stats{E.Found{columns}, 0n, 0n, 0n}}
+    case 1n+p:
+      full_finish(1n+p, columns, full_reference(target,
+        W.Updated{profile, W.initialize(workspace, Word.blocks(1n+p)), 0, V.Carry{1, 0}}))
+
+def metrics_of(value: K.Run) -> List<&2, E.AlignResult>:
+  K.Run{_, _, stats} = value
+  metrics(stats)
+
+def run_dense(job: E.AlignJob) -> List<&2, E.AlignResult>:
+  E.AlignJob{+query, +target, E.AlignConfig{_, _, +threshold, +pairs, _}} = job
+  +length = String.length(query)
+  +columns = String.length(target)
+  +count = Word.blocks(length)
+  List.append(&2, E.AlignResult,
+    compare(count,
+      Bytes.result(Dense.packed(Packed.packed(target), P.build(query, length, pairs), W.new(count), length)),
+      full(target, P.build(query, length, pairs), W.new(count), length, columns)),
+    List.append(&2, E.AlignResult,
+      compare(count, Dense.string(target, P.build(query, length, pairs), W.new(count), length, columns),
+        full(target, P.build(query, length, pairs), W.new(count), length, columns)),
+      List.append(&2, E.AlignResult,
+        metrics_of(reference(target, P.build(query, length, pairs), W.new(count), length, columns, threshold)),
+        metrics_of(Dense.search(target, P.build(query, length, pairs), W.new(count), length, columns, threshold)))))
+
+def dense_steps(a: W.Updated, b: W.Updated) -> Compared:
+  W.Updated{ap, aw, _, _} = a
+  W.Updated{bp, bw, _, _} = b
+  compare_steps(K.Step{ap, aw, 0n, 0n}, K.Step{bp, bw, 0n, 0n})
+
+def dense_columns(target: String, state: Compared) -> Bool:
+  match target state:
+    case SNil{} Compared{_, same, _, _}:
+      same
+    case SCon{+h, t} Compared{_, same, K.Step{ap, a, _, _}, K.Step{bp, b, _, _}}:
+      Bool.and(same, dense_columns(t,
+        dense_steps(W.column(ap, a, Char.to_u32(h), V.Carry{1, 0}),
+          W.column_reference(bp, b, Char.to_u32(h), V.Carry{1, 0}))))
+
+def run_dense_columns(job: E.AlignJob) -> List<&2, E.AlignResult>:
+  E.AlignJob{+query, target, E.AlignConfig{_, _, _, +pairs, _}} = job
+  +length = String.length(query)
+  +count = Word.blocks(length)
+  [metric(Bool.pick(Nat, dense_columns(target,
+    compare_steps(K.Step{P.build(query, length, pairs), W.initialize(W.new(count), count), 0n, 0n},
+      K.Step{P.build(query, length, pairs), W.initialize(W.new(count), count), 0n, 0n})), 1n, 0n))]
+
+def restarted_bytes(+length: Nat, +columns: Nat, value: Bytes.Run) -> K.Run:
+  Bytes.Run{bytes, K.Run{profile, workspace, previous}} = value
+  K.accumulated(previous, Bytes.result(Dense.packed(BT.Target{bytes, columns}, profile, workspace, length)))
+
+def restarted_reference(target: String, +length: Nat, +columns: Nat, value: K.Run) -> K.Run:
+  K.Run{profile, workspace, previous} = value
+  K.accumulated(previous, full(target, profile, workspace, length, columns))
+
+def run_dense_restart(job: E.AlignJob) -> List<&2, E.AlignResult>:
+  E.AlignJob{+query, +target, E.AlignConfig{_, _, _, +pairs, _}} = job
+  +length = String.length(query)
+  +columns = String.length(target)
+  +count = Word.blocks(length)
+  compare(count,
+    restarted_bytes(length, columns, Bytes.attempt(packed_bytes(Packed.packed(target)),
+      P.build(query, length, pairs), W.new(count), length, columns, 32n, Word.padding(length))),
+    restarted_reference(target, length, columns, attempt_reference(target,
+      P.build(query, length, pairs), W.new(count), length, columns, 32n, Word.padding(length))))
+
+def run_dense_public(job: E.AlignJob) -> List<&2, E.AlignResult>:
+  E.AlignJob{+query, +target, +config} = job
+  E.AlignConfig{_, _, threshold, +pairs, _} = config
+  +length = String.length(query)
+  List.append(&2, E.AlignResult,
+    metrics_of(Dense.search(target, P.build(query, length, pairs), W.new(Word.blocks(length)),
+      length, String.length(target), threshold)), [M.edlib_align(query, target, config)])
+
+def run_dense_fallback(job: E.AlignJob) -> List<&2, E.AlignResult>:
+  E.AlignJob{+query, +target, E.AlignConfig{_, _, +threshold, +pairs, _}} = job
+  +length = String.length(query)
+  +columns = String.length(target)
+  +count = Word.blocks(length)
+  compare(count,
+    Dense.choose(target, P.build(query, length, pairs), W.new(count), length, columns, threshold, False{}),
+    K.search(target, P.build(query, length, pairs), W.new(count), length, columns, threshold))
+
+def run_dense_bounds() -> List<&2, E.AlignResult>:
+  [metric(Bool.pick(Nat, Dense.supported(65537n, 2147483647n), 1n, 0n)),
+   metric(Bool.pick(Nat, Dense.supported(2147483647n, 2147483647n), 1n, 0n)),
+   metric(Bool.pick(Nat, Dense.supported(2147483648n, 1n), 1n, 0n)),
+   metric(Bool.pick(Nat, Dense.supported(1n, 2147483648n), 1n, 0n)),
+   metric(Bool.pick(Nat, Dense.supported(4194304n, 2147483647n), 1n, 0n)),
+   metric(Bool.pick(Nat, Dense.supported(4194305n, 2147483647n), 1n, 0n)),
+   metric(Bool.pick(Nat, Dense.supported(2147483647n, 4194303n), 1n, 0n)),
+   metric(Bool.pick(Nat, Dense.supported(2147483647n, 4194304n), 1n, 0n))]
+
+def band_after_bytes(+length: Nat, +columns: Nat, value: Bytes.Run) -> K.Run:
+  Bytes.Run{bytes, K.Run{profile, workspace, _}} = value
+  Bytes.result(Bytes.attempt(bytes, profile, workspace, length, columns, 32n, Word.padding(length)))
+
+def band_after_full(target: String, +length: Nat, columns: Nat, value: K.Run) -> K.Run:
+  K.Run{profile, workspace, _} = value
+  attempt_reference(target, profile, workspace, length, columns, 32n, Word.padding(length))
+
+def run_dense_then_band(job: E.AlignJob) -> List<&2, E.AlignResult>:
+  E.AlignJob{+query, +target, E.AlignConfig{_, _, _, +pairs, _}} = job
+  +length = String.length(query)
+  +columns = String.length(target)
+  +count = Word.blocks(length)
+  compare(count,
+    band_after_bytes(length, columns, Dense.packed(Packed.packed(target), P.build(query, length, pairs), W.new(count), length)),
+    band_after_full(target, length, columns, full(target, P.build(query, length, pairs), W.new(count), length, columns)))
+
 def run_choose(job: E.AlignJob, mode: U32) -> List<&2, E.AlignResult>:
   match mode:
     case 1:
       run_attempt(job)
     case 2:
       run_transitions(job)
+    case 3:
+      run_dense(job)
+    case 4:
+      run_dense_columns(job)
+    case 5:
+      run_dense_restart(job)
+    case 6:
+      run_dense_public(job)
+    case 7:
+      run_dense_fallback(job)
+    case 8:
+      run_dense_bounds()
+    case 9:
+      run_dense_then_band(job)
     case _:
       run(job)
 
@@ -233,6 +376,20 @@ def probe_mode(args: List<String>) -> U32:
       1
     case _ <> "transitions" <> Nil{}:
       2
+    case _ <> "dense" <> Nil{}:
+      3
+    case _ <> "dense-columns" <> Nil{}:
+      4
+    case _ <> "dense-restart" <> Nil{}:
+      5
+    case _ <> "dense-public" <> Nil{}:
+      6
+    case _ <> "dense-fallback" <> Nil{}:
+      7
+    case _ <> "dense-bounds" <> Nil{}:
+      8
+    case _ <> "dense-then-band" <> Nil{}:
+      9
     case _:
       0
 

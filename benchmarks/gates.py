@@ -581,6 +581,7 @@ def parser(device):
     p.add_argument("--baseline-cflags", help="Override C options for the baseline build")
     p.add_argument("--candidate-cflags", help="Override C options for the candidate build")
     p.add_argument("--allocations", action="store_true", help="Separate untimed CPU allocation diagnostics")
+    p.add_argument("--edlib-u32", action="store_true", help="Add separately labeled temporary U32 Edlib diagnostics (production gate only)")
     if device:
         p.add_argument("--heap", default="1GB")
         p.add_argument("--check-build", action="store_true", help="Build and validate one real CUDA batch for both source trees")
@@ -591,6 +592,8 @@ def main(argv=None, *, device=False):
     from benchmarks.runner import load_corpus, summarize
     p = parser(device)
     args = p.parse_args(argv)
+    if args.edlib_u32 and (device or not (args.mode or args.family)):
+        p.error("--edlib-u32 requires an explicit CPU production mode or family")
     if platform.system() != "Linux":
         p.error("Run through the Linux/WSL benchmark entry point")
     original = os.sched_getaffinity(0)

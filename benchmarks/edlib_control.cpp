@@ -3,7 +3,13 @@
 // Both controls use persistent C++ threads and the shipped native frame parser.
 #define BEND_EDLIB_CONTROL
 #include "../src/transport.c"
-#include "../vendor/edlib/edlib/src/edlib.cpp"
+#ifndef EDLIB_CONTROL_SOURCE
+#define EDLIB_CONTROL_SOURCE "../vendor/edlib/edlib/src/edlib.cpp"
+#endif
+#include EDLIB_CONTROL_SOURCE
+#ifdef EDLIB_CONTROL_WORD_BITS
+static_assert(sizeof(Word) * 8 == EDLIB_CONTROL_WORD_BITS, "unexpected diagnostic word width");
+#endif
 #include <array>
 #include <memory>
 #include <algorithm>
@@ -29,7 +35,7 @@ struct Query {
 };
 using Span = std::pair<const char *, int>;
 #ifdef CACHED_PROFILE
-// Internal NW diagnostic: retained U64 Peq/codebook; block scratch is allocated
+// Internal NW diagnostic: retained word-sized Peq/codebook; block scratch is allocated
 // inside myersCalcEditDistanceNW on EVERY call. Target mapping is thread-local.
 static void prepare_profile(Query &q) {
     bool used[256] = {};

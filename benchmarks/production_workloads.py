@@ -6,7 +6,8 @@ from alignment import AlignConfig, EqualityPair
 
 BOUNDARIES = (31, 32, 33, 63, 64, 65, 95, 96, 97, 127, 128, 129, 4097, 65536, 65537)
 FAMILIES = ("identical", "one", "two", "two-adjacent", "sparse", "indel", "dna-random", "bytes-random", "equalities",
-            "bytes-one", "bytes-two", "bytes-sparse")
+            "bytes-one", "bytes-two", "bytes-sparse", "rotation", "burst", "dense-prefix", "dense-suffix",
+            "dna-10pct", "dna-25pct", "dna-50pct")
 
 
 def substitute(sequence, positions, alphabet, rng):
@@ -46,6 +47,20 @@ def family(name, length, count, seed):
                 target = query
             elif name in ("dna-random", "bytes-random"):
                 target = bytes(rng.choices(alphabet, k=length))
+            elif name == "rotation":
+                shift = min(length - 1, 33 + 17 * (i + batch))
+                target = query[shift:] + query[:shift]
+            elif name == "burst":
+                # Dense local edits followed by a long equal suffix mislead
+                # policies based solely on an early failed narrow attempt.
+                target = substitute(query, range(min(length, 96 + i + batch)), alphabet, rng)
+            elif name in ("dense-prefix", "dense-suffix"):
+                n = max(1, length // 4)
+                changed = bytes(rng.choices(alphabet, k=n))
+                target = changed + query[n:] if name == "dense-prefix" else query[:-n] + changed
+            elif name.startswith("dna-") and name.endswith("pct"):
+                percent = int(name[4:-3])
+                target = substitute(query, rng.sample(range(length), max(1, length * percent // 100)), alphabet, rng)
             elif name == "indel":
                 target = (query[:p] + query[p + 1:] if (i + batch) % 2 else
                           query[:p] + bytes([rng.choice(alphabet)]) + query[p:])

@@ -235,7 +235,7 @@ def production_binaries(bend_tool, tmp_path_factory):
     directory = tmp_path_factory.mktemp("production-gate")
     cc = shlex.split(os.environ.get("CC", "clang-19"))
     from benchmarks.production_gate import build_references
-    refs, _ = build_references(directory / "references", shlex.split(os.environ.get("CXX", "g++")), "-O3")
+    refs, _ = build_references(directory / "references", shlex.split(os.environ.get("CXX", "g++")), "-O3", u32=True)
     api, _ = gates.build(ROOT, directory / "api", bend_tool, cc,
         ["-std=c2x", "-O3", "-pthread"], entry_name="benchmarks/production_api.bend")
     compatible, _ = gates.build(ROOT, directory / "compatible", bend_tool, cc,
@@ -277,13 +277,14 @@ def test_cached_profile_parity_and_optional_rejection(production_binaries, cpp_b
     from alignment import MaxDistance, EqualityPair
     _, compatible, refs = production_binaries
     with AlignmentWorker([cpp_binary, '--worker']) as oracle:
-        for name in ('public', 'cached'):
+        for name in ('public', 'cached', 'public-u32-diagnostic', 'cached-u32-diagnostic'):
             with ObservedWorker([refs[name], '2']) as control:
-                for n in (*range(1, 65), 95, 96, 97, 127, 128, 129, 257):
+                for n in (*range(65), 95, 96, 97, 127, 128, 129, 257):
                     query = bytes(range(256))[:n] if n <= 256 else bytes(range(256)) + b'A'
                     pairs = (EqualityPair(0, 255), EqualityPair(255, 127), EqualityPair(255, 0), EqualityPair(0, 255))
                     with control.prepare(query, pairs) as prepared:
-                        for k in (-1, 0, n, n + 1):
+                        optimum = oracle.align(query, query[::-1], AlignConfig(equalities=pairs)).edit_distance
+                        for k in sorted({-1, 0, max(0, optimum - 1), optimum, optimum + 1, n, n + 1}):
                             config = AlignConfig(equalities=pairs) if k < 0 else AlignConfig(threshold=MaxDistance(k), equalities=pairs)
                             targets = [query, b'', query[::-1], b'\x00\xff', query + b'A']
                             expected = [oracle.align(query, t, config) for t in targets]
@@ -299,6 +300,13 @@ def test_cached_profile_parity_and_optional_rejection(production_binaries, cpp_b
                 assert old.operations.count(2) == old.operations.count(5) == 2
                 assert any(c['operation'] == 6 and c['status'] == 1 for c in old.controls)
                 assert any(c['operation'] == 7 and c['status'] == 1 for c in old.controls)
+
+
+def test_u32_diagnostic_requires_production_boundary():
+    with pytest.raises(SystemExit):
+        gates.main(['--edlib-u32'])
+    with pytest.raises(SystemExit):
+        gates.main(['--edlib-u32', '--family', 'dna-random:129'], device=True)
 
 
 def test_owned_dispatch_limits_and_compatible_continuation(bend_binary, cpp_binary):

@@ -19,6 +19,7 @@ import ./src/SearchKernel.bend as K
 import ./src/Workspace.bend as W
 import ./src/Profile.bend as P
 import ./src/BitVector.bend as V
+import ./tests/dense_kernel.bend as Dense
 import Base
 import ./src/Myers.bend as Myers
 import ./src/DistanceDP.bend as DP
@@ -1761,3 +1762,130 @@ law workspace_empty_reset:
   for last: U32
   {W.initialize(W.Workspace{data, capacity, first, last}, 0n) ==
     W.Workspace{data, capacity, 0, 0} : W.Workspace}
+
+# Diagnostic full frontiers reset all logical words independently of the old
+# active interval; their state contract is distinct from a trimmed NW band.
+law dense_reset_owners:
+  for profile: P.Profile
+  for data: Array<V.Block>
+  for capacity: U32
+  for first: U32
+  for last: U32
+  for +length: Nat
+  {Dense.initialize(profile, W.Workspace{data, capacity, first, last}, length) ==
+    W.Updated{profile, W.reset(Word.blocks(length), 0,
+      W.Workspace{data, capacity, 0, U32.from_nat(Word.blocks(length))}), 0, V.Carry{1, 0}} : W.Updated}
+
+law dense_column_recurrence:
+  for h: Char
+  for target: String
+  for profile: P.Profile
+  for workspace: W.Workspace
+  for padding: Nat
+  for columns: Nat
+  for work: Nat
+  for old_score: U32
+  for old_carry: V.Carry
+  {Dense.string.scan(SCon{h, target}, padding, columns, work,
+    W.Updated{profile, workspace, old_score, old_carry}) ==
+    Dense.string.scan(target, padding, columns, work,
+      W.column(profile, workspace, Char.to_u32(h), V.Carry{1, 0})) : K.Run}
+
+law dense_final_padding:
+  for profile: P.Profile
+  for workspace: W.Workspace
+  for padding: Nat
+  for columns: Nat
+  for work: Nat
+  for score: U32
+  for carry: V.Carry
+  {Dense.string.scan("", padding, columns, work, W.Updated{profile, workspace, score, carry}) ==
+    K.finish(profile, workspace, 4294967295n, padding, work, columns, True{}) : K.Run}
+
+law dense_packed_owner:
+  for bytes: Array<U32>
+  for profile: P.Profile
+  for workspace: W.Workspace
+  for index: U32
+  for padding: Nat
+  for columns: Nat
+  for work: Nat
+  for maximum: Nat
+  for previous: Nat
+  for empty: Bool
+  {Dense.packed.scan(0n, index, padding, columns, work,
+    ByteK.ByteColumn{bytes, K.ColumnReady{profile, workspace, maximum, previous, empty}}) ==
+    ByteK.Run{bytes, K.finish(profile, workspace, 4294967295n, padding, work, columns, True{})} : ByteK.Run}
+
+law dense_threshold_inclusive:
+  for profile: P.Profile
+  for workspace: W.Workspace
+  for maximum: Nat
+  for +score: Nat
+  for blocks: Nat
+  for columns: Nat
+  for attempts: Nat
+  {Dense.filtered(E.MaxDistance{maximum}, K.Run{profile, workspace,
+    K.Stats{E.Found{score}, blocks, columns, attempts}}) ==
+    K.Run{profile, workspace, K.Stats{Bool.pick(E.EditDistance, Nat.is_le(score, maximum),
+      E.Found{score}, E.NotFound{}), blocks, columns, attempts}} : K.Run}
+
+law dense_rejection_owners:
+  for target: String
+  for profile: P.Profile
+  for workspace: W.Workspace
+  for length: Nat
+  for columns: Nat
+  for maximum: Nat
+  {Dense.finite(target, profile, workspace, length, columns, maximum, True{}) ==
+    K.Run{profile, workspace, K.Stats{E.NotFound{}, 0n, 0n, 0n}} : K.Run}
+
+law dense_fallback:
+  for target: String
+  for profile: P.Profile
+  for workspace: W.Workspace
+  for length: Nat
+  for columns: Nat
+  for threshold: E.Threshold
+  {Dense.choose(target, profile, workspace, length, columns, threshold, False{}) ==
+    K.search(target, profile, workspace, length, columns, threshold) : K.Run}
+
+law dense_empty_exception:
+  for target: String
+  for profile: P.Profile
+  for workspace: W.Workspace
+  for columns: Nat
+  for threshold: E.Threshold
+  {Dense.search(target, profile, workspace, 0n, columns, threshold) ==
+    K.Run{profile, workspace, K.Stats{E.Found{columns}, 0n, 0n, 0n}} : K.Run}
+
+law dense_guard_components:
+  for +a: Bool
+  for +b: Bool
+  for +room: Bool
+  {Bool.and(Bool.and(a, Bool.and(b, room)), room) == Bool.and(a, Bool.and(b, room)) : Bool}
+
+# Admitting the diagnostic always requires the Nat padded-score budget.
+# This check precedes every U32 conversion in the dense entry.
+law dense_arithmetic_guard:
+  for +length: Nat
+  for +columns: Nat
+  {Bool.and(Dense.budget(length, columns),
+    Nat.is_le(Nat.add(Nat.mul(Word.blocks(length), Word.width()), columns), 4294967294n)) ==
+    Dense.budget(length, columns) : Bool}
+
+law dense_unsupported_lengths:
+  for length: Nat
+  for columns: Nat
+  {Dense.supported_lengths(length, columns, False{}) == False{} : Bool}
+
+law dense_guard_left:
+  for +a: Bool
+  for +b: Bool
+  {Bool.and(Bool.and(a, b), a) == Bool.and(a, b) : Bool}
+
+law dense_work_guard:
+  for +length: Nat
+  for +columns: Nat
+  {Bool.and(Dense.budget(length, columns), Dense.work_room(length, columns)) ==
+    Dense.budget(length, columns) : Bool}

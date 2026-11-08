@@ -250,13 +250,29 @@ class Native:
         self.worker.close()
 
 
-def build_references(directory, cxx, optimization):
+def build_references(directory, cxx, optimization, *, u32=False):
     directory.mkdir(parents=True)
     binaries, metadata = {}, {}
     source = G.ROOT / "vendor/edlib/edlib"
-    for name, extra in (("public", []), ("cached", ["-DCACHED_PROFILE=1"])):
+    variants = [("public", []), ("cached", ["-DCACHED_PROFILE=1"])]
+    if u32:
+        # The pinned source derives masks, shifts, padding and cell decoding
+        # from sizeof(Word). Fail closed if its width definition changes.
+        original = (source / "src/edlib.cpp").read_text()
+        if original.count("typedef uint64_t Word;") != 1:
+            raise RuntimeError("Review pinned Edlib word geometry before building U32")
+        diagnostic = directory / "edlib_u32.cpp"
+        diagnostic.write_text(original.replace("typedef uint64_t Word;", "typedef uint32_t Word;"))
+        extra = [f'-DEDLIB_CONTROL_SOURCE="{diagnostic.resolve()}"']
+        variants += [("public-u32-diagnostic", extra),
+                     ("cached-u32-diagnostic", [*extra, "-DCACHED_PROFILE=1"])]
+        metadata["u32_source"] = {"path": str(diagnostic), "sha256": G.digest(diagnostic.read_bytes()),
+            "pinned_source_sha256": G.digest(original.encode()),
+            "audit": "Word unsigned; WORD_SIZE=sizeof(Word)*8; WORD_1 typed; HIGH_BIT_MASK shifts by WORD_SIZE-1; Peq construction, block shifts and getBlockCellValues use WORD_SIZE; no other hard-coded 64/63/32 constants in pinned source"}
+    for name, extra in variants:
         binary = directory / name
         argv = [*cxx, "-std=c++14", optimization, "-DNDEBUG", "-pthread", *extra,
+                f'-DEDLIB_CONTROL_WORD_BITS={32 if "u32" in name else 64}',
                 "-I", source / "include", G.ROOT / "benchmarks/edlib_control.cpp", "-o", binary]
         started = time.monotonic_ns()
         G.run_command(argv)
@@ -330,7 +346,8 @@ def run(args, document, suite, cpus, bend, cc, cxx, output):
     optimizations = {next((f for f in reversed(fs) if f.startswith("-O")), "-O0") for fs in flags.values()}
     if len(optimizations) != 1:
         raise ValueError("Production Bend/Edlib references require matched optimization levels")
-    refs, document["reference_builds"] = build_references(scratch / "edlib", cxx, optimizations.pop())
+    reference_options = {"u32": True} if args.edlib_u32 else {}
+    refs, document["reference_builds"] = build_references(scratch / "edlib", cxx, optimizations.pop(), **reference_options)
     kinds = set("api" if m in API_MODES else "core" if m in CORE_MODES else "worker" for m in modes)
     if "worker" in kinds:
         kinds.add("api")  # Untimed owner-count observation using identical public pool preparation.
@@ -401,7 +418,8 @@ def run(args, document, suite, cpus, bend, cc, cxx, output):
                                 "setup": session.setup, "execution": evidence, "samples": []}
                         reference_sessions = {}
                         if reference_supported(w) and mode not in ("phases", "prepared"):
-                            for name in (("public",) if mode.startswith("ordinary") else ("public", "cached")):
+                            for name in (n for n in refs if n != "oracle" and
+                                         (not mode.startswith("ordinary") or n.startswith("public"))):
                                 reference_mode = mode if mode.startswith("ordinary") else "compatible-worker-single" if mode.endswith("single") else "compatible-worker-batch"
                                 session = Service(refs[name], reference_mode, w, thread, shards, args.timeout, reference=True)
                                 stack.callback(session.close)
@@ -419,7 +437,9 @@ def run(args, document, suite, cpus, bend, cc, cxx, output):
                             "runtime_thread_evidence": "persistent C++ worker constructor argv; OS thread count and affinity sampled separately",
                             "owner_observation": "no retained query across ordinary requests" if mode.startswith("ordinary") else "one immutable retained C++ query/profile shared by persistent threads; cached mapping buffers are thread-local",
                             "first_alignment_ns": session.setup["first_alignment_ns"],
-                            "execution": {"actual_route": "public edlibAlign" if name == "public" else "internal U64 cached NW"}, "samples": []}
+                            "execution": {"actual_route": ("public edlibAlign" if name.startswith("public") else "internal cached NW"),
+                                          "word_bits": 32 if "u32" in name else 64,
+                                          "diagnostic": "u32" in name}, "samples": []}
                             for name, session in reference_sessions.items()}
                         for repetition in range(args.warmups + args.repeats):
                             order = list(G.ordered_variants(repetition))

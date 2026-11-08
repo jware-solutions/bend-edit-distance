@@ -1,6 +1,8 @@
 import ./Prepared.bend as Q
 import ./src/BitVector.bend as V
 import ./src/Workspace.bend as W
+import ./src/Word.bend as Word
+import ./tests/dense_kernel.bend as Dense
 import Base
 import ./LAWS.bend as Laws
 import ./src/DistanceDP.bend as DP
@@ -1605,3 +1607,76 @@ def Laws.nw_activation_reset(profile, workspace, index, previous, carry, row, ma
 
 def Laws.workspace_empty_reset(data, capacity, first, last):
   {==}
+
+def Laws.dense_reset_owners(profile, data, capacity, first, last, length):
+  {==}
+
+def Laws.dense_column_recurrence(h, target, profile, workspace, padding, columns, work, old_score, old_carry):
+  {==}
+
+def Laws.dense_final_padding(profile, workspace, padding, columns, work, score, carry):
+  {==}
+
+def Laws.dense_packed_owner(bytes, profile, workspace, index, padding, columns, work, maximum, previous, empty):
+  {==}
+
+def Laws.dense_threshold_inclusive(profile, workspace, maximum, score, blocks, columns, attempts):
+  {==}
+
+def Laws.dense_rejection_owners(target, profile, workspace, length, columns, maximum):
+  {==}
+
+def Laws.dense_fallback(target, profile, workspace, length, columns, threshold):
+  {==}
+
+def Laws.dense_empty_exception(target, profile, workspace, columns, threshold):
+  match columns threshold:
+    case 0n E.Unlimited{}:
+      {==}
+    case 0n E.MaxDistance{_}:
+      {==}
+    case 1n+p E.Unlimited{}:
+      {==}
+    case 1n+p E.MaxDistance{_}:
+      {==}
+
+def Laws.dense_guard_components(a, b, room):
+  match a b room:
+    case False{} False{} False{}:
+      {==}
+    case False{} False{} True{}:
+      {==}
+    case False{} True{} False{}:
+      {==}
+    case False{} True{} True{}:
+      {==}
+    case True{} False{} False{}:
+      {==}
+    case True{} False{} True{}:
+      {==}
+    case True{} True{} False{}:
+      {==}
+    case True{} True{} True{}:
+      {==}
+
+def Laws.dense_arithmetic_guard(length, columns):
+  Laws.dense_guard_components(Dense.work_room(length, columns), True{},
+    Nat.is_le(Nat.add(Nat.mul(Word.blocks(length), Word.width()), columns), 4294967294n))
+
+def Laws.dense_unsupported_lengths(length, columns):
+  {==}
+
+def Laws.dense_guard_left(a, b):
+  match a b:
+    case False{} False{}:
+      {==}
+    case False{} True{}:
+      {==}
+    case True{} False{}:
+      {==}
+    case True{} True{}:
+      {==}
+
+def Laws.dense_work_guard(length, columns):
+  Laws.dense_guard_left(Dense.work_room(length, columns),
+    Nat.is_le(Nat.add(Nat.mul(Word.blocks(length), Word.width()), columns), 4294967294n))

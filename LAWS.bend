@@ -1693,3 +1693,71 @@ law fast_decode_no_padding:
 
 law fast_decode_wraps:
   {V.decode_word(32n, 4294967295, 0, 0) == 4294967264 : U32}
+
+# An inactive attempt never reads the target or decodes a workspace word.
+law nw_empty_band_owners:
+  for target: String
+  for profile: P.Profile
+  for workspace: W.Workspace
+  for length: Nat
+  for columns: Nat
+  for padding: Nat
+  for column: Nat
+  for blocks: Nat
+  for maximum: Nat
+  for work: Nat
+  {K.nw(target, length, columns, padding, column, blocks,
+    K.ColumnReady{profile, workspace, maximum, work, True{}}) ==
+    K.Run{profile, workspace, K.Stats{E.NotFound{}, Nat.add(blocks, work), column, 1n}} : K.Run}
+
+law nw_incomplete_owners:
+  for profile: P.Profile
+  for workspace: W.Workspace
+  for maximum: Nat
+  for padding: Nat
+  for blocks: Nat
+  for columns: Nat
+  {K.finish(profile, workspace, maximum, padding, blocks, columns, False{}) ==
+    K.Run{profile, workspace, K.Stats{E.NotFound{}, blocks, columns, 1n}} : K.Run}
+
+# Skipping expansion performs no row selection or activation and charges no
+# extra block; reduction still trims the last end before the first end.
+law nw_skip_expansion:
+  for profile: P.Profile
+  for workspace: W.Workspace
+  for score: U32
+  for carry: V.Carry
+  for symbol: U32
+  for +maximum: Nat
+  for +length: Nat
+  for +columns: Nat
+  for +column: Nat
+  for +work: Nat
+  {K.expand(W.Updated{profile, workspace, score, carry}, symbol, maximum, length, columns, column, work, False{}) ==
+    K.reduce(profile, workspace, maximum, length, columns, column, work) : K.Step}
+
+law nw_activation_reset:
+  for profile: P.Profile
+  for workspace: W.Workspace
+  for +index: U32
+  for previous: U32
+  for carry: V.Carry
+  for row: U32
+  for maximum: Nat
+  for length: Nat
+  for columns: Nat
+  for column: Nat
+  for work: Nat
+  {K.expand.row(workspace, index, previous, carry, maximum, length, columns, column, work, (profile, row)) ==
+    K.expand.updated(maximum, length, columns, column, work,
+      W.update(profile, W.put(workspace, index, V.Block{Word.all_bits(), 0, previous}), row, index, carry)) : K.Step}
+
+# Inactive logical records survive an empty reset; physical rounding does not
+# authorize an extra logical block.
+law workspace_empty_reset:
+  for data: Array<V.Block>
+  for capacity: U32
+  for first: U32
+  for last: U32
+  {W.initialize(W.Workspace{data, capacity, first, last}, 0n) ==
+    W.Workspace{data, capacity, 0, 0} : W.Workspace}

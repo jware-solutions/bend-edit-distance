@@ -127,3 +127,52 @@ def test_owned_band_retries_do_not_accumulate_target_buffers(bend_binary):
             assert prepared.align_batch(values) == wanted
         assert resident(pooled.pid) <= baseline + 8 * 1024 * 1024
         assert pooled.retained_bytes == retained
+
+
+def test_forced_nat_and_production_attempts(band_probe, cpp_binary):
+    """Independent owners avoid using the shared String helper as the oracle."""
+    import itertools
+
+    rng = random.Random(9202)
+    tiny = [bytes(chars) for n in range(1, 4) for chars in itertools.product(b"\0\xff", repeat=n)]
+    cases = list(itertools.product(tiny, repeat=2))
+    for length in (*range(129, 161), 31, 32, 33, 63, 64, 65, 95, 96, 97,
+                   127, 128, 129, 4096, 65535, 65536, 65537):
+        query = bytes(rng.choices(b"ACN\0\x80\xff", k=length))
+        changed = bytearray(query)
+        for index in {0, min(32, length - 1), length // 2, length - 1}:
+            changed[index] ^= 0x7f
+        cases.extend((query, target) for target in (bytes(changed), query[1:] + b"Z", b"Z" + query, query[:-1]))
+    cases.extend((bytes(rng.choices(range(256), k=rng.randrange(1, 301))),
+                  bytes(rng.choices(range(256), k=rng.randrange(1, 301)))) for _ in range(80))
+    for query, target in cases:
+        optimum = (distance_dp(query, target, PAIRS) if max(len(query), len(target)) <= 300 else
+                   cpp_edlib_align(query, target, AlignConfig(equalities=PAIRS), binary=cpp_binary).edit_distance)
+        for maximum in sorted({0, max(0, optimum - 1), optimum, optimum + 1}):
+            done = subprocess.run([band_probe, *runtime_prefix(threads=1), "attempt"],
+                input=encode_request(query, target, AlignConfig(threshold=MaxDistance(maximum), equalities=PAIRS)),
+                capture_output=True, check=True, timeout=60)
+            values = [r.edit_distance for r in decode_batch(done.stdout, 18)]
+            assert not done.stderr
+            assert values[:4] == values[4:8] == values[9:13] == values[13:17], (len(query), len(target), maximum, values)
+            assert values[8] == values[17] == 1
+            assert values[0] == (optimum if optimum <= maximum else -1)
+
+
+def test_each_column_matches_nat_control_and_complete_workspace(band_probe):
+    rng = random.Random(2206)
+    pairs = (*PAIRS, *reversed(PAIRS), *PAIRS)
+    for length in (1, 31, 32, 33, 63, 64, 65, 95, 96, 97, 127, 128,
+                   *range(129, 161), 193, 257, 4096):
+        query = bytes(rng.choices(b"ACN\0\x80\xff", k=length))
+        targets = [query, b"Z" * length, query[7:] + b"\xff\0" * 9,
+                   b"Z" * 40 + query[:-3], query[::-1]]
+        if length <= 257:
+            targets.append(bytes(range(256)))
+        for target in targets:
+            for maximum in (0, 1, 2, 31, 32, 33, 63, 64, max(length, len(target))):
+                done = subprocess.run([band_probe, *runtime_prefix(threads=1), "transitions"],
+                    input=encode_request(query, target, AlignConfig(threshold=MaxDistance(maximum), equalities=pairs)),
+                    capture_output=True, check=True, timeout=60)
+                assert not done.stderr
+                assert decode_batch(done.stdout, 1)[0].edit_distance == 1, (length, len(target), maximum)

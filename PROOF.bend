@@ -1584,3 +1584,24 @@ def Laws.fast_decode_no_padding(positive, negative, score):
 
 def Laws.fast_decode_wraps():
   {==}
+
+def Laws.nw_empty_band_owners(target, profile, workspace, length, columns, padding, column, blocks, maximum, work):
+  match target workspace:
+    case SNil{} W.Workspace{_, _, _, _}:
+      {==}
+    case SCon{_, _} W.Workspace{_, _, _, _}:
+      {==}
+
+def Laws.nw_incomplete_owners(profile, workspace, maximum, padding, blocks, columns):
+  {==}
+
+def Laws.nw_skip_expansion(profile, workspace, score, carry, symbol, maximum, length, columns, column, work):
+  match workspace carry:
+    case W.Workspace{_, _, _, _} V.Carry{_, _}:
+      {==}
+
+def Laws.nw_activation_reset(profile, workspace, index, previous, carry, row, maximum, length, columns, column, work):
+  {==}
+
+def Laws.workspace_empty_reset(data, capacity, first, last):
+  {==}

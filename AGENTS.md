@@ -5,6 +5,8 @@
 - use `LAWS.bend` to keep important rules
 - run `bend PROOF.bend` before committing
 - parallelize the code whenever possible
+- before diagnosing NVIDIA CUDA failures as driver problems, check GPU visibility in the current execution environment (`nvidia-smi` and `/dev/nvidia*`); sandboxes may hide device access, so run GPU checks in a GPU-enabled environment
+- when CUDA headers or libraries are installed outside the default paths, set `CUDA_HOME` to the toolkit root for GPU builds
 
 ## Documentation and Generated Artifacts Policy
 

@@ -155,3 +155,54 @@ def test_cloned_profiles_have_independent_workspaces(bend_tool, bend_binary):
                 data = data[4 + size:]
             assert values == [ordinary.align(query, t, config) for t in (target, target[::-1])]
             assert result.stderr == b""
+
+
+@pytest.mark.parametrize("shards", [1, 2, 4])
+def test_profile_accounting_and_long_session_release(bend_binary, shards):
+    from tests.test_cpu_pools import worker as pooled_worker
+    query = b'A' * 65536
+    pairs = tuple(EqualityPair(a, a + 1) for a in range(128, 255))
+    shared = 16 * len(query) + 32 * len(pairs)
+    # The current profile admits all endpoints: 129 logical rows round to
+    # 256 allocated rows. Shared input is charged twice; every owner has its
+    # own lookup, masks, workspace and conservative wrapper allowance.
+    expected = 2 * shared + shards * (4096 + 1024 + 4 * 2048 * 256 + 16 * 2048)
+    with pooled_worker(bend_binary, 4, shards) as w:
+        charges, handles, resident = [], [], []
+        for i in range(40):
+            prepared = w.prepare(query, pairs)
+            charges.append(w.retained_bytes)
+            handles.append(prepared.handle)
+            assert prepared.align_batch([query, query[:-1] + b'T', query], timeout=60)[0].edit_distance == 0
+            assert prepared.release()
+            assert not prepared.release()
+            assert w.retained_bytes == w.retained_entries == 0
+            if i >= 10:
+                from benchmarks.production_gate import memory
+                resident.append(memory(w.pid)['rss_kib'])
+        assert charges == [expected] * len(charges)
+        assert handles == sorted(set(handles))
+        # Allow allocator slab retention; repeated lifetimes cannot accumulate
+        # another query/profile/pool on each cycle.
+        assert max(resident) - min(resident) < 16 * 1024
+
+
+def test_repeated_pairs_preserve_complete_reused_results(bend_binary, cpp_binary):
+    pairs = ((EqualityPair('A', 'N'), EqualityPair('N', 'C'), EqualityPair('N', 'A'),
+              EqualityPair('A', 'A')) * 16 + (EqualityPair(0, 255),) * 16)
+    query = b'A' * 129
+    targets = [b'N' * 129, b'C' * 129, query[:-1] + b'C', query[3:] + b'CCC', b'', query]
+    with worker(bend_binary, 4) as w, AlignmentWorker([cpp_binary, '--worker']) as oracle, \
+            w.prepare(query, pairs) as prepared:
+        charge = w.retained_bytes
+        for mode, task, format in itertools.product(Mode, Task, CigarFormat):
+            base = AlignConfig(mode, task, equalities=pairs, cigar_format=format)
+            for target in targets:
+                optimum = oracle.align(query, target, base).edit_distance
+                for threshold in (base.threshold, *(MaxDistance(k) for k in
+                                  sorted({max(0, optimum - 1), optimum, optimum + 1}))):
+                    config = replace(base, threshold=threshold)
+                    check(prepared.align(target, config), w.align(query, target, config),
+                          oracle.align(query, target, config), query, target, config)
+                assert w.retained_bytes == charge
+        assert prepared.align(query).edit_distance == 0

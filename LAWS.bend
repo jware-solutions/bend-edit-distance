@@ -1959,3 +1959,104 @@ law packed_witness_invalid_owner:
   for state: PB.Known
   for target: Packed.Target
   {PB.known.checked(state, Packed.Checked{target, False{}}) == (state, PB.error()) : PB.Known & E.AlignResult}
+
+# Preparation relevance is existence of a REAL literal/direct match. It is
+# deliberately independent of the production lookup and adjacency builders.
+def preparation_relevant(query: String, +symbol: Char, +pairs: List<&2, E.EqualityPair>) -> Bool:
+  match query:
+    case SNil{}:
+      False{}
+    case SCon{h, t}:
+      Bool.or(E.equal.scan(pairs, h, symbol), preparation_relevant(t, symbol, pairs))
+
+law preparation_pair_reversal:
+  for +first: Char
+  for +second: Char
+  for +a: Char
+  for +b: Char
+  {E.pair_matches(E.EqualityPair{first, second}, a, b) ==
+    E.pair_matches(E.EqualityPair{second, first}, a, b) : Bool}
+
+law preparation_duplicate_edge:
+  for +pair: E.EqualityPair
+  for +pairs: List<&2, E.EqualityPair>
+  for +a: Char
+  for +b: Char
+  {E.equal.scan(pair <> pair <> pairs, a, b) == E.equal.scan(pair <> pairs, a, b) : Bool}
+
+law preparation_duplicate_relevance:
+  for query: String
+  for +symbol: Char
+  for +pair: E.EqualityPair
+  for +pairs: List<&2, E.EqualityPair>
+  {preparation_relevant(query, symbol, pair <> pair <> pairs) ==
+    preparation_relevant(query, symbol, pair <> pairs) : Bool}
+
+law preparation_original_literals:
+  {(preparation_relevant("A", 'N', [E.EqualityPair{'A', 'N'}, E.EqualityPair{'N', 'C'}]),
+    preparation_relevant("A", 'C', [E.EqualityPair{'N', 'C'}, E.EqualityPair{'A', 'N'}]),
+    preparation_relevant("AN", 'C', [E.EqualityPair{'A', 'N'}, E.EqualityPair{'N', 'C'}]),
+    preparation_relevant("AC", 'N', [E.EqualityPair{'N', 'C'}, E.EqualityPair{'A', 'N'}])) ==
+    (True{}, False{}, True{}, True{}) : Bool & Bool & Bool & Bool}
+
+def preparation_mask.row(block: U32, result: P.Profile & U32) -> U32:
+  (profile, row) = result
+  Pair.snd(P.Profile, U32, P.mask(profile, row, block))
+
+def preparation_mask(profile: P.Profile, code: U32, block: U32) -> U32:
+  preparation_mask.row(block, P.row(profile, code))
+
+law preparation_nontransitive_masks:
+  {(preparation_mask(P.build("A", 1n, [E.EqualityPair{'A', 'N'}, E.EqualityPair{'N', 'C'}]), 78, 0),
+    preparation_mask(P.build("A", 1n, [E.EqualityPair{'N', 'C'}, E.EqualityPair{'A', 'N'}]), 67, 0),
+    preparation_mask(P.build("AN", 2n, [E.EqualityPair{'A', 'N'}, E.EqualityPair{'N', 'C'}]), 67, 0),
+    preparation_mask(P.build("AC", 2n, [E.EqualityPair{'N', 'C'}, E.EqualityPair{'A', 'N'}]), 78, 0)) ==
+    (4294967295, 4294967294, 4294967294, 4294967295) : U32 & U32 & U32 & U32}
+
+law preparation_real_mask_equivalence:
+  {(preparation_mask(P.build("ANAC", 4n,
+      [E.EqualityPair{'A', 'N'}, E.EqualityPair{'N', 'C'}, E.EqualityPair{'A', 'N'}, E.EqualityPair{'A', 'A'}]), 67, 0),
+    preparation_mask(P.build("ANAC", 4n,
+      [E.EqualityPair{'C', 'N'}, E.EqualityPair{'N', 'A'}]), 78, 0)) ==
+    (V.build_peq_word("ANAC", 'C', 1, [E.EqualityPair{'A', 'N'}, E.EqualityPair{'N', 'C'}]),
+     V.build_peq_word("ANAC", 'N', 1, [E.EqualityPair{'N', 'C'}, E.EqualityPair{'A', 'N'}])) : U32 & U32}
+
+law preparation_removed_padding_row:
+  {preparation_mask(P.build("A", 1n, [E.EqualityPair{'N', 'C'}]), 78, 0) ==
+    V.build_peq_word("A", 'N', 1, [E.EqualityPair{'N', 'C'}]) : U32}
+
+law preparation_logical_row_guard:
+  {Pair.snd(P.Profile, U32, P.mask(P.Profile{[0 : U32*256n], [4294967295 : U32*16n], 4, 3, 3, 1}, 3, 0)) == 0 : U32}
+
+law preparation_logical_block_guard:
+  {preparation_mask(P.build("ABC", 3n, Nil{}), 65, 1) == 0 : U32}
+
+law preparation_accounted_capacity:
+  {(Pair.snd(P.Profile, Nat, P.retained_bytes(P.build("A", 1n, Nil{}))),
+    Pair.snd(P.Profile, Nat, P.retained_bytes(P.build("A", 1n, [E.EqualityPair{'N', 'C'}]))),
+    Pair.snd(P.Profile, Nat, P.retained_bytes(P.build("ABC", 3n, Nil{}))),
+    Pair.snd(P.Profile, Nat, P.retained_bytes(P.build("ABCDE", 5n, Nil{})))) ==
+    (1032n, 1040n, 1040n, 1056n) : Nat & Nat & Nat & Nat}
+
+law preparation_bitmap_bounds:
+  {(U32.add(U32.shln(255, 3n), U32.shrn(255, 5n)),
+    U32.add(U32.shln(0, 3n), U32.shrn(255, 5n))) == (2047, 7) : U32 & U32}
+
+
+law preparation_duplicate_and_reflexive_masks:
+  {(preparation_mask(P.build("AAAA", 4n, List.replicate(E.EqualityPair, 16n, E.EqualityPair{'A', 'N'})), 78, 0),
+    preparation_mask(P.build("AAAA", 4n, List.replicate(E.EqualityPair, 16n, E.EqualityPair{'A', 'A'})), 65, 0),
+    preparation_mask(P.build("AAAA", 4n, List.replicate(E.EqualityPair, 16n, E.EqualityPair{'N', 'C'})), 78, 0)) ==
+    (4294967295, 4294967295, 4294967280) : U32 & U32 & U32}
+
+# Recovering shared and private charges cannot lower the admission budget.
+# These algebraic laws are independent of a pool's owner-count policy.
+law preparation_shared_charge_recovery:
+  for +shared: Nat
+  for +buffers: Nat
+  {Nat.sub(Nat.add(shared, buffers), buffers) == shared : Nat}
+
+law preparation_private_charge_recovery:
+  for +shared: Nat
+  for +buffers: Nat
+  {Nat.sub(Nat.add(shared, buffers), shared) == buffers : Nat}

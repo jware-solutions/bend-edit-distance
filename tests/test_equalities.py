@@ -148,3 +148,103 @@ def test_configured_profile_masks(myers_probe, threads, query, pairs):
 def test_profile_masks_for_all_bytes(myers_probe):
     output = execute([myers_probe, *runtime_prefix(threads=4), "masks-byte-pairs"]).stdout
     assert_masks(output, bytes(range(256)), [(0, 255), (127, 128), (128, 255)])
+
+
+def compact_input(binary, query, pairs):
+    import subprocess
+    from transport import encode_request
+    config = AlignConfig(equalities=tuple(EqualityPair(a, b) for a, b in pairs))
+    process = subprocess.run([binary, *runtime_prefix(threads=1), "compact-input"],
+                             input=encode_request(query, b"", config), capture_output=True, timeout=120)
+    assert process.returncode == 0, process.stderr
+    lines = [line for line in process.stdout.decode().splitlines() if line]
+    assert len(lines) >= 2
+    assert int(lines[0].split(",")[0]) == 2**32 - 1
+    metadata = tuple(map(int, lines[1].split(",")[1:]))
+    rows, stride, blocks, used, retained = metadata
+    literals = set(query)
+    relevant = literals | {b for a, b in pairs if a in literals} | {a for a, b in pairs if b in literals}
+    admitted = literals | {x for pair in pairs for x in pair}
+    assert len(relevant) <= rows <= len(admitted)
+    capacity = 1 << max(0, rows - 1).bit_length()
+    assert stride == 1 << max(0, blocks - 1).bit_length()
+    assert blocks == (len(query) + 31) // 32
+    assert used == len(query) % 32
+    assert retained == 1024 + max(8, 4 * stride * capacity)
+    relation = {(a, b) for a, b in pairs} | {(b, a) for a, b in pairs}
+    seen = set()
+    for line in lines[2:]:
+        tag, block, code, actual = line.split(",")
+        assert tag == "B"
+        block, code, actual = map(int, (block, code, actual))
+        assert (block, code) not in seen
+        seen.add((block, code))
+        word = query[block * 32:(block + 1) * 32]
+        expected = 0 if block >= blocks else sum(1 << i for i in range(32)
+            if i >= len(word) or word[i] == code or (word[i], code) in relation)
+        assert actual == expected, (block, code, actual, expected)
+    selected = range(blocks + 1) if blocks <= 129 else [*range(4), blocks - 2, blocks - 1, blocks]
+    assert seen == {(b, c) for b in selected for c in range(256)}
+    return metadata
+
+
+@pytest.mark.parametrize("length", [0, *range(1, 34), 63, 64, 65, 95, 96, 97, 127, 128, 129, 4095, 4096, 4097])
+def test_compact_binary_masks_and_clone(myers_probe, length):
+    query = (b"A\0\xffA" * ((length + 3) // 4))[:length]
+    pairs = [(65, 78), (78, 67), (0, 128), (128, 127), (255, 255), (65, 78), (78, 65), (9, 10)]
+    compact_input(myers_probe, query, pairs)
+
+
+@pytest.mark.parametrize("query", [b"A", b"AN", b"AC", b"ANC"])
+def test_direct_matching_uses_original_literals_in_every_pair_order(myers_probe, query):
+    import itertools
+    pairs = [(65, 78), (78, 67), (67, 71)]
+    outputs = [compact_input(myers_probe, query, list(order)) for order in itertools.permutations(pairs)]
+    assert all(value == outputs[0] for value in outputs)
+
+
+@pytest.mark.parametrize("alphabet", [1, 2, 3, 4, 5, 7, 8, 9, 15, 16, 17, 31, 32, 33, 63, 64, 65, 127, 128, 129, 255, 256])
+def test_compact_row_capacity_boundaries(myers_probe, alphabet):
+    query = bytes(range(alphabet)) * 2
+    compact_input(myers_probe, query, [(a, a) for a in range(alphabet)])
+
+
+@settings(max_examples=40, deadline=None, derandomize=True)
+@given(query=st.binary(max_size=160), pairs=st.lists(st.tuples(st.integers(0, 255), st.integers(0, 255)), max_size=35))
+def test_compact_masks_independent_predicate(myers_probe, query, pairs):
+    compact_input(myers_probe, query, pairs)
+    compact_input(myers_probe, query, pairs[::-1] + [(b, a) for a, b in pairs])
+
+
+@pytest.mark.parametrize("length", [65535, 65536, 65537, 1048576])
+def test_large_compact_profile_masks(myers_probe, length):
+    compact_input(myers_probe, b"A" * length, [(65, 78), (78, 67), (0, 255)])
+
+
+@pytest.mark.parametrize("pairs", [
+    [(a, b) for a in range(256) for b in range(a + 1, 256)],
+    [(65, 78), (78, 65)] * 32768,
+    [(65, 65)] * 65536,
+])
+def test_maximum_preparation_graphs(myers_probe, pairs):
+    compact_input(myers_probe, b"A\0\xffA" * 8 + b"A", pairs)
+
+
+def test_bounded_exhaustive_direct_graph_masks(myers_probe):
+    import itertools
+    edges = [(65, 66), (66, 67), (65, 67)]
+    queries = [bytes(q) for n in range(3) for q in itertools.product(b'ABC', repeat=n)]
+    for subset in range(8):
+        graph = [pair for bit, pair in enumerate(edges) if subset & (1 << bit)]
+        for query in queries:
+            compact_input(myers_probe, query, graph)
+            # Force bitmap admission with reversed duplicates and reflexive
+            # edges while the independent relation stays the same.
+            repeated = (graph + [(b, a) for a, b in graph] + [(65, 65)]) * 16
+            compact_input(myers_probe, query, repeated)
+
+
+def test_compact_guards_ignore_poisoned_physical_capacity(myers_probe):
+    output = execute([myers_probe, *runtime_prefix(threads=1), 'compact-guards']).stdout
+    rows = [tuple(map(int, line.split(','))) for line in output.splitlines() if line]
+    assert rows == [(3, 0, 0), (0, 3, 0), (0, 2, 2**32 - 1), (2**32 - 1, 2, 2**32 - 2)]

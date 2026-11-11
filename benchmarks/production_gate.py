@@ -19,7 +19,7 @@ from transport import AlignmentWorker, LENGTH, REQUEST, encode_request, sequence
 from benchmarks import gates as G
 from benchmarks.runner import summarize
 
-API_MODES = {"string-single", "string-batch", "string-serial-batch", "string-diagnostic", "search-diagnostic"}
+API_MODES = {"string-single", "string-batch", "string-serial-batch", "string-diagnostic", "search-diagnostic", "prepare-batch", "prepare-clone", "profile-only"}
 CORE_MODES = {"batch", "phases", "prepared", "ordinary-single"}
 DEFAULT_MODES = ("ordinary-single", "batch", "string-single", "string-batch", "string-serial-batch",
                  "ordinary-worker-single", "ordinary-worker-batch", "owned-worker-single",
@@ -132,6 +132,8 @@ def prepared_definition(w):
 
 
 def applicable(mode, w):
+    if mode == "profile-only" and w.jobs:
+        return "profile-only requires a nonempty query and no targets"
     if mode.endswith("single") and len(w.jobs) != 1:
         return "single API requires exactly one target"
     if mode == "prepared":
@@ -144,14 +146,17 @@ def applicable(mode, w):
             q, c = prepared_definition(w)
         except ValueError as error:
             return str(error)
+        if mode == "profile-only" and not q:
+            return "profile-only requires a nonempty query and no targets"
         if mode.startswith("owned") and (not q or len(q) > 65536 or c.mode != Mode.NW or c.task != Task.DISTANCE or c.threshold.to_edlib() >= 0):
             return "owned CPU contract requires nonempty query <=65536, unlimited NW DISTANCE"
     return None
 
 
 class Service:
-    def __init__(self, binary, mode, w, thread, shards, timeout, *, reference=False, observed=False):
+    def __init__(self, binary, mode, w, thread, shards, timeout, *, reference=False, observed=False, fresh=False):
         self.mode, self.timeout = mode, timeout
+        self.fresh = fresh and not mode.startswith("ordinary")
         self.query, self.config = prepared_definition(w) if not mode.startswith("ordinary") else (None, None)
         argv = [binary, str(thread)] if reference else [binary, *runtime_prefix(threads=thread, gpu="off"), "--worker", "--shards", str(shards)]
         cls = ObservedWorker if observed else AlignmentWorker
@@ -167,7 +172,7 @@ class Service:
             if mode.startswith("compatible") or reference:
                 self.worker._owned_supported = {6: False, 7: False}
             started = time.monotonic_ns()
-            if self.query is not None:
+            if self.query is not None and not self.fresh:
                 self.owner = self.worker.prepare(self.query, self.config.equalities, timeout=timeout)
             self.setup = {"prepare_pool_service_ns": time.monotonic_ns() - started if self.owner else 0,
                           "startup_control_ns": self.startup, "retained_budget_bytes": self.worker.retained_bytes,
@@ -186,6 +191,26 @@ class Service:
             return [self.worker.align(*jobs[0], timeout=self.timeout)] if self.mode.endswith("single") else self.worker.align_batch(jobs, timeout=self.timeout)
         targets = [j[1] for j in jobs]
         return [self.owner.align(targets[0], self.config, timeout=self.timeout)] if self.mode.endswith("single") else self.owner.align_batch(targets, self.config, timeout=self.timeout)
+
+    def begin_group(self):
+        if not self.fresh:
+            return self.setup.get("prepare_pool_service_ns", 0)
+        started = time.monotonic_ns()
+        self.owner = self.worker.prepare(self.query, self.config.equalities, timeout=self.timeout)
+        self.group_bytes = self.worker.retained_bytes
+        return time.monotonic_ns() - started
+
+    def end_group(self):
+        if not self.fresh:
+            return 0
+        if self.worker.retained_bytes != self.group_bytes:
+            raise RuntimeError("Prepared accounting changed during reuse")
+        started = time.monotonic_ns()
+        self.worker.release_prepared(self.owner, timeout=self.timeout)
+        elapsed = time.monotonic_ns() - started
+        if self.worker.retained_bytes or self.worker.retained_entries:
+            raise RuntimeError("Fresh lifecycle did not release every retained owner")
+        return elapsed
 
     def call(self, jobs):
         if not isinstance(self.worker, ObservedWorker):
@@ -245,7 +270,10 @@ class Native:
     def call(self, jobs):
         payload = b"".join(encode_request(b"", t, c) if self.mode in API_MODES else encode_request(q, t, c)
                            for q, t, c in jobs)
-        return self.worker.request(payload, len(jobs))
+        values, sample = self.worker.request(payload, len(jobs))
+        if self.mode in ("prepare-batch", "prepare-clone", "profile-only"):
+            self.setup["effective_owners"] = sample["effective_owners"]
+        return values, sample
 
     def close(self):
         self.worker.close()
@@ -311,8 +339,15 @@ def run(args, document, suite, cpus, bends, cc, cxx, output):
         "service": "Unmodified AlignmentWorker call: Python encoding, native framing/decode, production dispatch/results, serialization, transport, Python decoding; validation outside call_ns",
         "compatible": "Explicit compatibility control disables optional op selection in adapter, uses production BED2 2/5",
         "prepare_pool_service_ns": "Complete prepare service call; includes owner cloning (not separately attributable through public protocol)",
+        "prepared_group_budget_bytes": "Conservative cache charge while a fresh reuse group owns its query; retained_budget_bytes is sampled after release and must be zero",
         "prepare_ns": "Native lib.prepare only; clone_ns includes retained accounting and bounded pool construction",
+        "prepare-batch": "Fresh lib.prepare + retained accounting/bounded pool cloning + one production String pool batch + forced pool disposal per call; decoding before timing and serialization after disposal. profile_ns/prepare_ns/work_ns/search_ns name those four stages respectively",
         "total_with_prepare_ns": "Preparation + cloning + sum of R batch/single call costs; excludes startup, release and validation",
+        "fresh_prepared": "With --fresh-prepared, each service sample prepares a fresh production pool, executes R calls, then releases it. prepare_pool_service_ns includes framing/decode/native preparation/cloning; release_service_ns is separate. lifecycle_ns adds release. Native probes keep their stated boundary",
+        "profile-only": "Isolated production P.build, with byte eligibility established by framed inputs and cached length before timing. profile_ns is construction; search_ns is forced profile disposal. No workspace or pool. Raw query/equalities remain held between cycles",
+        "zero_result_latency": "Native zero-result requests complete at the metrics acknowledgement; nonzero requests complete at the last framed result, before decoding metrics",
+        "alignment_calls": "Per-call elapsed_ns at the stated boundary; first_call_in_group_ns and repeated_calls_ns split each reuse group. --fresh-prepared gives each service group a new owner",
+        "prepare-clone": "Additional attribution control: prepare-batch with an explicit Q.clone and disposal before pool construction; planning_ns/ordering_ns measure that clone/disposal. Exclude these extra operations from ordinary lifecycle comparisons",
         "call_ns": "Service: complete Python adapter call. Native probe: pre-encoded frame write to complete raw response, excluding Python encoding/decoding; native_api_ns is the separate forced API boundary",
         "public_edlib": "Public edlibAlign and edlibFreeAlignResult, raw query/equalities retained, persistent C++ workers; ordinary U64 implementation",
         "cached_edlib": "INTERNAL diagnostic: pinned U64 NW, retained compact alphabet/Peq, per-thread target mapping buffer; Edlib block scratch allocated per call; supports NW DISTANCE only, all bytes/equalities/thresholds/empty exceptions",
@@ -349,7 +384,7 @@ def run(args, document, suite, cpus, bends, cc, cxx, output):
         raise ValueError("Production Bend/Edlib references require matched optimization levels")
     reference_options = {"u32": True} if args.edlib_u32 else {}
     refs, document["reference_builds"] = build_references(scratch / "edlib", cxx, optimizations.pop(), **reference_options)
-    kinds = set("api" if m in API_MODES else "core" if m in CORE_MODES else "worker" for m in modes)
+    kinds = set("profile" if m == "profile-only" else "preparation" if m in ("prepare-batch", "prepare-clone") else "api" if m in API_MODES else "core" if m in CORE_MODES else "worker" for m in modes)
     if "worker" in kinds:
         kinds.add("api")  # Untimed owner-count observation using identical public pool preparation.
     if args.allocations:
@@ -358,7 +393,7 @@ def run(args, document, suite, cpus, bends, cc, cxx, output):
     for variant, root in (("baseline", args.baseline), ("candidate", args.candidate)):
         for kind in sorted(kinds):
             print(f"Building {variant} production {kind}...", flush=True)
-            entry = {"api": "benchmarks/production_api.bend", "core": "benchmarks/gate_probe.bend", "worker": "worker.bend", "diagnostic": "benchmarks/production_diagnostics.bend"}[kind]
+            entry = {"profile": "benchmarks/profile_preparation.bend", "preparation": "benchmarks/production_preparation.bend", "api": "benchmarks/production_api.bend", "core": "benchmarks/gate_probe.bend", "worker": "worker.bend", "diagnostic": "benchmarks/production_diagnostics.bend"}[kind]
             binary, meta = G.build(root.resolve(), scratch / variant / kind, bends[variant], cc, flags[variant],
                 entry_name=entry, allocations=kind == "diagnostic",
                 compiler_identity=document["provenance"]["bend_compilers"][variant])
@@ -376,7 +411,7 @@ def run(args, document, suite, cpus, bends, cc, cxx, output):
                 if reason:
                     document["inapplicable"].append({"workload": w.name, "mode": mode, "reason": reason})
                     continue
-                kind = "api" if mode in API_MODES else "core" if mode in CORE_MODES else "worker"
+                kind = "profile" if mode == "profile-only" else "preparation" if mode in ("prepare-batch", "prepare-clone") else "api" if mode in API_MODES else "core" if mode in CORE_MODES else "worker"
                 for thread in args.threads:
                     shards = args.shards or thread
                     rounds = (args.warmups + args.repeats) * w.reuse_count
@@ -396,7 +431,7 @@ def run(args, document, suite, cpus, bends, cc, cxx, output):
                                     evidence["codec_diagnostics"] = diagnostic.worker.codec_samples
                                 finally:
                                     diagnostic.close()
-                                session = Service(binary, mode, w, thread, shards, args.timeout)
+                                session = Service(binary, mode, w, thread, shards, args.timeout, fresh=args.fresh_prepared)
                             else:
                                 session = Native(binary, mode, w, thread, shards, args.timeout, rounds, launcher=launcher)
                             if kind == "worker" and not mode.startswith("ordinary"):
@@ -413,9 +448,9 @@ def run(args, document, suite, cpus, bends, cc, cxx, output):
                             records[variant] = {"workload": w.name, "variant": variant, "mode": mode,
                                 "lifetime": "persistent", "backend": "cpu", "threads": thread,
                                 "runtime_threads": thread, "runtime_thread_evidence": "explicit RTS argv, BENDRTS cleared; OS thread count and affinity sampled separately",
-                                "boundary": "native-probe-framed-round-trip" if kind in ("api", "core") else "python-service",
+                                "boundary": "native-probe-framed-round-trip" if kind in ("profile", "preparation", "api", "core") else "python-service",
                                 "requested_shards": shards, "effective_owners": session.setup.get("effective_owners"),
-                                "owner_observation": "separate identical public prepare_with_max pool observation; active execution leaves are not exposed" if kind == "worker" else "native pool metadata" if kind == "api" else "not applicable",
+                                "owner_observation": "separate identical public prepare_with_max pool observation; active execution leaves are not exposed" if kind == "worker" else "native pool metadata per cycle" if kind == "preparation" else "one isolated profile" if kind == "profile" else "native pool metadata" if kind == "api" else "not applicable",
                                 "batch_size": len(w.jobs), "batch_call_count": w.reuse_count,
                                 "total_target_count": len(w.jobs) * w.reuse_count, "affinity_cpus": cpus[:thread],
                                 "setup": session.setup, "execution": evidence, "samples": []}
@@ -451,7 +486,9 @@ def run(args, document, suite, cpus, bends, cc, cxx, output):
                             for position, variant in enumerate(order):
                                 session = sessions.get(variant) or reference_sessions[variant]
                                 total = native = serialization = validation = 0
-                                batch_ids, output_hashes = [], []
+                                stages = dict.fromkeys(G.PHASES, 0)
+                                group_prepare = session.begin_group() if isinstance(session, Service) else None
+                                batch_ids, output_hashes, call_times = [], [], []
                                 for call in range(w.reuse_count):
                                     index = (repetition * w.reuse_count + call) % len(batches)
                                     jobs = batches[index]
@@ -461,12 +498,15 @@ def run(args, document, suite, cpus, bends, cc, cxx, output):
                                         elapsed = sample["request_latency_ns"]
                                         native += sample["total_cost_ns"]
                                         serialization += sample["serialization_ns"]
+                                        for phase in stages:
+                                            stages[phase] += sample[phase]
                                     else:
                                         values = session.call(jobs)
                                         elapsed = time.monotonic_ns() - started
                                     if repetition == 0 and call == 0:
                                         (records.get(variant) or reference_records[variant]).setdefault("first_alignment_ns", elapsed)
                                     total += elapsed
+                                    call_times.append(elapsed)
                                     started = time.monotonic_ns()
                                     G.validate(values, expected[index], replace(w, jobs=jobs))
                                     validation += time.monotonic_ns() - started
@@ -474,14 +514,23 @@ def run(args, document, suite, cpus, bends, cc, cxx, output):
                                     output_hashes.append(G.digest(json.dumps([v.to_edlib() for v in values], sort_keys=True).encode()))
                                 record = records.get(variant) or reference_records[variant]
                                 setup = session.setup
-                                prepare = setup.get("prepare_pool_service_ns", setup.get("prepare_ns", 0) + setup.get("clone_ns", 0))
+                                prepare = group_prepare if group_prepare is not None else setup.get("prepare_ns", 0) + setup.get("clone_ns", 0)
+                                release = session.end_group() if isinstance(session, Service) else 0
                                 sample = {"repetition": repetition - args.warmups, "order": position,
                                     "batch_indices": batch_ids, "output_sha256": output_hashes,
                                     "call_ns": total, "validation_ns": validation,
+                                    "alignment_calls": [{"index": i, "elapsed_ns": n} for i, n in enumerate(call_times)],
+                                    "first_call_in_group_ns": call_times[0],
+                                    "repeated_calls_ns": sum(call_times[1:]),
                                     "total_with_prepare_ns": prepare + total}
+                                if isinstance(session, Service) and session.fresh:
+                                    sample.update(prepare_pool_service_ns=prepare, release_service_ns=release,
+                                                  lifecycle_ns=prepare + total + release,
+                                                  prepared_group_budget_bytes=session.group_bytes)
                                 if isinstance(session, Native):
                                     sample["native_api_ns"] = native
                                     sample["native_serialization_ns"] = serialization
+                                    sample.update(stages)
                                 else:
                                     sample.update(memory(session.worker.pid))
                                     sample["retained_budget_bytes"] = session.worker.retained_bytes
@@ -496,6 +545,7 @@ def run(args, document, suite, cpus, bends, cc, cxx, output):
                                     record["samples"].append(sample)
                         for variant, session in sessions.items():
                             if isinstance(session, Native):
+                                records[variant]["effective_owners"] = session.setup.get("effective_owners")
                                 session.worker.finish()
                                 records[variant]["process_usage"] = session.worker.exit_usage
                         for record in (*records.values(), *reference_records.values()):

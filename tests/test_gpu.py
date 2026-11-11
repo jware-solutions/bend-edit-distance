@@ -195,3 +195,29 @@ def test_long_gpu_alignments_match_edlib(gpu_device_probe, bend_binary, cpp_bina
         values, _ = measure(gpu_device_probe, jobs, device=True,
                             prefetch=prefetch, threads=4)
         assert values == expected
+
+
+@pytest.mark.gpu
+def test_direct_equality_masks_in_prepared_cuda_owners(gpu_session_probe, bend_binary):
+    from alignment import EqualityPair, Mode
+    from transport import AlignmentWorker
+    from benchmarks.session_runner import session_metrics
+    pairs = ((EqualityPair('A', 'N'), EqualityPair('N', 'C'), EqualityPair('N', 'A')) * 32 +
+             tuple(EqualityPair(a, a + 1) for a in range(128, 255)))
+    bangs = 0
+    with AlignmentWorker([gpu_session_probe, *runtime_prefix(threads=4, gpu='1GB'), '--worker']) as w, \
+            AlignmentWorker([bend_binary, *runtime_prefix(threads=4), '--worker']) as ref:
+        for length in (31, 33, 129, 4097):
+            query = b'A' * length
+            targets = [query, b'N' * length, b'C' * length, query[:-1] + b'C', b'\0\xff', query]
+            with w.prepare(query, pairs, timeout=120) as prepared:
+                charge = w.retained_bytes
+                for mode in Mode:
+                    config = AlignConfig(mode=mode, equalities=pairs)
+                    actual = prepared.align_batch(targets, config, timeout=120)
+                    assert actual == [ref.align(query, t, config, timeout=120) for t in targets]
+                    assert w.retained_bytes == charge
+                    bangs += 1
+            assert w.retained_bytes == w.retained_entries == 0
+    assert w.process.returncode == 0, w._diagnostics
+    session_metrics(w._diagnostics, bangs)  # Requires positive synchronized completion.

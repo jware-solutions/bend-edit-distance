@@ -9,7 +9,12 @@ CERTIFICATE_FAMILIES = ("two-begin", "two-boundary", "two-middle", "two-end", "t
                         "three-early", "three-middle", "three-late", "three-tail", "short-shift")
 
 BOUNDARIES = (31, 32, 33, 63, 64, 65, 95, 96, 97, 127, 128, 129, 4097, 65536, 65537)
-FAMILIES = ("identical", "bytes-identical", "one", "two", "two-adjacent", "sparse", "indel", "dna-random", "bytes-random", "equalities",
+PREPARATION_FAMILIES = ("prep-one", "prep-small", "prep-dna", "prep-bytes", "prep-irrelevant",
+                        "prep-sparse", "prep-star", "prep-chain", "prep-duplicates",
+                        "prep-reflexive", "prep-dense", "prep-max-pairs", "prep-byte-duplicates",
+                        "prep-unique-15", "prep-unique-16", "prep-unique-17")
+
+FAMILIES = (*PREPARATION_FAMILIES, "identical", "bytes-identical", "one", "two", "two-adjacent", "sparse", "indel", "dna-random", "bytes-random", "equalities",
             "bytes-one", "bytes-two", "bytes-sparse", "rotation", "burst", "dense-prefix", "dense-suffix",
             "dna-10pct", "dna-25pct", "dna-50pct", *CERTIFICATE_FAMILIES)
 
@@ -30,6 +35,8 @@ def family(name, length, count, seed):
     """
     if name not in FAMILIES or length < 1 or count < 0:
         raise ValueError("Invalid production family")
+    if name in PREPARATION_FAMILIES:
+        return preparation_family(name, length, count, seed)
     rng = random.Random(seed)
     byte_alphabet = name.startswith("bytes-")
     if byte_alphabet and name != "bytes-random":
@@ -98,4 +105,46 @@ def family(name, length, count, seed):
                     target = target.replace(b"A", b"N")
             targets.append(target)
         batches.append(tuple((query, t, config) for t in targets))
+    return query, config, tuple(batches)
+
+
+def preparation_family(name, length, count, seed):
+    """Literal alphabets and DIRECT graphs; retained pair order is intentional."""
+    rng = random.Random(seed)
+    alphabet = {"prep-one": b"A", "prep-small": b"AB", "prep-dna": b"ACGT",
+                "prep-bytes": bytes(range(256)), "prep-sparse": b"ACGT",
+                "prep-dense": bytes(range(256)), "prep-byte-duplicates": bytes(range(256))}.get(name, b"A")
+    # Cycle first so even short all-byte cases have a known literal alphabet.
+    query = (alphabet * ((length + len(alphabet) - 1) // len(alphabet)))[:length]
+    graph = {
+        "prep-irrelevant": [(a, b) for a in range(128, 256) for b in range(a + 1, 256)],
+        "prep-sparse": [(65, 78), (78, 67), (0, 255)],
+        "prep-star": [(65, b) for b in range(256) if b != 65],
+        "prep-chain": list(zip(range(256), range(1, 256))),
+        "prep-duplicates": [(65, 78), (78, 65)] * 2048,
+        "prep-reflexive": [(65, 65)] * 4096,
+        "prep-dense": [(a, b) for a in range(256) for b in range(a + 1, 256)],
+        "prep-max-pairs": [(65, 78), (78, 65)] * 32768,
+        "prep-byte-duplicates": [(65, 78), (78, 65)] * 2048,
+        **{f"prep-unique-{n}": [(65, b) for b in range(n)] for n in (15, 16, 17)},
+    }.get(name, [])
+    pairs = tuple(EqualityPair(a, b) for a, b in graph)
+    config = AlignConfig(equalities=pairs)
+    batches = []
+    for batch in range(3):
+        jobs = []
+        for i in range(count):
+            # Choose a byte that cannot directly match at this literal position.
+            p = (rng.randrange(length) + i + batch) % length
+            literal = query[p]
+            neighbors = {literal} | {b for a, b in graph if a == literal} | {a for a, b in graph if b == literal}
+            missing = [c for c in range(256) if c not in neighbors]
+            target = bytearray(query)
+            if missing:
+                target[p] = missing[(i + batch) % len(missing)]
+            else:
+                # Universal direct star/dense rows have no substitution mismatch.
+                target.append((i + batch) % 256)
+            jobs.append((query, bytes(target), config))
+        batches.append(tuple(jobs))
     return query, config, tuple(batches)

@@ -76,8 +76,39 @@ def test_paired_gate_enforces_regressions_and_missing_repetitions():
 def test_allocator_instrumentation_fails_on_unknown_runtime():
     with pytest.raises(RuntimeError, match="allocator changed"):
         gates.allocation_source("changed runtime")
-    source = gates.allocation_source(gates.ALLOC_ANCHOR + "\n}")
+    fixture = gates.ALLOC_ANCHOR + "\n    return h;\n  return heap_alloc_miss(e, cls);\n}\n" + gates.FREE_ANCHOR + "\n}"
+    source = gates.allocation_source(fixture)
     assert "atomic_fetch_add_explicit" in source
+    assert "atomic_fetch_sub_explicit" in source
+    assert "8ull << cls" in source
+    assert "atomic_compare_exchange_weak_explicit" in source
+    assert "gate_record_event(h, cls, 1)" in source
+    with pytest.raises(RuntimeError, match="allocator changed"):
+        gates.allocation_source(fixture.replace("    return h;", "    return other;"))
+
+
+def test_scratch_trace_tracks_lifetimes_before_retained_allocation(tmp_path):
+    import os
+    import shlex
+    source = tmp_path / 'trace.c'
+    binary = tmp_path / 'trace'
+    source.write_text('#include <stdint.h>\n#include <stdbool.h>\n#include <stdatomic.h>\n'
+        '#include <stdlib.h>\n#define GATE_SCRATCH_TRACE 1\n' + gates.allocation_trace_source() + '''
+int main(void) {
+  gate_trace_reset();
+  gate_record_event(300, 2, 0); /* Storage predating this construction. */
+  gate_record_event(100, 10, 1);
+  gate_record_event(200, 10, 1);
+  gate_record_event(100, 10, 0);
+  gate_record_event(200, 10, 0);
+  gate_record_event(100, 14, 1); /* Reused address, retained at boundary. */
+  gate_trace_stop();
+  return !(gate_scratch_peak == 16384 && gate_temporary_bytes == 16384
+    && gate_retained_bytes == 131072);
+}
+''')
+    gates.run_command([*shlex.split(os.environ.get('CC', 'clang-19')), '-std=c2x', source, '-o', binary])
+    gates.run_command([binary])
 
 
 def test_cuda_evidence_rejects_fallback():
@@ -204,8 +235,8 @@ def test_missing_required_metrics_and_coverage_fail_closed():
 
 
 def test_production_families_dna_and_batch_identities():
-    from benchmarks.production_workloads import family, FAMILIES
-    for name in FAMILIES:
+    from benchmarks.production_workloads import family, FAMILIES, PREPARATION_FAMILIES
+    for name in set(FAMILIES) - set(PREPARATION_FAMILIES):
         q, config, batches = family(name, 129, 8, 42)
         assert (q, config, batches) == family(name, 129, 8, 42)
         assert len(batches) == 3
@@ -416,7 +447,8 @@ def test_configuration_option_and_empty_metric_rejection():
         gates.paired_gate(pair, 1.1)
 
 
-def test_production_cli_end_to_end(production_binaries, bend_binary, tmp_path, monkeypatch):
+@pytest.mark.parametrize('fresh', [False, True])
+def test_production_cli_end_to_end(production_binaries, bend_binary, tmp_path, monkeypatch, fresh):
     from benchmarks import production_gate
     import shutil
     api, _, refs = production_binaries
@@ -439,7 +471,8 @@ def test_production_cli_end_to_end(production_binaries, bend_binary, tmp_path, m
     code = gates.main(['--mode', 'owned-worker-batch', '--mode', 'ordinary-worker-batch', '--mode', 'string-batch',
         '--family', 'one:129', '--batch-sizes', '0', '1', '--reuse-counts', '1', '--threads', '1',
         '--baseline-bend', str(compilers['baseline']), '--candidate-bend', str(compilers['candidate']),
-        '--warmups', '1', '--repeats', '2', '--max-regression', '100000', '--output', str(output)])
+        '--warmups', '1', '--repeats', '2', '--max-regression', '100000', '--output', str(output),
+        *(['--fresh-prepared'] if fresh else [])])
     assert code == 0
     document = json.loads((output / 'results.json').read_text())
     assert document['status'] == 'passed' and len(document['coverage']) == 6
@@ -460,7 +493,12 @@ def test_production_cli_end_to_end(production_binaries, bend_binary, tmp_path, m
         if record['batch_size'] == 0:
             assert all('amortized_per_target_ns' not in s for s in record['samples'])
         if record['mode'].endswith('worker-batch') and not record['mode'].startswith('ordinary'):
-            assert record['setup']['after_release_retained_budget_bytes'] == 0
+            if fresh:
+                assert all(s['prepared_group_budget_bytes'] > 0 and s['retained_budget_bytes'] == 0
+                    and s['lifecycle_ns'] == s['total_with_prepare_ns'] + s['release_service_ns']
+                    for s in record['samples'])
+            else:
+                assert record['setup']['after_release_retained_budget_bytes'] == 0
     assert (output / 'summary.csv').exists()
     assert not (output / 'REPORT.md').exists()
     assert not (output / 'summary.md').exists()
@@ -535,3 +573,140 @@ def test_certificate_placements_have_distinct_batches_and_independent_distances(
                 third = max(scan.index(p) for p in mismatches)
                 assert third == {"three-early": 2, "three-middle": 96, "three-late": 128, "three-tail": 128}[name]
                 assert 2 <= optimum <= 3
+
+
+def test_preparation_families_are_direct_and_reproducible():
+    from benchmarks.production_workloads import PREPARATION_FAMILIES, family
+    for name in PREPARATION_FAMILIES:
+        a = family(name, 257, 3, 932)
+        assert a == family(name, 257, 3, 932)
+        query, config, batches = a
+        assert len(batches) == 3 and all(len(b) == 3 for b in batches)
+        assert len(config.equalities) <= 65536
+        for batch in batches:
+            for q, target, c in batch:
+                assert q == query and c == config and target != q
+    query, config, _ = family("prep-irrelevant", 4096, 1, 1)
+    assert set(query) == {65}
+    assert all(p.first not in set(query) and p.second not in set(query) for p in config.equalities)
+
+
+def test_fresh_preparation_cycle_boundaries(production_binaries, cpp_binary, bend_tool):
+    from benchmarks.production_gate import Native
+    from benchmarks.production_workloads import family
+    from transport import AlignmentWorker
+    api, _, _ = production_binaries
+    q, config, batches = family("prep-sparse", 129, 4, 133)
+    w = gates.Workload("prepare", batches[0], batches=batches, prepared_query=(q, config))
+    from benchmarks import gates as G
+    binary, _ = G.build(ROOT, api.parent.parent / "preparation", bend_tool,
+        [str(ROOT / "scripts/cc")], ["-std=c2x", "-O3", "-pthread"], entry_name="benchmarks/production_preparation.bend")
+    session = Native(binary, "prepare-batch", w, 2, 2, 60, 3)
+    try:
+        with AlignmentWorker([cpp_binary, '--worker']) as oracle:
+            for jobs in batches:
+                actual, metrics = session.call(jobs)
+                gates.validate(actual, [oracle.align(*job) for job in jobs], replace(w, jobs=jobs))
+                assert all(metrics[k] > 0 for k in ('profile_ns', 'prepare_ns', 'work_ns', 'search_ns'))
+                assert metrics['effective_owners'] == 2
+        session.worker.finish()
+    finally:
+        session.close()
+
+
+def test_fresh_service_reuse_groups_release_and_readmit(bend_binary, cpp_binary):
+    from benchmarks.production_gate import Service
+    from transport import AlignmentWorker
+    query = b"AN" * 65
+    from alignment import EqualityPair
+    config = AlignConfig(equalities=(EqualityPair('A', 'N'), EqualityPair('N', 'C')))
+    w = gates.Workload("lifecycle", ((query, query, config),))
+    session = Service(bend_binary, "owned-worker-single", w, 1, 1, 60, fresh=True)
+    handles = []
+    try:
+        with AlignmentWorker([cpp_binary, '--worker']) as oracle:
+            for targets in ((query, query[1:] + b'T'), (b'T' * len(query), query)):
+                assert session.begin_group() > 0
+                handles.append(session.owner.handle)
+                assert session.worker.retained_entries == 1
+                for target in targets:
+                    jobs = ((query, target, config),)
+                    assert session.call(jobs) == [oracle.align(*jobs[0])]
+                assert session.end_group() > 0
+                assert session.worker.retained_bytes == session.worker.retained_entries == 0
+        assert handles[1] > handles[0]
+    finally:
+        session.close()
+
+
+def test_preparation_live_allocation_rounding(bend_tool, cpp_binary, tmp_path):
+    from benchmarks.production_gate import Native
+    from benchmarks.production_workloads import family
+    binary, _ = gates.build(ROOT, tmp_path / 'memory', bend_tool,
+        [str(ROOT / 'scripts/cc')], ['-std=c2x', '-O3', '-pthread'],
+        entry_name='benchmarks/production_preparation.bend', allocations=True)
+    q, config, batches = family('prep-irrelevant', 257, 0, 17)
+    w = gates.Workload('memory', (), prepared_query=(q, config))
+    session = Native(binary, 'prepare-batch', w, 1, 4, 60, 3)
+    try:
+        live = []
+        for _ in range(3):
+            actual, metrics = session.call(())
+            assert actual == []
+            assert metrics['request_latency_ns'] >= metrics['total_cost_ns']
+            assert metrics['heap_phase3_peak_bytes'] >= metrics['heap_phase3_live_bytes']
+            assert metrics['heap_phase7_live_bytes'] > metrics['heap_phase3_live_bytes']
+            assert metrics['heap_allocated_bytes'] >= metrics['heap_peak_bytes'] - metrics['heap_live_start_bytes']
+            live.append(metrics['heap_live_end_bytes'])
+        assert max(live) - min(live) < 4096
+        session.worker.finish()
+    finally:
+        session.close()
+
+
+def test_isolated_production_profile_boundary(bend_tool, tmp_path):
+    from benchmarks.production_gate import Native, applicable
+    from benchmarks.production_workloads import family
+    binary, meta = gates.build(ROOT, tmp_path / 'profile', bend_tool,
+        [str(ROOT / 'scripts/cc')], ['-std=c2x', '-O3', '-pthread'],
+        entry_name='benchmarks/profile_preparation.bend')
+    q, config, _ = family('prep-irrelevant', 257, 0, 1)
+    w = gates.Workload('profile', (), prepared_query=(q, config))
+    assert applicable('profile-only', w) is None
+    assert applicable('profile-only', replace(w, jobs=((q, q, config),)))
+    assert applicable('profile-only', replace(w, prepared_query=(b'', config)))
+    session = Native(binary, 'profile-only', w, 1, 4, 60, 2)
+    try:
+        for _ in range(2):
+            actual, metrics = session.call(())
+            assert actual == []
+            assert metrics['effective_owners'] == 1
+            assert metrics['profile_ns'] > 0 and metrics['search_ns'] > 0
+            assert metrics['prepare_ns'] == metrics['work_ns'] == 0
+            assert metrics['request_latency_ns'] >= metrics['total_cost_ns']
+        session.worker.finish()
+    finally:
+        session.close()
+
+
+def test_profile_scratch_trace_releases_temporary_adjacency(bend_tool, tmp_path):
+    from benchmarks.production_gate import Native
+    from benchmarks.production_workloads import family
+    binary, _ = gates.build(ROOT, tmp_path / 'trace', bend_tool,
+        [str(ROOT / 'scripts/cc')], ['-std=c2x', '-O3', '-pthread', '-DGATE_SCRATCH_TRACE=1'],
+        entry_name='benchmarks/profile_preparation.bend', allocations=True)
+    query, config, _ = family('prep-irrelevant', 257, 0, 7)
+    workload = gates.Workload('trace', (), prepared_query=(query, config))
+    session = Native(binary, 'profile-only', workload, 1, 1, 60, 2)
+    try:
+        for _ in range(2):
+            _, metrics = session.call(())
+            # 16,256 directed list nodes alone require at least 260,096
+            # rounded bytes. They are temporary even when freed before masks.
+            assert metrics['heap_scratch_peak_bytes'] >= 16256 * 16
+            assert metrics['heap_temporary_allocated_bytes'] >= metrics['heap_scratch_peak_bytes']
+            assert metrics['heap_retained_new_bytes'] >= 1024 + 256 * 16 * 4
+            assert metrics['heap_trace_events'] > 2 * 16256
+        session.worker.finish()
+    finally:
+        session.close()

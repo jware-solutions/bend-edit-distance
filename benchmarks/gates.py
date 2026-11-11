@@ -32,6 +32,7 @@ PHASES = ("planning_ns", "work_ns", "ordering_ns", "profile_ns", "search_ns",
 READY = b"BEND_GATE_READY "
 METRICS = b"BEND_GATE_METRICS "
 ALLOC_ANCHOR = "INLINE u64 heap_alloc(Env e, u32 cls) {"
+FREE_ANCHOR = "INLINE void heap_free(Env e, u32 cls, u64 loc) {"
 
 
 def digest(data):
@@ -323,6 +324,9 @@ class Worker:
             if count:
                 sample["amortized_total_ns"] = sample["total_cost_ns"] / count
                 sample["search_per_query_ns"] = sample["search_ns"] / count
+        if metrics and count == 0:
+            # With no result frame, the metrics line is the completion ack.
+            sample["request_latency_ns"] = time.monotonic_ns() - started
         return [decode_response(frame) for frame in values], sample
 
     def finish(self):
@@ -433,7 +437,7 @@ def snapshot(root, destination):
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(path, target)
         hashes[str(relative)] = digest(target.read_bytes())
-    for name in ("gate_probe.bend", "gate_input.bend", "gate_metrics.bend", "gate_metrics.c", "production_api.bend", "production_diagnostics.bend", "compatible_worker.bend"):
+    for name in ("gate_probe.bend", "gate_input.bend", "gate_metrics.bend", "gate_metrics.c", "production_api.bend", "production_diagnostics.bend", "production_preparation.bend", "profile_preparation.bend", "compatible_worker.bend"):
         target = destination / "benchmarks" / name
         target.parent.mkdir(exist_ok=True)
         shutil.copyfile(ROOT / "benchmarks" / name, target)
@@ -441,12 +445,98 @@ def snapshot(root, destination):
     return hashes
 
 
+def allocation_trace_source():
+    # Trace binaries measure rounded temporary heap lifetimes. Their malloc
+    # bookkeeping perturbs timing/RSS; use separate non-trace diagnostics there.
+    return r'''
+#ifdef GATE_SCRATCH_TRACE
+#define GATE_TRACE_CAP 4000000ull
+struct GateEvent { uint64_t loc; uint32_t cls, kind; };
+static struct GateEvent *gate_events;
+static _Atomic uint64_t gate_event_count;
+static _Atomic bool gate_tracing;
+static uint64_t gate_scratch_peak, gate_temporary_bytes, gate_retained_bytes;
+static void gate_record_event(uint64_t loc, uint32_t cls, uint32_t kind) {
+  if (!atomic_load_explicit(&gate_tracing, memory_order_relaxed)) return;
+  uint64_t i = atomic_fetch_add_explicit(&gate_event_count, 1, memory_order_relaxed);
+  if (i >= GATE_TRACE_CAP) abort();
+  gate_events[i] = (struct GateEvent){loc, cls, kind};
+}
+static void gate_trace_reset(void) {
+  if (!gate_events) gate_events = malloc(GATE_TRACE_CAP * sizeof(*gate_events));
+  if (!gate_events) abort();
+  gate_scratch_peak = gate_temporary_bytes = gate_retained_bytes = 0;
+  atomic_store(&gate_event_count, 0);
+  atomic_store(&gate_tracing, true);
+}
+static void gate_trace_stop(void) {
+  atomic_store(&gate_tracing, false);
+  uint64_t n = atomic_load(&gate_event_count), cap = 1;
+  while (cap < 2 * n + 1) cap <<= 1;
+  struct GateSlot { uint64_t loc, active; };
+  struct GateSlot *slots = calloc(cap, sizeof(*slots));
+  if (!slots) abort();
+  for (uint64_t i = 0; i < n; ++i) {
+    struct GateEvent *event = &gate_events[i];
+    if (!event->loc || event->cls >= 61) abort();
+    uint64_t k = (event->loc * 11400714819323198485ull) & (cap - 1);
+    while (slots[k].loc && slots[k].loc != event->loc) k = (k + 1) & (cap - 1);
+    if (event->kind == 1) {
+      if (slots[k].active) abort();
+      slots[k].loc = event->loc; slots[k].active = i + 1;
+    } else if (slots[k].active) {
+      struct GateEvent *allocation = &gate_events[slots[k].active - 1];
+      // Fail closed on partial-region frees: this trace must match complete
+      // native allocation lifetimes, not silently guess about split arrays.
+      if (allocation->cls != event->cls) abort();
+      allocation->kind = 2; event->kind = 3; slots[k].active = 0;
+    }
+  }
+  uint64_t live = 0;
+  for (uint64_t i = 0; i < n; ++i) {
+    struct GateEvent event = gate_events[i];
+    uint64_t bytes = 8ull << event.cls;
+    if (event.kind == 1) gate_retained_bytes += bytes;
+    if (event.kind == 2) {
+      live += bytes; gate_temporary_bytes += bytes;
+      if (live > gate_scratch_peak) gate_scratch_peak = live;
+    }
+    if (event.kind == 3) {
+      if (bytes > live) abort();
+      live -= bytes;
+    }
+  }
+  if (live) abort();
+  free(slots);
+}
+#else
+#define gate_record_event(loc, cls, kind) ((void)0)
+#endif
+'''
+
+
 def allocation_source(source):
-    if source.count(ALLOC_ANCHOR) != 1:
+    if source.count(ALLOC_ANCHOR) != 1 or source.count(FREE_ANCHOR) != 1:
         raise RuntimeError("Pinned allocator changed; review allocation instrumentation")
+    start, end = source.index(ALLOC_ANCHOR), source.index(FREE_ANCHOR)
+    body = source[start:end]
+    if body.count("    return h;") != 1 or body.count("  return heap_alloc_miss(e, cls);") != 1:
+        raise RuntimeError("Pinned allocator changed; review allocation instrumentation")
+    body = body.replace("    return h;", "    gate_record_event(h, cls, 1);\n    return h;")
+    body = body.replace("  return heap_alloc_miss(e, cls);",
+        "  u64 result = heap_alloc_miss(e, cls);\n  gate_record_event(result, cls, 1);\n  return result;")
+    source = source[:start] + body + source[end:]
     return source.replace(ALLOC_ANCHOR,
-        "static _Atomic uint64_t gate_allocations;\n" + ALLOC_ANCHOR +
-        "\n  atomic_fetch_add_explicit(&gate_allocations, 1, memory_order_relaxed);")
+        allocation_trace_source() +
+        "static _Atomic uint64_t gate_allocations, gate_allocated_bytes, gate_live_bytes, gate_peak_bytes;\n" + ALLOC_ANCHOR +
+        "\n  atomic_fetch_add_explicit(&gate_allocations, 1, memory_order_relaxed);"
+        "\n  uint64_t bytes = 8ull << cls;"
+        "\n  atomic_fetch_add_explicit(&gate_allocated_bytes, bytes, memory_order_relaxed);"
+        "\n  uint64_t live = atomic_fetch_add_explicit(&gate_live_bytes, bytes, memory_order_relaxed) + bytes;"
+        "\n  uint64_t peak = atomic_load_explicit(&gate_peak_bytes, memory_order_relaxed);"
+        "\n  while (live > peak && !atomic_compare_exchange_weak_explicit(&gate_peak_bytes, &peak, live, memory_order_relaxed, memory_order_relaxed)) {}"
+    ).replace(FREE_ANCHOR, FREE_ANCHOR +
+        "\n  gate_record_event(loc, cls, 0);\n  atomic_fetch_sub_explicit(&gate_live_bytes, 8ull << cls, memory_order_relaxed);")
 
 
 def build(root, directory, bend, cc, flags, *, device=False, allocations=False,
@@ -607,7 +697,7 @@ def parser(device):
     p.add_argument("--baseline", type=Path, default=ROOT, help="Baseline source checkout (default: current checkout)")
     p.add_argument("--candidate", type=Path, default=ROOT, help="Candidate source checkout (default: current checkout)")
     p.add_argument("--mode", action="append", choices=("batch", "phases", "prepared", "ordinary-single",
-        "string-single", "string-batch", "string-serial-batch", "ordinary-worker-single", "ordinary-worker-batch",
+        "string-single", "string-batch", "string-serial-batch", "prepare-batch", "prepare-clone", "profile-only", "ordinary-worker-single", "ordinary-worker-batch",
         "owned-worker-single", "owned-worker-batch", "compatible-worker-single", "compatible-worker-batch"),
         help="Select gate execution boundary; repeatable. Default retains legacy controls")
     p.add_argument("--family", action="append", help="Seeded production family NAME:LENGTH; repeatable")
@@ -634,11 +724,13 @@ def parser(device):
     p.add_argument("--noise-floor-ns", type=int, default=50000,
                    help="Additive tolerance for paired timing noise (default: 50 microseconds)")
     p.add_argument("--gate-metric", action="append", choices=(*PHASES, "startup_ns", "total_cost_ns", "persistent_worker_latency_ns", "end_to_end_ns",
-        "call_ns", "native_api_ns", "native_serialization_ns", "total_with_prepare_ns", "amortized_per_target_ns", "validation_ns"))
+        "call_ns", "native_api_ns", "native_serialization_ns", "total_with_prepare_ns", "amortized_per_target_ns", "validation_ns",
+        "prepare_pool_service_ns", "release_service_ns", "lifecycle_ns", "first_call_in_group_ns", "repeated_calls_ns"))
     p.add_argument("--cflags", default="-std=c2x -O3 -pthread", help="Identical C options for baseline and candidate")
     p.add_argument("--baseline-cflags", help="Override C options for the baseline build")
     p.add_argument("--candidate-cflags", help="Override C options for the candidate build")
     p.add_argument("--allocations", action="store_true", help="Separate untimed CPU allocation diagnostics")
+    p.add_argument("--fresh-prepared", action="store_true", help="Prepare and release each service reuse group; report preparation and release separately")
     p.add_argument("--edlib-u32", action="store_true", help="Add separately labeled temporary U32 Edlib diagnostics (production gate only)")
     if device:
         p.add_argument("--heap", default="1GB")

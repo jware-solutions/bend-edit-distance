@@ -1736,3 +1736,96 @@ def Laws.packed_witness_invalid_owner(state, target):
       {==}
     case PB.Known{_, _, _, _, _} Packed.Target{_, 1n+p}:
       {==}
+
+def preparation_or_commutes(+a: Bool, +b: Bool) -> {Bool.or(a, b) == Bool.or(b, a) : Bool}:
+  match a b:
+    case True{} True{}:
+      {==}
+    case True{} False{}:
+      {==}
+    case False{} True{}:
+      {==}
+    case False{} False{}:
+      {==}
+
+def Laws.preparation_pair_reversal(first, second, a, b):
+  preparation_or_commutes(Bool.and(Char.is_eq(a, first), Char.is_eq(b, second)),
+    Bool.and(Char.is_eq(a, second), Char.is_eq(b, first)))
+
+def preparation_or_duplicate(+a: Bool, +b: Bool) -> {Bool.or(a, Bool.or(a, b)) == Bool.or(a, b) : Bool}:
+  match a:
+    case True{}:
+      {==}
+    case False{}:
+      {==}
+
+def Laws.preparation_duplicate_edge(pair, pairs, a, b):
+  preparation_or_duplicate(E.pair_matches(pair, a, b), E.equal.scan(pairs, a, b))
+
+def Laws.preparation_duplicate_relevance(query, symbol, pair, pairs):
+  match query:
+    case SNil{}:
+      {==}
+    case SCon{+h, +t}:
+      %Laws.preparation_duplicate_edge(pair, pairs, h, symbol) :
+        {Bool.or(E.equal.scan(pair <> pair <> pairs, h, symbol), Laws.preparation_relevant(t, symbol, pair <> pair <> pairs)) ==
+         Bool.or(_, Laws.preparation_relevant(t, symbol, pair <> pairs)) : Bool}
+      %Laws.preparation_duplicate_relevance(t, symbol, pair, pairs) :
+        {Bool.or(E.equal.scan(pair <> pair <> pairs, h, symbol), Laws.preparation_relevant(t, symbol, pair <> pair <> pairs)) ==
+         Bool.or(E.equal.scan(pair <> pair <> pairs, h, symbol), _) : Bool}
+      {==}
+
+
+def Laws.preparation_original_literals():
+  {==}
+
+def Laws.preparation_nontransitive_masks():
+  {==}
+
+def Laws.preparation_real_mask_equivalence():
+  {==}
+
+def Laws.preparation_removed_padding_row():
+  {==}
+
+def Laws.preparation_logical_row_guard():
+  {==}
+
+def Laws.preparation_logical_block_guard():
+  {==}
+
+def Laws.preparation_accounted_capacity():
+  {==}
+
+def Laws.preparation_bitmap_bounds():
+  {==}
+
+def Laws.preparation_duplicate_and_reflexive_masks():
+  {==}
+
+def preparation_sub_zero(value: Nat) -> {Nat.sub(value, 0n) == value : Nat}:
+  match value:
+    case 0n:
+      {==}
+    case 1n+p:
+      {==}
+
+def Laws.preparation_private_charge_recovery(shared, buffers):
+  match shared:
+    case 0n:
+      preparation_sub_zero(buffers)
+    case 1n+p:
+      Laws.preparation_private_charge_recovery(p, buffers)
+
+def Laws.preparation_shared_charge_recovery(shared, buffers):
+  match buffers:
+    case 0n:
+      %add_zero_right(shared) : {Nat.sub(Nat.add(shared, 0n), 0n) == _ : Nat}
+      preparation_sub_zero(Nat.add(shared, 0n))
+    case 1n+p:
+      Equal.trans(Nat,
+        Nat.sub(Nat.add(shared, 1n+p), 1n+p),
+        Nat.sub(1n+Nat.add(shared, p), 1n+p), shared,
+        Equal.cong(Nat, Nat, n => Nat.sub(n, 1n+p),
+          Nat.add(shared, 1n+p), 1n+Nat.add(shared, p), add_successor(shared, p)),
+        Laws.preparation_shared_charge_recovery(shared, p))

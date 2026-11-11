@@ -15,3 +15,7 @@ def finish() -> IO(Unit):
 
 def owners(-A: Type, value: A, count: U32) -> IO(A):
   import "./gate_metrics.c"
+
+# Force disposal inside the measured interval, including recursive drops.
+def dispose(-A: Type, phase: U32, value: A) -> IO(Unit):
+  import "./gate_metrics.c"

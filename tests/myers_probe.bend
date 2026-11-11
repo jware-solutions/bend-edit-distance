@@ -4,6 +4,7 @@ import Base
 import ../src/Myers.bend as M
 import ../EdlibTypes.bend as E
 import ../src/Cli.bend as AC
+import ../src/Transport.bend as T
 
 # Test-only observability. All masks, transitions and decoded cells come from
 # production defs; Python compares them with a scalar DP column, not a second
@@ -252,8 +253,85 @@ def decoded(padding: Maybe<&2, U32>, pv: Maybe<&2, U32>, mv: Maybe<&2, U32>, sco
     case _ _ _ _:
       IO.die(Unit, 2, "Invalid decoder values")
 
+# BED1 input admits NUL, arbitrary bytes and the maximum transport pair list.
+# Mutating an explicit clone before dumping the source detects shared buffers.
+def binary_mask.value(+block: U32, +code: U32, result: P.Profile & U32) -> P.Profile & String:
+  (profile, bits) = result
+  (profile, "B," ++ U32.show(block) ++ "," ++ U32.show(code) ++ "," ++ U32.show(bits) ++ "\n")
+
+def binary_mask.row(+block: U32, code: U32, result: P.Profile & U32) -> P.Profile & String:
+  (profile, row) = result
+  binary_mask.value(block, code, P.mask(profile, row, block))
+
+def binary_masks(fuel: Nat, +block: U32, +code: U32, result: P.Profile & String) -> P.Profile & String:
+  match fuel result:
+    case 0n _:
+      result
+    case 1n+p Tuple{profile, text}:
+      compact_masks.join(text, binary_masks(p, block, U32.inc(code), binary_mask.row(block, code, P.row(profile, code))))
+
+def binary_blocks(fuel: Nat, +count: Nat, +block: U32, result: P.Profile & String) -> P.Profile & String:
+  match fuel result:
+    case 0n _:
+      result
+    case 1n+p Tuple{profile, text}:
+      compact_masks.join(text, binary_blocks(p, count, U32.inc(block),
+        binary_masks(Bool.pick(Nat, Bool.or(Nat.is_le(count, 129n),
+          Bool.or(U32.is_lt(block, 4), U32.is_ge(block, U32.from_nat(Nat.sub(count, 2n))))), 256n, 0n), block, 0, (profile, ""))))
+
+def binary_dump(result: P.Profile & Nat) -> String:
+  (profile, retained) = result
+  P.Profile{lookup, masks, +stride, +rows, +blocks, +used} = profile
+  "P," ++ U32.show(rows) ++ "," ++ U32.show(stride) ++ "," ++ U32.show(blocks) ++ "," ++
+    U32.show(used) ++ "," ++ Nat.show(retained) ++ "\n" ++
+    Pair.snd(P.Profile, String, binary_blocks(U32.to_nat(U32.inc(blocks)), U32.to_nat(blocks), 0,
+      (P.Profile{lookup, masks, stride, rows, blocks, used}, "")))
+
+def binary_clone_written(result: P.Profile & U32) -> String:
+  (profile, row) = result
+  U32.show(row) ++ "," ++ U32.show(Pair.snd(P.Profile, U32, P.mask(profile, 0, 0)))
+
+def binary_cloned(result: P.Profile & P.Profile) -> IO(Unit):
+  (original, other) = result
+  P.Profile{lookup, masks, stride, rows, blocks, used} = other
+  do IO<Unit>:
+    # Force clone writes before reading the original; a dropped expression could
+    # otherwise be eliminated by the compiler.
+    IO.print(binary_clone_written(P.row(P.Profile{lookup[65] <- 4294967295,
+      masks[0] <- 4294967295, stride, rows, blocks, used}, 65)))
+    IO.print(binary_dump(P.retained_bytes(original)))
+
+def binary_job(job: E.AlignJob) -> IO(Unit):
+  E.AlignJob{+query, _, E.AlignConfig{_, _, _, +pairs, _}} = job
+  binary_cloned(P.clone(P.build(query, String.length(query), pairs)))
+
+def binary_input() -> IO(Unit):
+  do IO<Unit>:
+    request : T.Request <- T.read_request()
+    job : E.AlignJob <- T.job(request)
+    binary_job(job)
+
+# Poison physical spare cells so logical guards cannot pass merely because
+# fresh unused capacity happened to contain zero.
+def guards.value(+row: U32, +block: U32, text: String, result: P.Profile & U32) -> P.Profile & String:
+  (profile, mask) = result
+  (profile, text ++ U32.show(row) ++ "," ++ U32.show(block) ++ "," ++ U32.show(mask) ++ "\n")
+
+def guards.step(+row: U32, +block: U32, result: P.Profile & String) -> P.Profile & String:
+  (profile, text) = result
+  guards.value(row, block, text, P.mask(profile, row, block))
+
+def guards() -> String:
+  Pair.snd(P.Profile, String, guards.step(4294967295, 2,
+    guards.step(0, 2, guards.step(0, 3, guards.step(3, 0,
+      (P.Profile{[0 : U32*256n], [4294967295 : U32*16n], 4, 3, 3, 1}, ""))))))
+
 def run(args: List<String>) -> IO(Unit):
   match args:
+    case _ <> "compact-guards" <> Nil{}:
+      IO.print(guards())
+    case _ <> "compact-input" <> Nil{}:
+      binary_input()
     case _ <> "decode" <> pad <> positive <> negative <> bottom <> Nil{}:
       decoded(U32.read(pad), U32.read(positive), U32.read(negative), U32.read(bottom))
     case _ <> "compact" <> +query <> Nil{}:

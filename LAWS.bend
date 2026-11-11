@@ -2060,3 +2060,58 @@ law preparation_private_charge_recovery:
   for +shared: Nat
   for +buffers: Nat
   {Nat.sub(Nat.add(shared, buffers), shared) == buffers : Nat}
+
+# Worker pools retain at most four independent owners. Every idle owner
+# rejoins the active prefix in its original order after execution.
+def cpu_owner_rejoin(parts: List<Q.Prepared> & List<Q.Prepared>) -> List<Q.Prepared>:
+  (active, idle) = parts
+  List.append(&1, Q.Prepared, active, idle)
+
+law cpu_owner_split_restores:
+  for a: Q.Prepared
+  for b: Q.Prepared
+  for c: Q.Prepared
+  for d: Q.Prepared
+  {cpu_owner_rejoin(PP.owners.split(2n, [a, b, c, d])) == [a, b, c, d] : List<Q.Prepared>}
+
+law cpu_owner_split_idle:
+  for a: Q.Prepared
+  for b: Q.Prepared
+  for c: Q.Prepared
+  for d: Q.Prepared
+  {PP.owners.split(1n, [a, b, c, d]) == ([a], [b, c, d]) : List<Q.Prepared> & List<Q.Prepared>}
+
+law cpu_owner_split_empty:
+  {PP.owners.split(4n, Nil{}) == (Nil{}, Nil{}) : List<Q.Prepared> & List<Q.Prepared>}
+
+law cpu_target_split_coverage:
+  for +count: Nat
+  for +jobs: List<&2, PP.Target>
+  {List.append(&2, PP.Target, List.take(&2, PP.Target, jobs, count), List.drop(&2, PP.Target, jobs, count)) == jobs : List<&2, PP.Target>}
+
+# Contiguous planning preserves the original sequence even for uneven splits.
+def cpu_targets_rejoin(parts: List<&2, PP.Target> & List<&2, PP.Target>) -> List<&2, PP.Target>:
+  (left, right) = parts
+  List.append(&2, PP.Target, left, right)
+
+law cpu_contiguous_order:
+  for count: Nat
+  for jobs: List<&2, PP.Target>
+  {cpu_targets_rejoin(PP.split_jobs(jobs, count, True{})) == jobs : List<&2, PP.Target>}
+
+# Exact cutoffs are parallel; immediately lower attainable work is serial.
+# Different block counts require different column totals at the same cutoff.
+law cpu_owned_cutoff_96:
+  {(PBP.active_owners(4n, 2n, 21825n, 96n), PBP.active_owners(4n, 2n, 21826n, 96n)) == (1n, 2n) : Nat & Nat}
+
+law cpu_owned_cutoff_97:
+  {(PBP.active_owners(4n, 2n, 8177n, 97n), PBP.active_owners(4n, 2n, 8178n, 97n)) == (1n, 2n) : Nat & Nat}
+
+law cpu_owned_cutoff_128:
+  {(PBP.active_owners(4n, 2n, 8177n, 128n), PBP.active_owners(4n, 2n, 8178n, 128n)) == (1n, 2n) : Nat & Nat}
+
+law cpu_owned_cutoff_129:
+  {(PBP.active_owners(4n, 3n, 13090n, 129n), PBP.active_owners(4n, 3n, 13091n, 129n)) == (1n, 3n) : Nat & Nat}
+
+law cpu_owned_empty_and_singleton:
+  {(PBP.active_owners(4n, 0n, 0n, 129n), PBP.active_owners(4n, 1n, 65537n, 129n)) == (1n, 1n) : Nat & Nat}

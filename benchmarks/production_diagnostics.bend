@@ -3,6 +3,8 @@ import ../lib.bend as L
 import ../Prepared.bend as Q
 import ../EdlibTypes.bend as E
 import ../src/PreparedPool.bend as P
+import ../src/PreparedBytePool.bend as BP
+import ../src/ByteTarget.bend as Own
 import ../src/Transport.bend as BT
 import ../src/SearchKernel.bend as K
 import ../src/Alignment.bend as A
@@ -12,6 +14,77 @@ import ./gate_input.bend as Input
 
 # Intrusive composition of the SAME production pool primitives. This binary is
 # compiled separately with allocation counters; it never supplies API samples.
+type Counted is Type:
+  Counted{plan: P.Plan, leaves: Nat}
+
+def counted.join(a: Counted, b: Counted) -> Counted:
+  Counted{left, n} = a
+  Counted{right, m} = b
+  Counted{P.Fork{left, right}, Nat.add(n, m)}
+
+def counted(plan: P.Plan) -> Counted:
+  match plan:
+    case P.Leaf{owner, values}:
+      Counted{P.Leaf{owner, values}, 1n}
+    case P.Fork{left, right}:
+      counted.join(counted(left), counted(right))
+
+def observed(idle: List<Q.Prepared>, shards: Nat, length: Nat, budget: Nat, ordered: Bool,
+             value: Counted) -> IO(P.PoolReady):
+  Counted{plan, +leaves} = value
+  T.leaves(P.PoolReady, P.PoolReady{plan, idle, shards, length, budget, ordered}, U32.from_nat(leaves))
+
+def observe(ready: P.PoolReady) -> IO(P.PoolReady):
+  P.PoolReady{plan, idle, shards, length, budget, ordered} = ready
+  observed(idle, shards, length, budget, ordered, counted(plan))
+
+type ByteCounted is Type:
+  ByteCounted{plan: BP.Plan, leaves: Nat}
+
+def byte_counted.join(a: ByteCounted, b: ByteCounted) -> ByteCounted:
+  ByteCounted{left, n} = a
+  ByteCounted{right, m} = b
+  ByteCounted{BP.Fork{left, right}, Nat.add(n, m)}
+
+def byte_counted(plan: BP.Plan) -> ByteCounted:
+  match plan:
+    case BP.Leaf{owner, values}:
+      ByteCounted{BP.Leaf{owner, values}, 1n}
+    case BP.Fork{left, right}:
+      byte_counted.join(byte_counted(left), byte_counted(right))
+
+def byte_observe(value: ByteCounted) -> IO(BP.Plan):
+  ByteCounted{plan, leaves} = value
+  T.leaves(BP.Plan, plan, U32.from_nat(leaves))
+
+def byte_execute(shards: Nat, length: Nat, budget: Nat, +active: Nat, batch: Own.Batch,
+                 parts: List<Q.Prepared> & List<Q.Prepared>) -> IO(P.Pool & List<&2, E.AlignResult>):
+  Own.Batch{values, count, units, uniform} = batch
+  (owners, idle) = parts
+  do IO<P.Pool & List<&2, E.AlignResult>>:
+    plan : BP.Plan <- T.mark(BP.Plan, 0,
+      BP.branch(active, owners, active, values, count, units, U32.is_ne(uniform, 0)))
+    observed : BP.Plan <- byte_observe(byte_counted(plan))
+    done : BP.ByteDone <- T.mark(BP.ByteDone, 1, BP.execute(observed))
+    T.mark(P.Pool & List<&2, E.AlignResult>, 2, BP.finish(idle, shards, length, budget, done))
+
+def byte_ready(pool: P.Pool, batch: Own.Batch) -> IO(P.Pool & List<&2, E.AlignResult>):
+  P.Pool{owners, +shards, +length, budget} = pool
+  Own.Batch{values, +count, +units, uniform} = batch
+  do IO<P.Pool & List<&2, E.AlignResult>>:
+    +active : Nat <- T.mark(Nat, 8, BP.active_owners(shards, count, units, length))
+    byte_execute(shards, length, budget, active, Own.Batch{values, count, units, uniform}, P.owners.split(active, owners))
+
+def byte_request(pool: P.Pool, request: BT.Request) -> IO(P.Pool & List<&2, E.AlignResult>):
+  match request:
+    case BT.OwnedPreparedBatchRequest{_, batch}:
+      do IO<P.Pool & List<&2, E.AlignResult>>:
+        T.reset()
+        byte_ready(pool, batch)
+    case _:
+      IO.die(P.Pool & List<&2, E.AlignResult>, 2, "Expected an owned diagnostic batch")
+
+
 def targets(jobs: List<&2, E.AlignJob>) -> List<&2, String>:
   match jobs:
     case Nil{}:
@@ -33,6 +106,17 @@ def written(result: P.Pool & List<&2, E.AlignResult>) -> IO(P.Pool):
     T.finish()
     return owner
 
+def byte_rounds(fuel: Nat, pool: P.Pool) -> IO(Unit):
+  match fuel:
+    case 0n:
+      IO.pure(Unit, Unit{})
+    case 1n+p:
+      do IO<Unit>:
+        request : BT.Request <- BT.read_owned_request()
+        result : P.Pool & List<&2, E.AlignResult> <- byte_request(pool, request)
+        next : P.Pool <- written(result)
+        byte_rounds(p, next)
+
 def rounds(fuel: Nat, +count: Nat, +options: Q.Options, pool: P.Pool) -> IO(Unit):
   match fuel:
     case 0n:
@@ -42,7 +126,8 @@ def rounds(fuel: Nat, +count: Nat, +options: Q.Options, pool: P.Pool) -> IO(Unit
         jobs : List<&2, E.AlignJob> <- Input.read(count)
         T.reset()
         ready : P.PoolReady <- T.mark(P.PoolReady, 0, P.ready(pool, targets(jobs), options))
-        result : P.Pool & List<&2, E.AlignResult> <- execute(ready, options)
+        measured : P.PoolReady <- observe(ready)
+        result : P.Pool & List<&2, E.AlignResult> <- execute(measured, options)
         next : P.Pool <- written(result)
         rounds(p, count, options, next)
 
@@ -122,6 +207,12 @@ def search_rounds(fuel: Nat, +count: Nat, owner: Q.Prepared) -> IO(Unit):
 
 def prepared(mode: String, count: Nat, repeat: Nat, shards: Nat, options: Q.Options, owner: Q.Prepared) -> IO(Unit):
   match mode:
+    case "owned-diagnostic":
+      do IO<Unit>:
+        pool : P.Pool <- T.mark(P.Pool, 7, P.prepared(shards, Q.retained_bytes(owner)))
+        saved : P.Pool <- inspect(pool)
+        T.finish()
+        byte_rounds(repeat, saved)
     case "search-diagnostic":
       do IO<Unit>:
         saved : Q.Prepared <- T.owners(Q.Prepared, owner, 1)

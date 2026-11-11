@@ -5,7 +5,8 @@ from __future__ import annotations
 import argparse
 from contextlib import contextmanager, ExitStack
 import csv
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from functools import lru_cache
 import hashlib
 import json
 import math
@@ -62,10 +63,19 @@ class Workload:
     reuse_count: int = 1
     prepared_query: tuple | None = None
     seed: int | None = None
+    replica: int = 0
 
     @property
     def payload(self):
         return b"".join(encode_request(*job) for job in self.jobs)
+
+
+def replicate_sessions(suite, count):
+    """Repeat identical inputs in independent process lifetimes, not calls."""
+    if not 1 <= count <= 16:
+        raise ValueError("Session replicas must be between 1 and 16")
+    return suite if count == 1 else [replace(w, name=f"{w.name}/replica{i}", replica=i)
+                                    for w in suite for i in range(count)]
 
 
 def workloads(corpus, sizes, reuse_counts):
@@ -183,7 +193,7 @@ def validate(values, expected, workload, *, exact=False):
         validate_path(job, actual)
         validate_path(job, oracle)
         if max(len(sequence_bytes(job[0])), len(sequence_bytes(job[1]))) <= 64:
-            if actual.edit_distance != dp_distance(*job):
+            if actual.edit_distance != validation_distance(*job):
                 raise RuntimeError(f"Independent DP distance mismatch: {workload.name}, job {i}")
         if exact and actual != oracle:
             raise RuntimeError(f"Complete baseline/candidate result mismatch: {workload.name}, job {i}")
@@ -208,6 +218,20 @@ def dp_distance(query, target, config):
     optimum = previous[-1] if config.mode == Mode.NW else min(previous)
     limit = config.threshold.to_edlib()
     return optimum if limit < 0 or optimum <= limit else -1
+
+
+@lru_cache(maxsize=2048)
+def cached_validation_distance(query, target, config):
+    return dp_distance(query, target, config)
+
+
+def validation_distance(query, target, config):
+    # Cache ONLY independent oracle answers, never candidate results. Keep
+    # keys bounded in both count and size; validation remains outside timing.
+    q, t = sequence_bytes(query), sequence_bytes(target)
+    if max(len(q), len(t)) <= 64 and len(config.equalities) <= 64:
+        return cached_validation_distance(q, t, config)
+    return dp_distance(q, t, config)
 
 
 @contextmanager
@@ -718,6 +742,7 @@ def parser(device):
     p.add_argument("--case", action="append", help="Select existing corpus cases; additions remain enabled")
     p.add_argument("--workload", action="append", help="Exact generated workload name, e.g. repeated/4; repeatable")
     p.add_argument("--repeats", type=int, default=7)
+    p.add_argument("--replicas", type=int, default=1, help="Independent process lifetimes per workload (1-16); analyze between-lifetime uncertainty separately")
     p.add_argument("--warmups", type=int, default=2)
     p.add_argument("--timeout", type=float, default=180)
     p.add_argument("--max-regression", type=float, default=1.10, help="Maximum median paired candidate/baseline ratio")
@@ -757,7 +782,7 @@ def main(argv=None, *, device=False):
     reuses = sorted(set(args.reuse_counts))
     if (not cpus or len(set(cpus)) != len(cpus) or not set(cpus) <= original or
             not threads or min(threads) < 1 or max(threads) > min(len(cpus), 128) or
-            args.repeats < 1 or args.warmups < 0 or not math.isfinite(args.timeout) or args.timeout <= 0 or
+            args.repeats < 1 or not 1 <= args.replicas <= 16 or args.warmups < 0 or not math.isfinite(args.timeout) or args.timeout <= 0 or
             not math.isfinite(args.max_regression) or args.max_regression <= 0 or args.noise_floor_ns < 0 or
             not sizes or not reuses or min(sizes) < 0 or min(reuses) < 1 or max(sizes + reuses) > 512):
         p.error("Invalid affinity, thread, repetition, timeout, regression ratio or batch/reuse count")
@@ -804,6 +829,7 @@ def main(argv=None, *, device=False):
         if set(args.workload) - {w.name for w in suite}:
             p.error("Unknown --workload")
         suite = [w for w in suite if w.name in args.workload]
+    suite = replicate_sessions(suite, args.replicas)
     if device and args.check_build:
         suite = [Workload("device-smoke", ((b"kitten", b"sitting", AlignConfig()),), (3,))]
     for w in suite:

@@ -12,6 +12,55 @@ from transport import AlignmentWorker
 from tests.helpers import ROOT, bend_align, bend_distance, bend_dp_distance, cpp_edlib_align
 
 
+@pytest.mark.parametrize("distance", [0, 1, 2**31 - 1])
+@pytest.mark.parametrize("end", [-1, 0, 2**31 - 1])
+def test_distance_frame_keeps_typed_endpoint_and_absent_fields(distance, end):
+    import struct
+    from transport import RESPONSE, NULL_LENGTH, decode_response
+    payload = RESPONSE.pack(b"BER1", 0, distance, 1, NULL_LENGTH, NULL_LENGTH, NULL_LENGTH)
+    value = decode_response(payload + struct.pack("<i", end))
+    assert value == AlignResult(Status.OK, DistanceFound(distance),
+        (BeforeStart() if end == -1 else Position(end),), None, None, None)
+
+
+@pytest.mark.parametrize("field,value", [(0, b"BER2"), (1, 1), (1, 2), (2, -1), (2, -2),
+    (3, 0), (3, 2), (3, 2**32 - 1), (4, 0), (4, 1), (5, 0), (5, 1), (6, 0), (6, 1)])
+def test_distance_frame_rejects_invalid_common_shape(field, value):
+    import struct
+    from transport import RESPONSE, NULL_LENGTH, decode_response
+    header = [b"BER1", 0, 1, 1, NULL_LENGTH, NULL_LENGTH, NULL_LENGTH]
+    header[field] = value
+    payload = RESPONSE.pack(*header) + struct.pack("<i", 3)
+    with pytest.raises(ValueError):
+        decode_response(payload)
+
+
+def test_distance_frame_rejects_truncation_trailing_bytes_and_negative_endpoint():
+    import struct
+    from transport import RESPONSE, NULL_LENGTH, decode_response
+    header = RESPONSE.pack(b"BER1", 0, 1, 1, NULL_LENGTH, NULL_LENGTH, NULL_LENGTH)
+    payload = header + struct.pack("<i", 0)
+    for malformed in [*(payload[:i] for i in range(len(payload))), payload + b"\0",
+                      header + struct.pack("<i", -2)]:
+        with pytest.raises(ValueError):
+            decode_response(malformed)
+
+
+def test_nondefault_frames_preserve_empty_fields_ties_and_rejection():
+    import struct
+    from alignment import DistanceNotFound
+    from transport import RESPONSE, NULL_LENGTH, decode_response
+    empty_path = RESPONSE.pack(b"BER1", 0, 0, 1, 1, 0, 0) + struct.pack("<ii", -1, 0)
+    assert decode_response(empty_path) == AlignResult(
+        Status.OK, DistanceFound(0), (BeforeStart(),), (Position(0),), (), "")
+    tied = RESPONSE.pack(b"BER1", 0, 1, 3, NULL_LENGTH, NULL_LENGTH, NULL_LENGTH)
+    assert decode_response(tied + struct.pack("<iii", -1, 2, 2)).end_locations == (
+        BeforeStart(), Position(2), Position(2))
+    for status in Status:
+        missing = RESPONSE.pack(b"BER1", status, -1, 0, NULL_LENGTH, NULL_LENGTH, NULL_LENGTH)
+        assert decode_response(missing) == AlignResult(status, DistanceNotFound(), (), None, None, None)
+
+
 @pytest.fixture(params=["bend_binary", "cpp_binary"])
 def command(request):
     binary = request.getfixturevalue(request.param)

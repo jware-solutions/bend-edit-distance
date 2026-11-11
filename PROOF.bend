@@ -1,5 +1,6 @@
 import ./Prepared.bend as Q
 import ./src/PreparedBytes.bend as PB
+import ./src/PreparedPool.bend as PP
 import ./src/ByteTarget.bend as Packed
 import ./src/BitVector.bend as V
 import ./src/Workspace.bend as W
@@ -1829,3 +1830,41 @@ def Laws.preparation_shared_charge_recovery(shared, buffers):
         Equal.cong(Nat, Nat, n => Nat.sub(n, 1n+p),
           Nat.add(shared, 1n+p), 1n+Nat.add(shared, p), add_successor(shared, p)),
         Laws.preparation_shared_charge_recovery(shared, p))
+
+def Laws.cpu_owner_split_restores(a, b, c, d):
+  {==}
+
+def Laws.cpu_owner_split_idle(a, b, c, d):
+  {==}
+
+def Laws.cpu_owner_split_empty():
+  {==}
+
+def Laws.cpu_target_split_coverage(count, jobs):
+  match count jobs:
+    case _ Nil{}:
+      {==}
+    case 0n _ <> _:
+      {==}
+    case 1n+p +h <> +t:
+      %Laws.cpu_target_split_coverage(p, t) :
+        {h <> List.append(&2, PP.Target, List.take(&2, PP.Target, t, p), List.drop(&2, PP.Target, t, p)) == h <> _ : List<&2, PP.Target>}
+      {==}
+
+def Laws.cpu_contiguous_order(count, jobs):
+  Laws.cpu_target_split_coverage(Nat.div(count, 2n), jobs)
+
+def Laws.cpu_owned_cutoff_96():
+  {==}
+
+def Laws.cpu_owned_cutoff_97():
+  {==}
+
+def Laws.cpu_owned_cutoff_128():
+  {==}
+
+def Laws.cpu_owned_cutoff_129():
+  {==}
+
+def Laws.cpu_owned_empty_and_singleton():
+  {==}

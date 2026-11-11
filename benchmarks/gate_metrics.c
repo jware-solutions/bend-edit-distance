@@ -6,6 +6,7 @@
 
 static uint64_t gate_last, gate_phases[10];
 static uint32_t gate_owners;
+static uint32_t gate_leaves;
 #ifdef GATE_ALLOCATIONS
 static uint64_t gate_live_start;
 static uint64_t gate_phase_live[10], gate_phase_peak[10];
@@ -34,6 +35,7 @@ Term ready_run(Env e, Term* f, IoWork* w) {
 
 Term reset_run(Env e, Term* f, IoWork* w) {
   memset(gate_phases, 0, sizeof(gate_phases));
+  gate_leaves = 0;
 #ifdef GATE_DEVICE_EVIDENCE
   bend_completed_bangs = bend_scheduler_ns = 0;
   bend_sync_batches = bend_rounds_submitted = 0;
@@ -67,6 +69,8 @@ Term mark_run(Env e, Term* f, IoWork* w) {
   gate_phase_live[(u32)f[0]] = atomic_load(&gate_live_bytes);
   gate_phase_peak[(u32)f[0]] = atomic_load(&gate_peak_bytes);
   gate_memory((u32)f[0]);
+  // /proc and tracing are observers, not work in the following stage.
+  gate_last = gate_now();
 #endif
   return f[1];
 }
@@ -75,7 +79,7 @@ Term finish_run(Env e, Term* f, IoWork* w) {
   fprintf(stderr, "BEND_GATE_METRICS {\"schema\":1,\"phases\":[");
   for (unsigned i = 0; i < 10; ++i)
     fprintf(stderr, "%s%" PRIu64, i ? "," : "", gate_phases[i]);
-  fprintf(stderr, "],\"effective_owners\":%u", gate_owners);
+  fprintf(stderr, "],\"effective_owners\":%u,\"planned_active_leaves\":%u", gate_owners, gate_leaves);
 #ifdef GATE_DEVICE_EVIDENCE
   fprintf(stderr, ",\"device_completed_bangs\":%" PRIu64
     ",\"device_scheduler_ns\":%" PRIu64
@@ -115,6 +119,12 @@ Term owners_run(Env e, Term* f, IoWork* w) {
   return f[0];
 }
 
+Term leaves_run(Env e, Term* f, IoWork* w) {
+  gate_leaves = (u32)f[1];
+  gate_last = gate_now();
+  return f[0];
+}
+
 Term dispose_run(Env e, Term* f, IoWork* w) {
   if ((u32)f[0] >= 10) abort();
   term_drop(e, f[1]);
@@ -125,6 +135,7 @@ Term dispose_run(Env e, Term* f, IoWork* w) {
   gate_phase_live[(u32)f[0]] = atomic_load(&gate_live_bytes);
   gate_phase_peak[(u32)f[0]] = atomic_load(&gate_peak_bytes);
   gate_memory((u32)f[0]);
+  gate_last = gate_now();
 #endif
   return term_pak(CID(Unit), 0);
 }
@@ -135,6 +146,9 @@ static void __attribute__((constructor)) gate_effects(void) {
   io_eff(CID(mark), mark_run);
   io_eff(CID(finish), finish_run);
   io_eff(CID(owners), owners_run);
+#if defined(CID(leaves))
+  io_eff(CID(leaves), leaves_run);
+#endif
 #if defined(CID(dispose))
   io_eff(CID(dispose), dispose_run);
 #endif

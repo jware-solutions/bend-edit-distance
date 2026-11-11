@@ -2,12 +2,14 @@
 
 from contextlib import ExitStack
 from dataclasses import replace
+import importlib.util
 import json
 import os
 from pathlib import Path
 import shlex
 import shutil
 import subprocess
+import sys
 import time
 from unittest.mock import patch
 
@@ -19,7 +21,7 @@ from transport import AlignmentWorker, LENGTH, REQUEST, encode_request, sequence
 from benchmarks import gates as G
 from benchmarks.runner import summarize
 
-API_MODES = {"string-single", "string-batch", "string-serial-batch", "string-diagnostic", "search-diagnostic", "prepare-batch", "prepare-clone", "profile-only"}
+API_MODES = {"string-single", "string-batch", "string-serial-batch", "string-diagnostic", "search-diagnostic", "owned-diagnostic", "prepare-batch", "prepare-clone", "profile-only"}
 CORE_MODES = {"batch", "phases", "prepared", "ordinary-single"}
 DEFAULT_MODES = ("ordinary-single", "batch", "string-single", "string-batch", "string-serial-batch",
                  "ordinary-worker-single", "ordinary-worker-batch", "owned-worker-single",
@@ -41,7 +43,7 @@ def provenance(args, cc, cxx, compilers):
         roots[name] = {"path": str(root), "commit": G.run_command(["git", "-C", root, "rev-parse", "HEAD"]),
             "status": G.run_command(["git", "-C", root, "status", "--porcelain", "--untracked-files=normal"]),
             "diff_sha256": G.digest(G.run_command(["git", "-C", root, "diff", "HEAD"]).encode())}
-    return {"roots": roots, "cc": executable(cc[0]), "cxx": executable(cxx[0]),
+    return {"roots": roots, "python": executable(sys.executable), "cc": executable(cc[0]), "cxx": executable(cxx[0]),
         **({"bend": compilers["baseline"]} if compilers["baseline"]["path"] == compilers["candidate"]["path"] else {}),
         "underlying_cc": executable(os.environ.get("BEND_CC", "clang-19")) if Path(cc[0]).resolve() == wrapper.resolve() else executable(cc[0]),
         "wrapper": {"path": str(wrapper), "content": wrapper.read_text(), "sha256": G.digest(wrapper.read_bytes())},
@@ -61,7 +63,32 @@ def provenance(args, cc, cxx, compilers):
             (G.ROOT / "vendor/edlib/edlib/src/edlib.cpp", G.ROOT / "vendor/edlib/edlib/include/edlib.h")}}
 
 
-class ObservedWorker(AlignmentWorker):
+def load_adapter(root, directory):
+    """Freeze a variant's adapter; share typed values only after hash parity."""
+    directory.mkdir(parents=True)
+    hashes = {}
+    for name in ("transport.py", "alignment.py"):
+        source = root / name
+        shutil.copyfile(source, directory / name)
+        hashes[name] = G.digest(source.read_bytes())
+    # Distinct alignment classes would make result equality and oracle checks
+    # meaningless. This phase changes transport, not the public value types.
+    if hashes["alignment.py"] != G.digest((G.ROOT / "alignment.py").read_bytes()):
+        raise RuntimeError("Variant alignment.py differs; review typed adapter isolation")
+    name = "_gate_transport_" + G.digest(str(directory.resolve()).encode())
+    spec = importlib.util.spec_from_file_location(name, directory / "transport.py")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module  # dataclasses resolve their defining module here.
+    try:
+        spec.loader.exec_module(module)
+    except BaseException:
+        sys.modules.pop(name, None)
+        raise
+    return module, {"path": str(directory), "sha256": hashes,
+                    "typed_dependency": "hash-verified shared alignment.py"}
+
+
+class Observation:
     """Diagnostic only. The timed process uses the unmodified Python adapter."""
     def __init__(self, *args, **kwargs):
         self.operations, self.controls = [], []
@@ -74,8 +101,8 @@ class ObservedWorker(AlignmentWorker):
             self.first_write_ns = time.monotonic_ns()
         offset = 0
         while offset < len(frame):
-            size = LENGTH.unpack_from(frame, offset)[0]
-            header = REQUEST.unpack_from(frame, offset + 4)
+            size = self.adapter.LENGTH.unpack_from(frame, offset)[0]
+            header = self.adapter.REQUEST.unpack_from(frame, offset + 4)
             magic, _, _, _, op, *_ = header
             self.operations.append(op if magic == b"BED2" else "BED1")
             offset += size + 4
@@ -83,7 +110,7 @@ class ObservedWorker(AlignmentWorker):
                 # BED1 jobs following an operation-4 header are its body, not
                 # independently dispatched ordinary-single requests.
                 for _ in range(header[6]):
-                    offset += LENGTH.unpack_from(frame, offset)[0] + 4
+                    offset += self.adapter.LENGTH.unpack_from(frame, offset)[0] + 4
         return super()._write(frame, deadline)
 
     def _control_payload(self, frame, operation):
@@ -91,6 +118,14 @@ class ObservedWorker(AlignmentWorker):
         self.controls.append({"operation": operation, "status": value[0], "handle_or_width": value[1],
                               "retained_budget_bytes": value[2], "count_or_limit": value[3]})
         return value
+
+
+class ObservedWorker(Observation, AlignmentWorker):
+    adapter = wire
+
+
+def observed_worker(adapter):
+    return type("ObservedWorker", (Observation, adapter.AlignmentWorker), {"adapter": adapter})
 
 
 def route_evidence(mode, operations, controls):
@@ -115,6 +150,25 @@ def memory(pid):
     details = {line.split(':', 1)[0]: line.split(':', 1)[1].strip() for line in data if ':' in line}
     return {"rss_kib": values.get("VmRSS", 0), "peak_rss_kib": values.get("VmHWM", 0),
             "os_threads": int(details["Threads"]), "os_cpus_allowed": details["Cpus_allowed_list"]}
+
+
+def cpu_activity(pid):
+    """Coarse, untimed OS evidence; short calls may use less than one tick."""
+    ticks = {}
+    for path in Path(f"/proc/{pid}/task").glob("*/stat"):
+        try:
+            fields = path.read_text().rsplit(") ", 1)[1].split()
+        except FileNotFoundError:  # A helper can end between listing and read.
+            continue
+        ticks[int(path.parent.name)] = int(fields[11]) + int(fields[12])
+    return ticks
+
+
+def cpu_observation(before, after):
+    deltas = {str(tid): ticks - before.get(tid, 0) for tid, ticks in after.items()}
+    return {"thread_cpu_ticks": deltas, "positive_cpu_threads": sum(n > 0 for n in deltas.values()),
+            "ticks_per_second": os.sysconf("SC_CLK_TCK"),
+            "definition": "Untimed /proc task CPU deltas over warmups, calls and validation gaps; coarse evidence of CPU use, not simultaneous execution or a count of plan leaves"}
 
 
 def prepared_definition(w):
@@ -154,12 +208,13 @@ def applicable(mode, w):
 
 
 class Service:
-    def __init__(self, binary, mode, w, thread, shards, timeout, *, reference=False, observed=False, fresh=False):
+    def __init__(self, binary, mode, w, thread, shards, timeout, *, reference=False, observed=False, fresh=False, adapter=wire):
         self.mode, self.timeout = mode, timeout
+        self.adapter, self.observed = adapter, observed
         self.fresh = fresh and not mode.startswith("ordinary")
         self.query, self.config = prepared_definition(w) if not mode.startswith("ordinary") else (None, None)
         argv = [binary, str(thread)] if reference else [binary, *runtime_prefix(threads=thread, gpu="off"), "--worker", "--shards", str(shards)]
-        cls = ObservedWorker if observed else AlignmentWorker
+        cls = observed_worker(adapter) if observed else adapter.AlignmentWorker
         started = time.monotonic_ns()
         self.worker = cls(argv, cwd=G.ROOT)
         self.owner = None
@@ -179,8 +234,7 @@ class Service:
                           "command": list(map(str, argv))}
             # Capability negotiation belongs to diagnostic/setup, not warm timed calls.
             if mode.startswith("owned"):
-                from transport import encode_control
-                self.worker._exchange(encode_control(8, config=AlignConfig(threshold=MaxDistance(0), cigar_format=CigarFormat.STANDARD)),
+                self.worker._exchange(adapter.encode_control(8, config=AlignConfig(threshold=MaxDistance(0), cigar_format=CigarFormat.STANDARD)),
                                       lambda d: self.worker._owned_capabilities(d), timeout)
         except BaseException:
             self.worker.close()
@@ -213,18 +267,18 @@ class Service:
         return elapsed
 
     def call(self, jobs):
-        if not isinstance(self.worker, ObservedWorker):
+        if not self.observed:
             return self._call(jobs)
         self.worker.first_write_ns = None
         decoding = 0
-        decode = wire.decode_response
+        decode = self.adapter.decode_response
         def measured_decode(payload):
             nonlocal decoding
             started = time.monotonic_ns()
             value = decode(payload)
             decoding += time.monotonic_ns() - started
             return value
-        with patch.object(wire, "decode_response", measured_decode):
+        with patch.object(self.adapter, "decode_response", measured_decode):
             started = time.monotonic_ns()
             values = self._call(jobs)
             total = time.monotonic_ns() - started
@@ -268,8 +322,12 @@ class Native:
                                             {"status": "setup-only process; use launcher exit usage"})
 
     def call(self, jobs):
-        payload = b"".join(encode_request(b"", t, c) if self.mode in API_MODES else encode_request(q, t, c)
-                           for q, t, c in jobs)
+        if self.mode == "owned-diagnostic":
+            body = b"".join(LENGTH.pack(len(sequence_bytes(t))) + sequence_bytes(t) for _, t, _ in jobs)
+            payload = wire.encode_control(7, count=len(jobs), body=body, pairs=len(body))
+        else:
+            payload = b"".join(encode_request(b"", t, c) if self.mode in API_MODES else encode_request(q, t, c)
+                               for q, t, c in jobs)
         values, sample = self.worker.request(payload, len(jobs))
         if self.mode in ("prepare-batch", "prepare-clone", "profile-only"):
             self.setup["effective_owners"] = sample["effective_owners"]
@@ -356,12 +414,14 @@ def run(args, document, suite, cpus, bends, cc, cxx, output):
         "process_usage": "Native launcher wait4: process_peak_rss_kib covers the backend child from a small native fork, excluding Python's inherited RSS. spawn_to_exit_peak_rss_kib covers the outer launcher including pre-exec Python inheritance. Live RSS/VmHWM are separate /proc observations"})
     document["phase_semantics"]["path_validation_ns"] = "Serial production NW diagnostic only: location validity plus R.valid_path, reported from slot 8; CIGAR and result construction use result_ns"
     document["phase_semantics"]["empty_batches"] = "Call overhead only: no per-target metric, throughput, or Bend/Edlib alignment ratio"
+    document["phase_semantics"]["planned_active_leaves"] = "Separate intrusive diagnostic counts actual constructed plan leaves, preserving affine owners. Traversal is excluded from adjacent timers. This is not a count of simultaneously running threads; zero in other binaries means unobserved"
+    document["phase_semantics"]["diagnostic_observers"] = "Allocation/RSS observer time is excluded from the following stage. Stage times still include effect/boundary costs; result_ns is not an isolated allocator or search timer"
     driver_directory = output / "driver"
     for relative in document["provenance"]["driver_sha256"]:
         target = driver_directory / relative
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(G.ROOT / relative, target)
-    document["workloads"] = [{"name": w.name, "seed": w.seed, "reuse_count": w.reuse_count,
+    document["workloads"] = [{"name": w.name, "seed": w.seed, "replica": w.replica, "reuse_count": w.reuse_count,
         "batch_size": len(w.jobs), "batches": [[G.digest(encode_request(*j)) for j in batch] for batch in w.batches or (w.jobs,)],
         "prepared_query_sha256": G.digest(prepared_definition(w)[0]) if applicable("string-batch", w) is None else None,
         "native_api_batch_sha256": [G.digest(b"".join(encode_request(b"", t, c) for _, t, c in batch)) for batch in w.batches or (w.jobs,)],
@@ -390,7 +450,11 @@ def run(args, document, suite, cpus, bends, cc, cxx, output):
     if args.allocations:
         kinds.add("diagnostic")
     binaries = {}
+    adapters = {}
+    document["python_adapters"] = {}
     for variant, root in (("baseline", args.baseline), ("candidate", args.candidate)):
+        adapters[variant], document["python_adapters"][variant] = load_adapter(
+            root.resolve(), driver_directory / variant)
         for kind in sorted(kinds):
             print(f"Building {variant} production {kind}...", flush=True)
             entry = {"profile": "benchmarks/profile_preparation.bend", "preparation": "benchmarks/production_preparation.bend", "api": "benchmarks/production_api.bend", "core": "benchmarks/gate_probe.bend", "worker": "worker.bend", "diagnostic": "benchmarks/production_diagnostics.bend"}[kind]
@@ -417,12 +481,13 @@ def run(args, document, suite, cpus, bends, cc, cxx, output):
                     rounds = (args.warmups + args.repeats) * w.reuse_count
                     with G.affinity(cpus[:thread]), ExitStack() as stack:
                         sessions, records = {}, {}
-                        for variant in G.ordered_variants(0):
+                        setup_order = list(G.ordered_variants(len(document["coverage"])))
+                        for variant in setup_order:
                             binary = binaries[variant, kind]
                             evidence = {"requested_route": mode, "actual_route": mode,
                                 "observation": "closed native entry invokes shipped API; source hashes retained"}
                             if kind == "worker":
-                                diagnostic = Service(binary, mode, w, thread, shards, args.timeout, observed=True)
+                                diagnostic = Service(binary, mode, w, thread, shards, args.timeout, observed=True, adapter=adapters[variant])
                                 try:
                                     for jobs, values in zip(batches, expected):
                                         actual = diagnostic.call(jobs)
@@ -431,7 +496,7 @@ def run(args, document, suite, cpus, bends, cc, cxx, output):
                                     evidence["codec_diagnostics"] = diagnostic.worker.codec_samples
                                 finally:
                                     diagnostic.close()
-                                session = Service(binary, mode, w, thread, shards, args.timeout, fresh=args.fresh_prepared)
+                                session = Service(binary, mode, w, thread, shards, args.timeout, fresh=args.fresh_prepared, adapter=adapters[variant])
                             else:
                                 session = Native(binary, mode, w, thread, shards, args.timeout, rounds, launcher=launcher)
                             if kind == "worker" and not mode.startswith("ordinary"):
@@ -446,6 +511,7 @@ def run(args, document, suite, cpus, bends, cc, cxx, output):
                             stack.callback(session.close)
                             sessions[variant] = session
                             records[variant] = {"workload": w.name, "variant": variant, "mode": mode,
+                                "replica": w.replica,
                                 "lifetime": "persistent", "backend": "cpu", "threads": thread,
                                 "runtime_threads": thread, "runtime_thread_evidence": "explicit RTS argv, BENDRTS cleared; OS thread count and affinity sampled separately",
                                 "boundary": "native-probe-framed-round-trip" if kind in ("profile", "preparation", "api", "core") else "python-service",
@@ -454,6 +520,9 @@ def run(args, document, suite, cpus, bends, cc, cxx, output):
                                 "batch_size": len(w.jobs), "batch_call_count": w.reuse_count,
                                 "total_target_count": len(w.jobs) * w.reuse_count, "affinity_cpus": cpus[:thread],
                                 "setup": session.setup, "execution": evidence, "samples": []}
+                            records[variant]["setup_variant_order"] = setup_order
+                            pid = session.worker.pid if isinstance(session, Service) else session.worker.backend_pid
+                            session.cpu_before = cpu_activity(pid)
                         reference_sessions = {}
                         if reference_supported(w) and mode not in ("phases", "prepared"):
                             for name in (n for n in refs if n != "oracle" and
@@ -544,6 +613,8 @@ def run(args, document, suite, cpus, bends, cc, cxx, output):
                                 if repetition >= args.warmups:
                                     record["samples"].append(sample)
                         for variant, session in sessions.items():
+                            pid = session.worker.pid if isinstance(session, Service) else session.worker.backend_pid
+                            records[variant]["cpu_execution_observation"] = cpu_observation(session.cpu_before, cpu_activity(pid))
                             if isinstance(session, Native):
                                 records[variant]["effective_owners"] = session.setup.get("effective_owners")
                                 session.worker.finish()
@@ -557,7 +628,10 @@ def run(args, document, suite, cpus, bends, cc, cxx, output):
             if args.allocations and applicable("string-batch", w) is None:
                 for thread in args.threads:
                     for variant in G.ordered_variants(0):
-                        for diagnostic_mode in ("string-diagnostic", "search-diagnostic"):
+                        diagnostic_modes = ["string-diagnostic", "search-diagnostic"]
+                        if applicable("owned-worker-batch", w) is None:
+                            diagnostic_modes.append("owned-diagnostic")
+                        for diagnostic_mode in diagnostic_modes:
                             with G.affinity(cpus[:thread]):
                                 diagnostic = Native(binaries[variant, "diagnostic"], diagnostic_mode, w,
                                     thread, args.shards or thread, args.timeout, len(batches), launcher=launcher)
@@ -568,7 +642,8 @@ def run(args, document, suite, cpus, bends, cc, cxx, output):
                                         if "heap_alloc_calls" not in metrics:
                                             raise RuntimeError("Missing production allocation diagnostic")
                                         document["allocations"].append({"variant": variant, "workload": w.name,
-                                            "threads": thread, "boundary": "intrusive production String pool stages" if diagnostic_mode == "string-diagnostic" else "serial production Q.run_nw search/result diagnostic",
+                                            "threads": thread, "diagnostic_mode": diagnostic_mode,
+                                            "boundary": {"string-diagnostic": "intrusive production String pool stages", "owned-diagnostic": "intrusive owned pool stages; decoded packed inputs before reset; locations_ns is owner selection, work_ns includes search/results/fork-join", "search-diagnostic": "serial production Q.run_nw search/result diagnostic"}[diagnostic_mode],
                                             "setup": diagnostic.setup, **metrics,
                                             "path_validation_ns": metrics["locations_ns"] if diagnostic_mode == "search-diagnostic" else 0})
                                     diagnostic.worker.finish()

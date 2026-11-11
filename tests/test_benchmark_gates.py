@@ -32,6 +32,42 @@ def test_complete_results_and_path_ties():
         gates.validate([replace(a, start_locations=None)], [a], workload)
 
 
+def test_validation_cache_keys_inputs_configuration_and_keeps_oracle_independent():
+    from alignment import EqualityPair, Mode, MaxDistance
+    gates.cached_validation_distance.cache_clear()
+    configurations = [AlignConfig(), AlignConfig(Mode.HW), AlignConfig(threshold=MaxDistance(0)),
+        AlignConfig(equalities=(EqualityPair('A', 'N'), EqualityPair('N', 'C')))]
+    for config in configurations:
+        for q, t in ((b'A', b'C'), (b'A', b'N'), (b'AC', b'TAC'), (b'', b'A')):
+            expected = gates.dp_distance(q, t, config)
+            assert gates.validation_distance(q, t, config) == expected
+            assert gates.validation_distance(q, t, config) == expected
+    assert gates.cached_validation_distance.cache_info().hits == 16
+    # Cached expected distances cannot bless an incorrect candidate answer.
+    w = gates.Workload('bad', ((b'A', b'C', AlignConfig()),))
+    bad = AlignResult.from_edlib(dict(status=0, edit_distance=0, end_locations=[0],
+                                    start_locations=None, alignment=None, cigar=None))
+    with pytest.raises(RuntimeError, match='Independent DP'):
+        gates.validate([bad], [bad], w)
+    before = gates.cached_validation_distance.cache_info()
+    gates.validation_distance(b'A', b'C', AlignConfig(equalities=(EqualityPair('A', 'N'),) * 65))
+    assert gates.cached_validation_distance.cache_info() == before
+
+
+def test_session_replicas_keep_inputs_reuse_and_process_keys_distinct():
+    jobs = ((b'A', b'C', AlignConfig()),)
+    w = gates.Workload('case', jobs, batches=(jobs,), reuse_count=2, prepared_query=(b'A', AlignConfig()), seed=83)
+    assert gates.replicate_sessions([w], 1) == [w]
+    copies = gates.replicate_sessions([w], 3)
+    assert [c.name for c in copies] == ['case/replica0', 'case/replica1', 'case/replica2']
+    assert [c.replica for c in copies] == [0, 1, 2]
+    assert all(c.payload == w.payload and c.batches == w.batches and c.reuse_count == 2
+               and c.prepared_query == w.prepared_query and c.seed == w.seed for c in copies)
+    for count in (0, 17):
+        with pytest.raises(ValueError, match='Session replicas'):
+            gates.replicate_sessions([w], count)
+
+
 def test_corpus_preserved_and_additions_reproducible():
     corpus = load_corpus(ROOT / "benchmarks/corpus.json")
     a = gates.workloads(corpus, [1, 4], [1, 2, 8])
@@ -402,6 +438,7 @@ def test_production_allocation_stages_are_separate(bend_tool, cpp_binary, tmp_pa
         values, metrics = session.call(w.jobs)
         assert len(values) == 2 and all(r.edit_distance == 1 for r in values)
         assert metrics['heap_alloc_calls'] > 0
+        assert metrics['effective_owners'] == metrics['planned_active_leaves'] == 2
         assert all(metrics[k] > 0 for k in ('planning_ns', 'work_ns', 'ordering_ns'))
         session.worker.finish()
     finally:
@@ -414,9 +451,51 @@ def test_production_allocation_stages_are_separate(bend_tool, cpp_binary, tmp_pa
         search.worker.finish()
     finally:
         search.close()
+    for count in (0, 1, 3, 5):
+        jobs = w.jobs[:1] * count
+        probe = Native(binary, 'string-diagnostic', replace(w, jobs=jobs), 1, 4, 60, 1)
+        try:
+            values, metrics = probe.call(jobs)
+            assert len(values) == count
+            assert metrics['effective_owners'] == 4
+            assert metrics['planned_active_leaves'] == min(4, max(1, count))
+            probe.worker.finish()
+        finally:
+            probe.close()
     from alignment import MaxDistance
     from transport import AlignmentWorker
     with AlignmentWorker([cpp_binary, '--worker']) as oracle:
+        for count in (0, 1, 8, 128):
+            query = w.jobs[0][0]
+            targets = [query, b'', query[:-1] + b'Z', query[::-1]]
+            jobs = tuple((query, targets[i % 4], AlignConfig()) for i in range(count))
+            owned = Native(binary, 'owned-diagnostic', replace(w, jobs=jobs), 1, 4, 60, 2)
+            try:
+                for batch in (jobs, jobs[::-1]):
+                    actual, metrics = owned.call(batch)
+                    gates.validate(actual, [oracle.align(*job) for job in batch], replace(w, jobs=batch))
+                    work = sum(len(job[1]) for job in batch) * 5 + count * 32
+                    assert metrics['effective_owners'] == 4
+                    assert metrics['planned_active_leaves'] == (4 if work >= 65536 else 1)
+                    assert metrics['locations_ns'] > 0  # estimator/active-owner selection
+                owned.worker.finish()
+            finally:
+                owned.close()
+        for length, count, columns in ((96, 2, 21824), (97, 2, 8176),
+                                       (128, 2, 8176), (129, 3, 13088)):
+            query = b'A' * length
+            for offset in (-1, 0, 1):
+                total = columns + offset
+                jobs = tuple((query, b'C' * (total // count + (i < total % count)), AlignConfig())
+                             for i in range(count))
+                exact = Native(binary, 'owned-diagnostic', replace(w, jobs=jobs), 2, 4, 60, 1)
+                try:
+                    actual, metrics = exact.call(jobs)
+                    gates.validate(actual, [oracle.align(*job) for job in jobs], replace(w, jobs=jobs))
+                    assert metrics['planned_active_leaves'] == (1 if offset < 0 else count)
+                    exact.worker.finish()
+                finally:
+                    exact.close()
         for format in CigarFormat:
             for limit in (-1, 0, 1, 2):
                 config = AlignConfig(task=Task.PATH, cigar_format=format) if limit < 0 else AlignConfig(
@@ -637,6 +716,60 @@ def test_fresh_service_reuse_groups_release_and_readmit(bend_binary, cpp_binary)
         assert handles[1] > handles[0]
     finally:
         session.close()
+
+
+def test_service_uses_variant_adapter_and_isolates_diagnostics(bend_binary, tmp_path, monkeypatch):
+    from benchmarks.production_gate import Service, load_adapter
+    import transport
+    adapters = []
+    for name in ("baseline", "candidate"):
+        root = tmp_path / name
+        root.mkdir()
+        (root / "alignment.py").write_bytes((ROOT / "alignment.py").read_bytes())
+        (root / "transport.py").write_text((ROOT / "transport.py").read_text() + '''
+decode_count = 0
+original_decode = decode_response
+def decode_response(payload):
+    global decode_count
+    decode_count += 1
+    return original_decode(payload)
+''')
+        adapter, metadata = load_adapter(root, tmp_path / (name + "-frozen"))
+        assert metadata["sha256"]["transport.py"] == gates.digest((root / "transport.py").read_bytes())
+        adapters.append(adapter)
+    assert adapters[0].PreparedQuery is not adapters[1].PreparedQuery
+    w = gates.Workload("isolation", ((b"AC", b"AC", AlignConfig()),))
+    # A live/global adapter must never supply a variant service's decoder.
+    monkeypatch.setattr(transport, "decode_response", lambda _: pytest.fail("global decoder used"))
+    for index, adapter in enumerate(adapters):
+        other = adapters[1 - index]
+        before = other.decode_count
+        session = Service(bend_binary, "owned-worker-single", w, 1, 1, 60,
+                          observed=True, adapter=adapter)
+        try:
+            assert session.call(w.jobs)[0].edit_distance == 0
+            assert adapter.decode_count == 1
+            assert other.decode_count == before
+            assert session.worker.codec_samples[0]["python_decode_ns"] > 0
+            assert adapter.decode_response.__module__ == adapter.__name__
+        finally:
+            session.close()
+
+
+def test_variant_adapter_rejects_changed_value_dependency(tmp_path):
+    from benchmarks.production_gate import load_adapter
+    (tmp_path / "transport.py").write_text("raise AssertionError('must not execute')")
+    (tmp_path / "alignment.py").write_text("# changed types\n")
+    with pytest.raises(RuntimeError, match="alignment.py differs"):
+        load_adapter(tmp_path, tmp_path / "frozen")
+
+
+def test_cpu_execution_observation_does_not_infer_parallelism_from_owners():
+    from benchmarks.production_gate import cpu_observation
+    observed = cpu_observation({11: 2, 12: 9, 13: 0, 14: 0}, {11: 2, 12: 14, 13: 0, 14: 0})
+    assert observed["thread_cpu_ticks"] == {"11": 0, "12": 5, "13": 0, "14": 0}
+    assert observed["positive_cpu_threads"] == 1
+    assert observed["ticks_per_second"] > 0
 
 
 def test_preparation_live_allocation_rounding(bend_tool, cpp_binary, tmp_path):

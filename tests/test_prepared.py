@@ -133,14 +133,15 @@ def test_worker_entry_and_byte_limits_are_recoverable(bend_binary):
         assert w.align(b"A", b"A").edit_distance == 0
 
 
-def test_cloned_profiles_have_independent_workspaces(bend_tool, bend_binary):
+@pytest.mark.parametrize("length", [65, 96, 97, 128, 513])
+def test_cloned_profiles_have_independent_workspaces(bend_tool, bend_binary, length):
     from transport import LENGTH, decode_response, encode_request
     from tests.helpers import execute
     import subprocess
 
     binary = ROOT / "build" / "prepared-probe"
     execute([bend_tool, ROOT / "tests" / "prepared_probe.bend", "-o", binary], timeout=180)
-    query = bytes(range(256)) * 2 + b"N"
+    query = (bytes(range(256)) * 2 + b"N")[:length]
     target = query[3:] + b"\0\xffAC"
     with worker(bend_binary) as ordinary:
         for threads, mode, task in itertools.product((1, 2, 4), Mode, Task):
@@ -155,6 +156,41 @@ def test_cloned_profiles_have_independent_workspaces(bend_tool, bend_binary):
                 data = data[4 + size:]
             assert values == [ordinary.align(query, t, config) for t in (target, target[::-1])]
             assert result.stderr == b""
+
+
+@pytest.mark.parametrize("threads", [1, 2, 4])
+def test_string_word_boundaries_reuse_against_independent_dp(bend_binary, cpp_binary, threads):
+    import random
+    from tests.test_small_paths import distance_dp
+    rng = random.Random(89101)
+    pairs = (EqualityPair('A', 'N'), EqualityPair('N', 'C'), EqualityPair('N', 'A'),
+             EqualityPair('A', 'N'), EqualityPair('A', 'A'), EqualityPair(0, 255))
+    with worker(bend_binary, threads) as w:
+        # Exercise the String route even for default NW DISTANCE, where the
+        # public adapter would otherwise select the independently packed route.
+        w._owned_supported = {6: False, 7: False}
+        for length in range(65, 129):
+            query = bytes(rng.choices(b'ACN\0\x80\xff', k=length))
+            two = b'Z' + query[1:-1] + b'Z'
+            general = bytes(rng.choices(range(256), k=length))
+            targets = [query, two, general, query[:3], b'', query]
+            with w.prepare(query, pairs) as owner:
+                charge = w.retained_bytes
+                result = owner.align_batch(targets)
+                assert [r.edit_distance for r in result] == [distance_dp(query, t, pairs) for t in targets]
+                optimum = distance_dp(query, general, pairs)
+                for k in (0, optimum - 1, optimum, optimum + 1):
+                    c = AlignConfig(threshold=MaxDistance(k), equalities=pairs)
+                    assert owner.align(general, c) == cpp_edlib_align(query, general, c, binary=cpp_binary)
+                if length in (65, 95, 96, 97, 127, 128):
+                    for mode, task, format in itertools.product(Mode, Task, CigarFormat):
+                        c = AlignConfig(mode, task, equalities=pairs, cigar_format=format)
+                        actual = owner.align(two, c)
+                        check(actual, w.align(query, two, c),
+                              cpp_edlib_align(query, two, c, binary=cpp_binary), query, two, c)
+                assert owner.align(query).edit_distance == 0
+                assert w.retained_bytes == charge
+            assert w.retained_bytes == w.retained_entries == 0
 
 
 @pytest.mark.parametrize("shards", [1, 2, 4])

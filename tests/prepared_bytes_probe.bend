@@ -38,7 +38,7 @@ def exact(target: String, state: W.Updated) -> W.Workspace:
     case SNil{} W.Updated{_, workspace, _, _}:
       workspace
     case SCon{symbol, tail} W.Updated{profile, workspace, _, _}:
-      exact(tail, W.column(profile, workspace, Char.to_u32(symbol), V.Carry{1, 0}))
+      exact(tail, W.column_reference(profile, workspace, Char.to_u32(symbol), V.Carry{1, 0}))
 
 def workspace_result(+count: Nat, a: K.Run, b: W.Workspace) -> List<&2, E.AlignResult>:
   K.Run{_, W.Workspace{data, capacity, +first, +last}, _} = a

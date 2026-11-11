@@ -1640,6 +1640,35 @@ law prepared_nontransitive_equivalence:
   {Q.result(L.align_prepared(L.prepare("A", [E.EqualityPair{'A', 'N'}, E.EqualityPair{'N', 'C'}]),
     "C", Q.default_options())) == E.distance_result(1n, E.Position{0n}, True{}) : E.AlignResult}
 
+# Internal NW symmetry must not transpose the public target coordinates.
+law nw_orientation_original_endpoint:
+  {(Myers.edlib_align("A", "AA", E.default_config()),
+    Myers.edlib_align("AA", "A", E.default_config())) ==
+    (E.distance_result(1n, E.Position{1n}, True{}),
+     E.distance_result(1n, E.Position{0n}, True{})) : E.AlignResult & E.AlignResult}
+
+law nw_orientation_finite_direct:
+  {(Myers.search_distance(Myers.search_shorter("A", "CC", 1n, 2n, E.MaxDistance{2n}, True{},
+      [E.EqualityPair{'A', 'N'}, E.EqualityPair{'N', 'C'}])),
+    Myers.search_distance(Myers.search_shorter("A", "CC", 1n, 2n, E.MaxDistance{2n}, False{},
+      [E.EqualityPair{'A', 'N'}, E.EqualityPair{'N', 'C'}])),
+    Myers.search_distance(Myers.search_shorter("A", "CC", 1n, 2n, E.MaxDistance{1n}, False{},
+      [E.EqualityPair{'A', 'N'}, E.EqualityPair{'N', 'C'}]))) ==
+    (E.Found{2n}, E.Found{2n}, E.NotFound{}) : E.EditDistance & E.EditDistance & E.EditDistance}
+
+law prepared_wide_original_coordinates:
+  {Q.result(Q.align(Q.prepare(String.repeat("A", 65n), Nil{}), "A", Q.default_options())) ==
+    E.distance_result(64n, E.Position{0n}, True{}) : E.AlignResult}
+
+law prepared_wide_threshold_rejection:
+  {Q.result(Q.align(Q.prepare(String.repeat("A", 97n), Nil{}), "C",
+      Q.Options{E.NW{}, E.Distance{}, E.MaxDistance{96n}, E.Extended{}})) == E.not_found() : E.AlignResult}
+
+law prepared_wide_threshold_acceptance:
+  {Q.result(Q.align(Q.prepare(String.repeat("A", 97n), Nil{}), "A",
+      Q.Options{E.NW{}, E.Distance{}, E.MaxDistance{96n}, E.Extended{}})) ==
+    E.distance_result(96n, E.Position{0n}, True{}) : E.AlignResult}
+
 law batch_gather_guard:
   for array: Array<Maybe<&2, E.AlignResult>>
   for index: Nat

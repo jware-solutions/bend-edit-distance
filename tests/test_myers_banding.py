@@ -98,3 +98,55 @@ def test_both_profiled_orientations(myers_probe, bend_binary, cpp_binary, length
             result = execute([myers_probe, *runtime_prefix(threads=1), "search-profiled", str(maximum), q, t])
             assert int(result.stdout.split(",")[0]) == (optimum if maximum < 0 or maximum >= optimum else -1)
     assert bend_align(query, target, binary=bend_binary) == cpp_edlib_align(query, target, binary=cpp_binary)
+
+
+@pytest.fixture(scope="module")
+def orientation_probe(bend_tool):
+    from tests.helpers import ROOT
+    binary = ROOT / "build/orientation-probe"
+    execute([bend_tool, ROOT / "tests/orientation_probe.bend", "-o", binary], timeout=180)
+    return binary
+
+
+@pytest.mark.parametrize("threads", [1, 2, 4])
+def test_forced_orientation_preserves_original_results(orientation_probe, cpp_binary, threads):
+    import subprocess
+    from functools import lru_cache
+    from alignment import CigarFormat, EqualityPair, Task
+    from benchmarks.gpu_runner import decode_batch
+    from tests.helpers import assert_valid_path
+    from tests.test_small_paths import distance_dp
+    from transport import encode_request
+    rng = random.Random(8813)
+    scalar = lru_cache(maxsize=512)(distance_dp)  # Cache only independent oracle answers.
+    pairs = (EqualityPair(0, 255), EqualityPair('A', 'N'), EqualityPair('N', 'C'),
+             EqualityPair('N', 'A'), EqualityPair('A', 'N'), EqualityPair('A', 'A'))
+    jobs = []
+    for length in (*range(65, 97), 0, 1, 31, 32, 33, 63, 64, 97, 127, 128, 129, 255, 256, 257):
+        q = bytes(rng.choices(b'ACN\0\x80\xff', k=length))
+        for t in (q[1:] + b'Z', b'Z' + q + b'ZZ', q[:max(0, length // 4)]):
+            for query, target in ((q, t), (t, q)):
+                optimum = scalar(query, target, pairs)
+                for task, format in itertools.product(Task, CigarFormat):
+                    for threshold in (Unlimited(), MaxDistance(max(0, optimum - 1)),
+                                      MaxDistance(optimum), MaxDistance(optimum + 1)):
+                        jobs.append((query, target, AlignConfig(task=task, threshold=threshold,
+                                                              equalities=pairs, cigar_format=format)))
+    # All bytes and a high-degree direct graph, including irrelevant endpoints.
+    star = tuple(EqualityPair('A', i) for i in range(256))
+    jobs += [(bytes(range(256)), bytes(reversed(range(256))), AlignConfig(equalities=star))]
+    done = subprocess.run([orientation_probe, *runtime_prefix(threads=threads)],
+        input=b''.join(encode_request(*j) for j in jobs), capture_output=True, check=True, timeout=120)
+    assert done.stderr == b''
+    values = decode_batch(done.stdout, len(jobs) * 3)
+    for i, (q, t, config) in enumerate(jobs):
+        ordinary, forward, reverse = values[3*i:3*i+3]
+        assert ordinary == forward == reverse
+        optimum = scalar(q, t, config.equalities)
+        k = config.threshold.to_edlib()
+        assert ordinary.edit_distance == (optimum if not q or not t or k < 0 or k >= optimum else -1)
+        assert_valid_path(q, t, config, ordinary)
+        if i % 47 == 0:
+            expected = cpp_edlib_align(q, t, config, binary=cpp_binary)
+            assert (ordinary.status, ordinary.distance, ordinary.end_locations, ordinary.start_locations) == (
+                expected.status, expected.distance, expected.end_locations, expected.start_locations)

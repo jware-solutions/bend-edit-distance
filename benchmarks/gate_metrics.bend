@@ -21,6 +21,11 @@ def owners(-A: Type, value: A, count: U32) -> IO(A):
 def leaves(-A: Type, value: A, count: U32) -> IO(A):
   import "./gate_metrics.c"
 
+# Intrusive serial-search diagnostics only. Exactness is explicit when a Nat
+# counter exceeds this transport's U32 field; totals accumulate in U64 on CPU.
+def search_counts(-A: Type, value: A, blocks: U32, columns: U32, attempts: U32, exact: U32) -> IO(A):
+  import "./gate_metrics.c"
+
 # Force disposal inside the measured interval, including recursive drops.
 def dispose(-A: Type, phase: U32, value: A) -> IO(Unit):
   import "./gate_metrics.c"

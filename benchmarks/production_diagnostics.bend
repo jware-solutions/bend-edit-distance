@@ -162,6 +162,13 @@ def restored(+query: String, +target: String, +pairs: List<&2, E.EqualityPair>, 
     value : E.AlignResult <- restore(query, target, pairs, task, format, E.end_coordinate(columns), distance)
     return (Q.Prepared{query, pairs, length, Some{profile}, workspace}, value)
 
+def record_search_counts(value: K.Run) -> IO(K.Run):
+  K.Run{profile, workspace, K.Stats{distance, +blocks, +columns, +attempts}} = value
+  T.search_counts(K.Run, K.Run{profile, workspace, K.Stats{distance, blocks, columns, attempts}},
+    U32.from_nat(blocks), U32.from_nat(columns), U32.from_nat(attempts),
+    Bool.to_u32(Bool.and(Nat.is_le(blocks, 4294967295n),
+      Bool.and(Nat.is_le(columns, 4294967295n), Nat.is_le(attempts, 4294967295n)))))
+
 def search(owner: Q.Prepared, job: E.AlignJob) -> IO(Q.Prepared & E.AlignResult):
   match owner job:
     case prepared E.AlignJob{_, SNil{}, E.AlignConfig{mode, task, threshold, _, format}}:
@@ -172,7 +179,8 @@ def search(owner: Q.Prepared, job: E.AlignJob) -> IO(Q.Prepared & E.AlignResult)
         columns : Nat <- T.mark(Nat, 7, String.length(target))
         +shared : Nat = columns
         found : K.Run <- T.mark(K.Run, 4, Q.run_nw(target, profile, workspace, length, shared, threshold))
-        restored(query, target, pairs, length, shared, task, format, found)
+        counted : K.Run <- record_search_counts(found)
+        restored(query, target, pairs, length, shared, task, format, counted)
     case prepared E.AlignJob{_, target, E.AlignConfig{mode, task, threshold, _, format}}:
       T.mark(Q.Prepared & E.AlignResult, 1, L.align_prepared(prepared, target, Q.Options{mode, task, threshold, format}))
 

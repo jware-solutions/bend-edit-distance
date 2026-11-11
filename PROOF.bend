@@ -1868,3 +1868,18 @@ def Laws.cpu_owned_cutoff_129():
 
 def Laws.cpu_owned_empty_and_singleton():
   {==}
+
+def Laws.nw_orientation_original_endpoint():
+  {==}
+
+def Laws.nw_orientation_finite_direct():
+  {==}
+
+def Laws.prepared_wide_original_coordinates():
+  {==}
+
+def Laws.prepared_wide_threshold_rejection():
+  {==}
+
+def Laws.prepared_wide_threshold_acceptance():
+  {==}

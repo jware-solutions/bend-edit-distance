@@ -47,10 +47,10 @@ def session_results(binary, reference, *, gpu, repeats=2):
             assert prepared.align_batch(large, config, timeout=120) == [
                 ref.align(query, target, config) for target in large]
             bangs += 3
-        # Scalar prepared NW keeps one word in registers through long target
-        # scans; consecutive calls still reset the owned band workspace.
-        for length in (1, 7, 31, 32, 33, 63, 64, 65):
-            query = (b"A\0\xffN" * 17)[:length]
+        # Prepared NW crosses scalar/banded query boundaries through long
+        # targets; consecutive calls still reset the owned band workspace.
+        for length in (1, 7, 31, 32, 33, 63, 64, 65, 95, 96, 97, 127, 128, 129):
+            query = (b"A\0\xffN" * 33)[:length]
             values = [b"", query, b"Z" * 4097, bytes(range(256)), query]
             with w.prepare(query, pairs, timeout=60) as word:
                 for task in Task:
@@ -173,6 +173,11 @@ def test_gpu_entry_cpu_results(gpu_binary, bend_binary, cpp_binary, count):
 @pytest.mark.gpu
 def test_gpu_matches_edlib(gpu_device_probe, bend_binary, cpp_binary):
     jobs = mixed_jobs()
+    query = bytes(range(65))
+    target = bytes(range(256)) * 4 + bytes(range(17))
+    # Both ordinary input orders at a Phase 8 skew boundary. Successful
+    # responses must come from the synchronized device dispatch below.
+    jobs += [(query, target, AlignConfig()), (target, query, AlignConfig())]
     expected = expected_results(jobs, bend_binary, cpp_binary)
     for threads in (1, 4):
         for prefetch in (False, True):

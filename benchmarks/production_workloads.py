@@ -26,6 +26,33 @@ def substitute(sequence, positions, alphabet, rng):
     return bytes(value)
 
 
+def orientation_family(name, query_length, target_length, count, seed):
+    """Fixed public query, three target groups, with explicit input dimensions.
+
+    Shared-prefix families keep their edits in the common interval. Extra
+    symbols are real input, including their construction/traversal costs.
+    Reverse dimensions are separate requests, never a timed oracle selector.
+    """
+    if name in PREPARATION_FAMILIES or name not in FAMILIES:
+        raise ValueError("Orientation requires an alignment family")
+    if min(query_length, target_length, count) < 0:
+        raise ValueError("Negative orientation dimension")
+    common = min(query_length, target_length)
+    alphabet = bytes(range(256)) if name.startswith("bytes-") else b"ACGT"
+    rng = random.Random(seed ^ 0x8A41)
+    if common:
+        query, config, batches = family(name, common, count, seed)
+    else:
+        query, config = b"", AlignConfig()
+        batches = tuple(tuple((b"", b"", config) for _ in range(count)) for _ in range(3))
+    query += bytes(rng.choices(alphabet, k=query_length - common))
+    batches = tuple(tuple((query, t + bytes(rng.choices(alphabet, k=target_length - common)), c)
+                          for _, t, c in batch) for batch in batches)
+    if any(len(t) != target_length for batch in batches for _, t, _ in batch):
+        raise ValueError("Orientation family must preserve target length")
+    return query, config, batches
+
+
 def family(name, length, count, seed):
     """Return a retained query and three independently generated target batches.
 

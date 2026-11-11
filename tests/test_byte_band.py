@@ -99,6 +99,32 @@ def test_advertised_query_limit_and_larger_query_fallback(bend_binary, threads):
                 assert pooled._owned_limit == 65536
 
 
+@pytest.mark.parametrize("length", [65537, 131073, 1048576])
+def test_long_prepared_alignment_executes_compatible_route(bend_binary, length):
+    from benchmarks.production_gate import ObservedWorker
+    from alignment import Task
+    query = b'A' * length
+    changed = query[:-1] + b'C'
+    with ObservedWorker([bend_binary, *runtime_prefix(threads=1), '--worker', '--shards', '4']) as w:
+        with w.prepare(query, timeout=60) as owner:
+            charge = w.retained_bytes
+            # Actual finite-band execution above the owned limit, followed by
+            # rejection, a skewed unlimited search, and successful reuse.
+            for target, k, distance in [(changed, 1, 1), (changed, 0, -1), (query, 0, 0)]:
+                c = AlignConfig(threshold=MaxDistance(k))
+                assert owner.align(target, c, timeout=60).edit_distance == distance
+            skewed = owner.align(b'A', timeout=60)
+            assert skewed.edit_distance == length - 1
+            assert skewed.end_locations[0].to_edlib() == 0
+            assert owner.align_batch([query, changed], AlignConfig(task=Task.LOC, threshold=MaxDistance(1)),
+                                     timeout=60)[1].edit_distance == 1
+            assert w.retained_bytes == charge
+            assert all(op in (1, 2, 5, 8) for op in w.operations)
+            assert w._owned_limit == 65536
+            assert 2 in w.operations and 5 in w.operations and 6 not in w.operations and 7 not in w.operations
+        assert w.retained_bytes == w.retained_entries == 0
+
+
 def test_invalid_band_buffers_preserve_prepared_owner(packed_probe):
     done = subprocess.run([packed_probe, *runtime_prefix(threads=1), "band-bounds"],
         input=encode_request(b"A" * 257, b"A", AlignConfig()), capture_output=True, check=True, timeout=30)

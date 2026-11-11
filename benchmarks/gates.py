@@ -725,6 +725,7 @@ def parser(device):
         "owned-worker-single", "owned-worker-batch", "compatible-worker-single", "compatible-worker-batch"),
         help="Select gate execution boundary; repeatable. Default retains legacy controls")
     p.add_argument("--family", action="append", help="Seeded production family NAME:LENGTH; repeatable")
+    p.add_argument("--orientation-family", action="append", help="Production family NAME:QUERY_LENGTH:TARGET_LENGTH; repeatable, mutually exclusive with --family")
     p.add_argument("--configuration", action="append", help="Family configuration MODE:TASK:K:CIGAR, e.g. NW:PATH:2:EXTENDED; repeatable")
     p.add_argument("--seed", type=int, default=4862)
     p.add_argument("--shards", type=int, choices=(1, 2, 4), help="Requested owners (default: runtime threads)")
@@ -767,7 +768,7 @@ def main(argv=None, *, device=False):
     from benchmarks.runner import load_corpus, summarize
     p = parser(device)
     args = p.parse_args(argv)
-    if args.edlib_u32 and (device or not (args.mode or args.family)):
+    if args.edlib_u32 and (device or not (args.mode or args.family or args.orientation_family)):
         p.error("--edlib-u32 requires an explicit CPU production mode or family")
     if platform.system() != "Linux":
         p.error("Run through the Linux/WSL benchmark entry point")
@@ -798,15 +799,24 @@ def main(argv=None, *, device=False):
             p.error("Unknown --case")
         corpus = {**corpus, "cases": [c for c in corpus["cases"] if c["name"] in args.case]}
     suite = workloads(corpus, sizes, reuses)
-    if args.family:
-        from benchmarks.production_workloads import family
+    if args.family and args.orientation_family:
+        p.error("--family and --orientation-family are mutually exclusive")
+    if args.family or args.orientation_family:
+        from benchmarks.production_workloads import family, orientation_family
         suite = []
-        for specification in args.family:
+        for specification in args.family or args.orientation_family:
             try:
-                name, length = specification.split(":")
-                length = int(length)
+                if args.orientation_family:
+                    name, qn, tn = specification.split(":")
+                    qn, tn = int(qn), int(tn)
+                    dimensions = f"{qn}x{tn}"
+                else:
+                    name, length = specification.split(":")
+                    length = int(length)
+                    dimensions = str(length)
                 for count in sizes:
-                    query, config, batches = family(name, length, count, args.seed)
+                    query, config, batches = (orientation_family(name, qn, tn, count, args.seed)
+                        if args.orientation_family else family(name, length, count, args.seed))
                     configurations = [("", config)]
                     if args.configuration:
                         configurations = []
@@ -819,12 +829,12 @@ def main(argv=None, *, device=False):
                     for suffix, configured in configurations:
                         configured_batches = tuple(tuple((q, t, configured) for q, t, _ in batch) for batch in batches)
                         for reuse in reuses:
-                            suite.append(Workload(f"{name}-{length}/{count}/r{reuse}{suffix}", configured_batches[0],
+                            suite.append(Workload(f"{name}-{dimensions}/{count}/r{reuse}{suffix}", configured_batches[0],
                                 batches=configured_batches, reuse_count=reuse, prepared_query=(query, configured), seed=args.seed))
             except ValueError as error:
                 p.error(str(error))
     elif args.configuration:
-        p.error("--configuration requires --family")
+        p.error("--configuration requires --family or --orientation-family")
     if args.workload:
         if set(args.workload) - {w.name for w in suite}:
             p.error("Unknown --workload")
@@ -885,7 +895,7 @@ def main(argv=None, *, device=False):
             document["environment"]["nvidia_smi"] = run_command(["nvidia-smi", "--query-gpu=name,uuid,driver_version,memory.total", "--format=csv,noheader"])
         from benchmarks.production_gate import provenance, run as run_production
         document["provenance"] = provenance(args, cc, cxx, compilers)
-        if args.mode or args.family:
+        if args.mode or args.family or args.orientation_family:
             if device:
                 raise ValueError("Explicit production modes currently require the CPU gate")
             run_production(args, document, suite, cpus, bends, cc, cxx, output)

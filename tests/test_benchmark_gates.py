@@ -68,6 +68,35 @@ def test_session_replicas_keep_inputs_reuse_and_process_keys_distinct():
             gates.replicate_sessions([w], count)
 
 
+@pytest.mark.parametrize("qn,tn", [(0, 0), (0, 33), (33, 0), (31, 33), (33, 31),
+                                    (65, 129), (129, 65), (4097, 1025)])
+@pytest.mark.parametrize("name", ["one", "dna-random", "bytes-random", "equalities"])
+def test_orientation_families_include_real_dimensions_and_fixed_query(qn, tn, name):
+    from benchmarks.production_workloads import orientation_family
+    a = orientation_family(name, qn, tn, 8, 831)
+    assert a == orientation_family(name, qn, tn, 8, 831)
+    q, config, batches = a
+    assert len(q) == qn and len(batches) == 3
+    assert all(len(batch) == 8 for batch in batches)
+    assert all(query == q and len(target) == tn and c == config
+               for batch in batches for query, target, c in batch)
+    if qn and tn:
+        assert len(set(batches)) == 3
+    if name == "one" and qn and tn:
+        assert set(q) <= set(b"ACGT")
+        for batch in batches:
+            for _, target, _ in batch:
+                assert set(target) <= set(b"ACGT")
+                assert sum(a != b for a, b in zip(q, target)) == 1
+
+
+def test_orientation_families_fail_closed_on_length_changing_families():
+    from benchmarks.production_workloads import orientation_family
+    for name, qn, tn in [("indel", 65, 129), ("prep-dna", 65, 129), ("one", -1, 32)]:
+        with pytest.raises(ValueError):
+            orientation_family(name, qn, tn, 8, 3)
+
+
 def test_corpus_preserved_and_additions_reproducible():
     corpus = load_corpus(ROOT / "benchmarks/corpus.json")
     a = gates.workloads(corpus, [1, 4], [1, 2, 8])
@@ -448,6 +477,9 @@ def test_production_allocation_stages_are_separate(bend_tool, cpp_binary, tmp_pa
         values, metrics = search.call(w.jobs)
         assert all(r.edit_distance == 1 for r in values)
         assert metrics['search_ns'] > 0 and metrics['result_ns'] > 0
+        assert metrics['search_counts_exact'] == 1
+        assert metrics['searched_columns'] == 320 and metrics['search_attempts'] == 2
+        assert metrics['searched_blocks'] > 0
         search.worker.finish()
     finally:
         search.close()

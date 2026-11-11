@@ -7,6 +7,10 @@
 static uint64_t gate_last, gate_phases[10];
 static uint32_t gate_owners;
 static uint32_t gate_leaves;
+#if defined(CID(search_counts))
+static uint64_t gate_blocks, gate_columns, gate_attempts;
+static uint32_t gate_counts_exact;
+#endif
 #ifdef GATE_ALLOCATIONS
 static uint64_t gate_live_start;
 static uint64_t gate_phase_live[10], gate_phase_peak[10];
@@ -36,6 +40,10 @@ Term ready_run(Env e, Term* f, IoWork* w) {
 Term reset_run(Env e, Term* f, IoWork* w) {
   memset(gate_phases, 0, sizeof(gate_phases));
   gate_leaves = 0;
+#if defined(CID(search_counts))
+  gate_blocks = gate_columns = gate_attempts = 0;
+  gate_counts_exact = 1;
+#endif
 #ifdef GATE_DEVICE_EVIDENCE
   bend_completed_bangs = bend_scheduler_ns = 0;
   bend_sync_batches = bend_rounds_submitted = 0;
@@ -80,6 +88,11 @@ Term finish_run(Env e, Term* f, IoWork* w) {
   for (unsigned i = 0; i < 10; ++i)
     fprintf(stderr, "%s%" PRIu64, i ? "," : "", gate_phases[i]);
   fprintf(stderr, "],\"effective_owners\":%u,\"planned_active_leaves\":%u", gate_owners, gate_leaves);
+#if defined(CID(search_counts))
+  fprintf(stderr, ",\"searched_blocks\":%" PRIu64 ",\"searched_columns\":%" PRIu64
+    ",\"search_attempts\":%" PRIu64 ",\"search_counts_exact\":%u",
+    gate_blocks, gate_columns, gate_attempts, gate_counts_exact);
+#endif
 #ifdef GATE_DEVICE_EVIDENCE
   fprintf(stderr, ",\"device_completed_bangs\":%" PRIu64
     ",\"device_scheduler_ns\":%" PRIu64
@@ -125,6 +138,17 @@ Term leaves_run(Env e, Term* f, IoWork* w) {
   return f[0];
 }
 
+#if defined(CID(search_counts))
+Term search_counts_run(Env e, Term* f, IoWork* w) {
+  gate_blocks += (u32)f[1];
+  gate_columns += (u32)f[2];
+  gate_attempts += (u32)f[3];
+  gate_counts_exact &= (u32)f[4];
+  gate_last = gate_now();
+  return f[0];
+}
+#endif
+
 Term dispose_run(Env e, Term* f, IoWork* w) {
   if ((u32)f[0] >= 10) abort();
   term_drop(e, f[1]);
@@ -148,6 +172,9 @@ static void __attribute__((constructor)) gate_effects(void) {
   io_eff(CID(owners), owners_run);
 #if defined(CID(leaves))
   io_eff(CID(leaves), leaves_run);
+#endif
+#if defined(CID(search_counts))
+  io_eff(CID(search_counts), search_counts_run);
 #endif
 #if defined(CID(dispose))
   io_eff(CID(dispose), dispose_run);

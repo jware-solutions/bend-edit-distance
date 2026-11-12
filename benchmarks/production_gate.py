@@ -214,12 +214,17 @@ def applicable(mode, w):
 
 
 class Service:
-    def __init__(self, binary, mode, w, thread, shards, timeout, *, reference=False, observed=False, fresh=False, adapter=wire):
+    def __init__(self, binary, mode, w, thread, shards, timeout, *, reference=False, observed=False, fresh=False, adapter=wire,
+                 gpu="off", cuda_entry=False):
         self.mode, self.timeout = mode, timeout
         self.adapter, self.observed = adapter, observed
         self.fresh = fresh and not mode.startswith("ordinary")
         self.query, self.config = prepared_definition(w) if not mode.startswith("ordinary") else (None, None)
-        argv = [binary, str(thread)] if reference else [binary, *runtime_prefix(threads=thread, gpu="off"), "--worker", "--shards", str(shards)]
+        if reference and (gpu != "off" or cuda_entry):
+            raise ValueError("Edlib service cannot execute CUDA")
+        argv = ([binary, str(thread)] if reference else
+                [binary, *runtime_prefix(threads=thread, gpu=gpu), "--worker",
+                 *([] if cuda_entry else ["--shards", str(shards)])])
         cls = observed_worker(adapter) if observed else adapter.AlignmentWorker
         started = time.monotonic_ns()
         self.worker = cls(argv, cwd=G.ROOT)
@@ -305,9 +310,12 @@ class Service:
 
 
 class Native:
-    def __init__(self, binary, mode, w, thread, shards, timeout, rounds, launcher=None):
+    def __init__(self, binary, mode, w, thread, shards, timeout, rounds, launcher=None, *, gpu="off"):
         self.mode, self.count = mode, len(w.jobs)
-        argv = [binary, *runtime_prefix(threads=thread, gpu="off"), mode, self.count, rounds]
+        self.device = gpu != "off"
+        if self.device and mode != "string-batch":
+            raise ValueError("Native CUDA attribution requires the retained String batch entry")
+        argv = [binary, *runtime_prefix(threads=thread, gpu=gpu), mode, self.count, rounds]
         if mode in API_MODES:
             argv.append(shards)
         if launcher is not None:
@@ -328,6 +336,8 @@ class Native:
                                             {"status": "setup-only process; use launcher exit usage"})
 
     def call(self, jobs):
+        if self.device and len(jobs) != self.count:
+            raise RuntimeError("Native CUDA request changed its framed target count")
         if self.mode == "owned-diagnostic":
             body = b"".join(LENGTH.pack(len(sequence_bytes(t))) + sequence_bytes(t) for _, t, _ in jobs)
             payload = wire.encode_control(7, count=len(jobs), body=body, pairs=len(body))
@@ -335,6 +345,10 @@ class Native:
             payload = b"".join(encode_request(b"", t, c) if self.mode in API_MODES else encode_request(q, t, c)
                                for q, t, c in jobs)
         values, sample = self.worker.request(payload, len(jobs))
+        if self.device:
+            from benchmarks.session_runner import validate_native_cuda
+            validate_native_cuda(sample, len(jobs), self.setup["effective_owners"])
+            sample["native_api_ns"] = sample["total_cost_ns"]
         if self.mode in ("prepare-batch", "prepare-clone", "profile-only"):
             self.setup["effective_owners"] = sample["effective_owners"]
         return values, sample
@@ -343,7 +357,7 @@ class Native:
         self.worker.close()
 
 
-def build_references(directory, cxx, optimization, *, u32=False):
+def build_references(directory, cxx, optimization, *, u32=False, native_metrics=False):
     directory.mkdir(parents=True)
     binaries, metadata = {}, {}
     source = G.ROOT / "vendor/edlib/edlib"
@@ -363,6 +377,8 @@ def build_references(directory, cxx, optimization, *, u32=False):
             "pinned_source_sha256": G.digest(original.encode()),
             "audit": "Word unsigned; WORD_SIZE=sizeof(Word)*8; WORD_1 typed; HIGH_BIT_MASK shifts by WORD_SIZE-1; Peq construction, block shifts and getBlockCellValues use WORD_SIZE; no other hard-coded 64/63/32 constants in pinned source"}
     for name, extra in variants:
+        if native_metrics:
+            extra = [*extra, "-DBEND_EDLIB_NATIVE_METRICS=1"]
         binary = directory / name
         argv = [*cxx, "-std=c++14", optimization, "-DNDEBUG", "-pthread", *extra,
                 f'-DEDLIB_CONTROL_WORD_BITS={32 if "u32" in name else 64}',
@@ -370,7 +386,7 @@ def build_references(directory, cxx, optimization, *, u32=False):
         started = time.monotonic_ns()
         G.run_command(argv)
         binaries[name] = binary
-        metadata[name] = {"command": list(map(str, argv)), "compile_ns": time.monotonic_ns() - started,
+        metadata[name] = {"command": list(map(str, argv)), "native_metrics": native_metrics, "compile_ns": time.monotonic_ns() - started,
                           "binary_bytes": binary.stat().st_size, "binary_sha256": G.digest(binary.read_bytes())}
     binary = directory / "oracle"
     argv = [*cxx, "-std=c++14", optimization, "-DNDEBUG", "-I", source / "include",

@@ -186,3 +186,21 @@ def test_general_hw_nonzero_ties_across_every_padding_length(bend_binary, cpp_bi
                 prepared.align(query[::-1], AlignConfig(Mode.SHW, Task.DISTANCE, equalities=pairs))
                 assert prepared.align(target, config) == prepared.align(target, config)
             assert worker.retained_bytes == 0
+
+
+def test_hw_one_path_completion_control_has_independent_cpu_parity(bend_binary, cpp_binary):
+    import hashlib
+    from benchmarks.production_workloads import family
+    from benchmarks.gates import Workload, validate
+    from bend_runtime import runtime_prefix
+    from transport import AlignmentWorker
+    from tests.helpers import cpp_edlib_align
+    query, config, batches = family('hw-one-path', 4096, 2, 10095)
+    assert hashlib.sha256(query).hexdigest() == '4315345157a0e348d44ffb0dc30314159513f2143646f92dc8f14f534a4383ea'
+    with AlignmentWorker([bend_binary, *runtime_prefix(threads=4), '--worker', '--shards', '4']) as worker:
+        with worker.prepare(query) as prepared:
+            for jobs in batches:
+                results = prepared.align_batch([t for _, t, _ in jobs], config, timeout=120)
+                expected = [cpp_edlib_align(*job, binary=cpp_binary, timeout=120) for job in jobs]
+                assert [r.edit_distance for r in results] == [0, 1]
+                validate(results, expected, Workload('hw-one-path', jobs))

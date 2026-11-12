@@ -70,7 +70,7 @@ Term mark_run(Env e, Term* f, IoWork* w) {
   if ((u32)f[0] >= 14) abort();
   gate_phases[(u32)f[0]] += now - gate_last;
   gate_last = now;
-#ifdef GATE_SCRATCH_TRACE
+#if defined(GATE_SCRATCH_TRACE) && !defined(GATE_TRACE_FULL_ROUND)
   if ((u32)f[0] == 3) gate_trace_stop();
 #endif
 #ifdef GATE_ALLOCATIONS

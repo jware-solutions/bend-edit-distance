@@ -1910,3 +1910,19 @@ def Laws.restoration_empty_interval_consumption():
 
 def Laws.restoration_matrix_cell_boundary():
   {==}
+
+def Laws.cuda_empty_waves_restore_pool(fuel, pool, options, known):
+  match fuel pool:
+    case 0n PP.Pool{owners, shards, length, budget}:
+      {==}
+    case 1n+p PP.Pool{owners, shards, length, budget}:
+      {==}
+
+def Laws.cuda_wave_join_order(pool, before, after):
+  {==}
+
+def Laws.cuda_wave_reindex_two(a, b, an, bn, aw, bw):
+  {==}
+
+def Laws.cuda_wave_uneven_split(a, b, c):
+  {==}

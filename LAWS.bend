@@ -2183,3 +2183,35 @@ law restoration_empty_interval_consumption:
 law restoration_matrix_cell_boundary:
   {(R.small_matrix(63n, 62n), R.small_matrix(63n, 63n), R.small_matrix(63n, 64n)) ==
     (True{}, True{}, False{}) : Bool & Bool & Bool}
+
+# CUDA wave planning is bounded by independent owners. Each wave is reindexed
+# locally and its ordered results are concatenated in public input order.
+law cuda_empty_waves_restore_pool:
+  for fuel: Nat
+  for pool: PP.Pool
+  for options: Q.Options
+  for known: Bool
+  {G.waves(fuel, pool, Nil{}, options, known) == (pool, Nil{}) : PP.Pool & List<&2, E.AlignResult>}
+
+law cuda_wave_join_order:
+  for pool: PP.Pool
+  for before: List<&2, E.AlignResult>
+  for after: List<&2, E.AlignResult>
+  {G.wave_join(before, (pool, after)) == (pool, List.append(&2, E.AlignResult, before, after)) : PP.Pool & List<&2, E.AlignResult>}
+
+law cuda_wave_reindex_two:
+  for a: String
+  for b: String
+  for an: Nat
+  for bn: Nat
+  for aw: F32
+  for bw: F32
+  {PP.reindex([PP.Target{91n, a, an, aw}, PP.Target{3n, b, bn, bw}], 0n) ==
+    [PP.Target{0n, a, an, aw}, PP.Target{1n, b, bn, bw}] : List<&2, PP.Target>}
+
+law cuda_wave_uneven_split:
+  for a: PP.Target
+  for b: PP.Target
+  for c: PP.Target
+  {(List.take(&2, PP.Target, [a, b, c], 2n), List.drop(&2, PP.Target, [a, b, c], 2n)) ==
+    ([a, b], [c]) : List<&2, PP.Target> & List<&2, PP.Target>}

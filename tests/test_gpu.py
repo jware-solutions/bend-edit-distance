@@ -226,3 +226,119 @@ def test_direct_equality_masks_in_prepared_cuda_owners(gpu_session_probe, bend_b
             assert w.retained_bytes == w.retained_entries == 0
     assert w.process.returncode == 0, w._diagnostics
     session_metrics(w._diagnostics, bangs)  # Requires positive synchronized completion.
+
+
+@pytest.mark.gpu
+def test_each_prepared_cuda_request_has_its_own_completion(gpu_session_probe, cpp_binary):
+    from benchmarks.session_runner import RequestEvidence, wave_plan
+    from alignment import Mode, Task, MaxDistance, CigarFormat, EqualityPair
+    from transport import AlignmentWorker
+    import random
+    rng = random.Random(10031)
+    # This small profile retains the requested 1,024 independent owners;
+    # separate production owner-count diagnostics cover budget-limited pools.
+    query = bytes(rng.choices(b'ACGT', k=33))
+    pairs = (EqualityPair('A', 'N'), EqualityPair('N', 'C'))
+    with AlignmentWorker([gpu_session_probe, *runtime_prefix(threads=2, gpu='1GB'), '--worker']) as worker:
+        evidence = RequestEvidence(worker)
+        prepared = worker.prepare(query, pairs, timeout=120)
+        evidence.read(1, 0)
+        # Exercise real capability negotiation/rejection and compatible retry.
+        target = query[:-1] + b'N'
+        value = prepared.align(target, AlignConfig(equalities=pairs), timeout=120)
+        evidence.read(6, 0)  # <=64 probes op6 directly, then falls back to op2.
+        evidence.read(2, 1)
+        assert value == cpp_edlib_align(query, target, AlignConfig(equalities=pairs), binary=cpp_binary)
+        worker._owned_supported = {6: False, 7: False}
+        charge = worker.retained_bytes
+        for count in (0, 1, 2, 8, 32, 128, 512, 1023, 1024, 1025, 2051):
+            targets = [bytes(rng.choices(b'ACGTN\0\xff', k=i % 35)) for i in range(count)]
+            config = AlignConfig(threshold=MaxDistance(1), equalities=pairs)
+            actual = prepared.align_batch(targets, config, timeout=120)
+            evidence.read(5, len(wave_plan(count, 1024)))
+            for target, result in zip(targets, actual):
+                assert result == cpp_edlib_align(query, target, config, binary=cpp_binary)
+            assert worker.retained_bytes == charge
+        # Successive task/mode/format changes retain ordered tied endpoints and
+        # validate complete paths against independent public Edlib.
+        targets = [query, query[:-1] + b'Z', b'Z' + query + b'ZZ' + query, b'']
+        for mode in Mode:
+            for task in Task:
+                for format in CigarFormat:
+                    config = AlignConfig(mode, task, equalities=pairs, cigar_format=format)
+                    actual = prepared.align_batch(targets, config, timeout=120)
+                    evidence.read(5, 1)
+                    for target, result in zip(targets, actual):
+                        expected = cpp_edlib_align(query, target, config, binary=cpp_binary)
+                        assert (result.status, result.distance, result.end_locations, result.start_locations) == (
+                            expected.status, expected.distance, expected.end_locations, expected.start_locations)
+                        assert_valid_path(query, target, config, result)
+        jobs = [(b'A', b'A', AlignConfig()), (b'AC', b'CA', AlignConfig()),
+                (b'\0\xff', b'\xff', AlignConfig())]
+        assert worker.align_batch(jobs, timeout=120) == [
+            cpp_edlib_align(*job, binary=cpp_binary) for job in jobs]
+        evidence.read(4, 1)  # Nested BED1 input frames form one ordinary bang.
+        prepared.release()
+        evidence.read(3, 0)
+        assert worker.retained_bytes == worker.retained_entries == 0
+        assert not prepared.release()
+
+
+@pytest.mark.gpu
+def test_cuda_padding_capacity_and_reprepare_boundaries(gpu_session_probe, cpp_binary):
+    from benchmarks.session_runner import RequestEvidence
+    from transport import AlignmentWorker
+    from alignment import MaxDistance
+    with AlignmentWorker([gpu_session_probe, *runtime_prefix(threads=1, gpu='1GB'), '--worker']) as worker:
+        evidence = RequestEvidence(worker)
+        worker._owned_supported = {6: False, 7: False}
+        lengths = [*range(65, 97), 127, 128, 129, 4095, 4096, 4097, 65535, 65536, 65537]
+        for length in lengths:
+            query = (bytes(range(256)) * ((length + 255) // 256))[:length]
+            prepared = worker.prepare(query, timeout=120)
+            evidence.read(1, 0)
+            # One target is independent of retained-owner count. The long
+            # controls reject by length; high-distance long searches are bounded
+            # separately and cannot be inferred from these eligibility checks.
+            # Three real mismatches fail the zero/one certificate. Missing
+            # byte 255 forces the mask/padding route for every short final-word
+            # length, rather than validating padding with a certified hit.
+            config = AlignConfig() if length < 4095 else AlignConfig(threshold=MaxDistance(0))
+            target = query[:-3] + b'\xff' * 3 if length < 4095 else b'Z'
+            values = prepared.align_batch([target], config, timeout=120)
+            evidence.read(5, 1)
+            assert values == [cpp_edlib_align(query, target, config, binary=cpp_binary)]
+            prepared.release()
+            evidence.read(3, 0)
+            assert worker.retained_bytes == worker.retained_entries == 0
+        maximum = worker.prepare(b'A' * 1048576, timeout=120)
+        evidence.read(1, 0)
+        assert worker.retained_entries == 1
+        maximum.release()
+        evidence.read(3, 0)
+        assert worker.retained_bytes == 0
+
+
+@pytest.mark.gpu
+def test_budget_limited_cuda_pool_crosses_actual_owner_boundary(gpu_session_probe, cpp_binary):
+    from transport import AlignmentWorker
+    from benchmarks.session_runner import RequestEvidence, wave_plan
+    from alignment import MaxDistance
+    # All 256 rows, 2,049 logical U32 words rounded to stride 4,096. The
+    # selected pool accounting retains four independent owners, not 1,024.
+    query = (bytes(range(256)) * 257)[:65537]
+    with AlignmentWorker([gpu_session_probe, *runtime_prefix(threads=4, gpu='1GB'), '--worker']) as worker:
+        worker._owned_supported = {6: False, 7: False}
+        evidence = RequestEvidence(worker)
+        prepared = worker.prepare(query, timeout=120)
+        evidence.read(1, 0)
+        assert worker.retained_bytes == 19157024
+        for count in (3, 4, 5, 9):
+            targets = [bytes([i]) * (i + 1) for i in range(count)]
+            config = AlignConfig(threshold=MaxDistance(0))
+            results = prepared.align_batch(targets, config, timeout=120)
+            evidence.read(5, len(wave_plan(count, 4)))
+            assert results == [cpp_edlib_align(query, target, config, binary=cpp_binary) for target in targets]
+        prepared.release()
+        evidence.read(3, 0)
+        assert worker.retained_bytes == worker.retained_entries == 0

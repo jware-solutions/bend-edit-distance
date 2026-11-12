@@ -910,7 +910,9 @@ def test_restoration_families_have_independent_groups_and_real_hw_ties():
         for batch in batches:
             for query, target, c in batch:
                 assert query == q and c == config
-                if name.startswith('hw-') and name != 'hw-fixed':
+                if name == 'hw-one-path':
+                    assert gates.dp_distance(query, target, c) == int(query != target)
+                elif name.startswith('hw-') and name != 'hw-fixed':
                     assert q not in target  # Every island needs a nonzero edit.
                 if name == 'restore-16':
                     assert scalar(query, target, ())[len(target)] == 16
@@ -946,3 +948,139 @@ def test_restoration_metrics_reject_incomplete_or_invalid_slots(phases):
         worker.process = SimpleNamespace(stdin=sink)
         with pytest.raises(RuntimeError, match='Invalid phase metrics'):
             worker.request(b'', 0)
+
+
+@pytest.mark.parametrize('count,owners,limit,expected', [
+    (0, 1024, 1024, []), (1, 1, 1, [1]), (2, 1, 1024, [1, 1]),
+    (8, 32, 4, [4, 4]), (32, 32, 31, [31, 1]), (128, 32, 1024, [32] * 4),
+    (1023, 1024, 1024, [1023]), (1024, 1024, 1024, [1024]),
+    (1025, 1024, 1024, [1024, 1]), (2051, 1024, 1024, [1024, 1024, 3]),
+    (2051, 32, 64, [32] * 64 + [3]), (65536, 1, 1, [1] * 65536),
+])
+def test_prepared_cuda_wave_plan_has_exact_coverage(count, owners, limit, expected):
+    from benchmarks.session_runner import wave_plan
+    sizes = wave_plan(count, owners, limit)
+    assert sizes == expected
+    assert sum(sizes) == count and len(sizes) <= 65536
+    assert all(0 < n <= min(owners, limit, 1024) for n in sizes)
+
+
+@pytest.mark.parametrize('args', [(-1, 1, 1), (65537, 1, 1), (1, 0, 1),
+                                  (1, 1, 0), (1, 1, 1025), (True, 1, 1)])
+def test_prepared_cuda_wave_plan_rejects_invalid_bounds(args):
+    from benchmarks.session_runner import wave_plan
+    with pytest.raises(ValueError):
+        wave_plan(*args)
+
+
+def test_request_completion_is_exact_and_cannot_borrow_another_request():
+    from benchmarks.session_runner import request_metrics, REQUEST_PREFIX
+    valid = dict(schema=1, request=4, operation=5, backend='cuda', native_request_ns=100,
+                 bangs=3, scheduler_ns=80, syncs=4, rounds=7)
+    def parse(value, **kw):
+        return request_metrics(REQUEST_PREFIX + json.dumps(value),
+                               request=4, operation=5, expected_bangs=3, device=True, **kw)
+    assert parse(valid) == valid
+    for changes in [dict(request=3), dict(operation=2), dict(backend='cpu'), dict(bangs=2),
+                    dict(bangs=4), dict(syncs=2), dict(rounds=3), dict(rounds=257),
+                    dict(scheduler_ns=101), dict(scheduler_ns=0), dict(bangs=True), dict(extra=0)]:
+        with pytest.raises(RuntimeError, match='request evidence'):
+            parse({**valid, **changes})
+    for raw in ['', REQUEST_PREFIX + '{', REQUEST_PREFIX + '{}', REQUEST_PREFIX + 'null']:
+        with pytest.raises(RuntimeError):
+            request_metrics(raw, request=1, operation=5, expected_bangs=1, device=True)
+    empty = dict(valid, request=5, bangs=0, scheduler_ns=0, syncs=0, rounds=0)
+    assert request_metrics(REQUEST_PREFIX + json.dumps(empty), request=5, operation=5,
+                           expected_bangs=0, device=True) == empty
+    with pytest.raises(RuntimeError):
+        request_metrics(REQUEST_PREFIX + json.dumps(valid), request=4, operation=5,
+                        expected_bangs=3, device=False)
+
+
+def test_persistent_request_hooks_fail_closed():
+    from benchmarks import gpu_runner as gpu
+    from benchmarks.session_runner import instrument_session
+    body = '\n'.join(['#define BANGS 3',
+        '#if BEND_METAL || BEND_CUDA\n\nstatic void gpu_kernel(u32 pass, u32 at);',
+        gpu.CUDA_PASS_2040, gpu.GPU_RUN, gpu.CUDA_KERNEL, gpu.BRANCH,
+        'static void cube_run(u64* H, bool gpu) {',
+        'static Term be_request(Env e, uint32_t target_cid) {',
+        '    if (!state) return term_pak(CID_src_Transport_End, 0);'])
+    text = instrument_session(body, requests=True)
+    assert '#define BANGS 3' in text and text.count('    session_finish();') == 1
+    assert text.count('    session_begin(r.version, r.operation, r.query_length);') == 1
+    assert 'session_nested = version == 2 && op == 4 ? count : 0;' in text
+    for changed in [body + '\n#define BANGS 3', body.replace('uint32_t target_cid', 'unsigned target_cid'),
+                    body + '\n    if (!state) return term_pak(CID_src_Transport_End, 0);']:
+        with pytest.raises(RuntimeError, match='Review'):
+            instrument_session(changed, requests=True)
+
+
+def test_gpu_build_removes_stale_sidecar_and_rejects_missing_output(tmp_path, monkeypatch):
+    from benchmarks import gpu_runner as gpu
+    binary = tmp_path / 'probe'
+    sidecar = Path(str(binary) + '.gpu')
+    sidecar.write_bytes(b'stale-device-program')
+    def fake_command(*args, **kwargs):
+        assert not sidecar.exists()
+    monkeypatch.setattr(gpu, 'command', fake_command)
+    with pytest.raises(RuntimeError, match='no device program'):
+        gpu.require_gpu_build(binary)
+
+
+def test_native_edlib_metrics_reject_wrong_backend_width_count_and_values():
+    from benchmarks.session_runner import native_reference_metrics
+    fields = dict(native_api_ns=10, count=3, word_bits=64, backend='public-edlib')
+    def parse(value):
+        return native_reference_metrics('BEND_EDLIB_NATIVE ' + json.dumps(value),
+                                         backend='public-edlib', count=3)
+    assert parse(fields) == fields
+    for change in [dict(word_bits=32), dict(count=2), dict(native_api_ns=-1),
+                   dict(native_api_ns=True), dict(backend='internal-cached-edlib'), dict(extra=0)]:
+        with pytest.raises(RuntimeError):
+            parse({**fields, **change})
+    for bad in [None, [], {}, 'wrong']:
+        with pytest.raises(RuntimeError):
+            parse(bad)
+
+
+def test_optional_native_edlib_boundaries_keep_full_ordered_results(tmp_path):
+    import os
+    import shlex
+    from benchmarks.production_gate import build_references
+    from benchmarks.session_runner import native_reference_metrics
+    from alignment import EqualityPair
+    from transport import AlignmentWorker
+    refs, meta = build_references(tmp_path / 'native-references',
+        shlex.split(os.environ.get('CXX', 'g++')), '-O3', native_metrics=True)
+    query = b'A\0\xffNC'
+    pairs = (EqualityPair('A', 'N'), EqualityPair('N', 'C'))
+    config = AlignConfig(equalities=pairs)
+    groups = [[], [query, b'C\0\xffNA', b''], [query[::-1]]]
+    for name in ('public', 'cached'):
+        assert meta[name]['native_metrics']
+        with AlignmentWorker([refs[name], '2']) as worker:
+            with worker.prepare(query, pairs) as owner:
+                worker._owned_supported = {6: False, 7: False}
+                for targets in groups:
+                    results = owner.align_batch(targets, config)
+                    assert [r.edit_distance for r in results] == [
+                        gates.dp_distance(query, t, config) for t in targets]
+        lines = worker._diagnostics.splitlines()
+        assert len(lines) == len(groups)
+        for line, targets in zip(lines, groups):
+            native_reference_metrics(line, backend='public-edlib' if name == 'public' else 'internal-cached-edlib', count=len(targets))
+
+
+def test_native_cuda_completion_requires_exact_wave_plan():
+    from benchmarks.session_runner import validate_native_cuda
+    fields = dict(work_ns=100, device_completed_bangs=3, device_scheduler_ns=80,
+                  device_sync_batches=3, device_rounds_submitted=7)
+    validate_native_cuda(fields, 2051, 1024)
+    with pytest.raises(RuntimeError, match='exact wave plan'):
+        validate_native_cuda(fields, 1025, 1024)
+    with pytest.raises(RuntimeError, match='fallback'):
+        validate_native_cuda(dict(work_ns=100), 1, 1024)
+    validate_native_cuda(dict(work_ns=100), 0, 1024)
+    with pytest.raises(RuntimeError, match='unexpectedly'):
+        validate_native_cuda(fields, 0, 1024)

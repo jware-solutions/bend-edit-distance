@@ -463,7 +463,7 @@ def snapshot(root, destination):
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(path, target)
         hashes[str(relative)] = digest(target.read_bytes())
-    for name in ("gate_probe.bend", "gate_input.bend", "gate_metrics.bend", "gate_metrics.c", "production_api.bend", "production_diagnostics.bend", "production_preparation.bend", "profile_preparation.bend", "compatible_worker.bend"):
+    for name in ("gate_probe.bend", "gate_input.bend", "gate_metrics.bend", "gate_metrics.c", "production_api.bend", "production_diagnostics.bend", "production_preparation.bend", "profile_preparation.bend", "compatible_worker.bend", "session_api.bend"):
         target = destination / "benchmarks" / name
         target.parent.mkdir(exist_ok=True)
         shutil.copyfile(ROOT / "benchmarks" / name, target)
@@ -575,7 +575,7 @@ def build(root, directory, bend, cc, flags, *, device=False, allocations=False,
         raise RuntimeError("Selected Bend compiler changed before build")
     hashes = snapshot(root, directory / "source")
     entry = directory / "source" / entry_name
-    if device:
+    if device and entry_name != "benchmarks/session_api.bend":
         text = entry.read_text()
         if text.count("  B.execute(plan)") != 1:
             raise RuntimeError("Review GPU benchmark entry substitution")

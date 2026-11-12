@@ -16,7 +16,7 @@ PREPARATION_FAMILIES = ("prep-one", "prep-small", "prep-dna", "prep-bytes", "pre
 
 RESTORATION_FAMILIES = ("restore-small", "restore-16", "restore-17", "restore-general", "restore-skew",
                         "restore-validation", "hw-unique", "hw-several", "hw-many", "hw-prefix", "hw-fixed",
-                        "cigar-homogeneous", "cigar-alternating")
+                        "cigar-homogeneous", "cigar-alternating", "hw-one-path")
 
 FAMILIES = (*PREPARATION_FAMILIES, *RESTORATION_FAMILIES, "identical", "bytes-identical", "one", "two", "two-adjacent", "sparse", "indel", "dna-random", "bytes-random", "equalities",
             "bytes-one", "bytes-two", "bytes-sparse", "rotation", "burst", "dense-prefix", "dense-suffix",
@@ -66,6 +66,13 @@ def family(name, length, count, seed):
     """
     if name not in FAMILIES or length < 1 or count < 0:
         raise ValueError("Invalid production family")
+    if name == "hw-one-path":
+        rng = random.Random(seed)
+        query = bytes(rng.choices(b"ACGT", k=length))
+        config = AlignConfig(Mode.HW, Task.PATH)
+        batches = tuple(tuple((query, query if i % 2 == 0 else
+            query[:-1] + bytes([b"ZYX"[group]]), config) for i in range(count)) for group in range(3))
+        return query, config, batches
     if name in PREPARATION_FAMILIES:
         return preparation_family(name, length, count, seed)
     if name in RESTORATION_FAMILIES:

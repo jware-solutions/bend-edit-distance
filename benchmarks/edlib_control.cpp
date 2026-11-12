@@ -21,6 +21,9 @@ static_assert(sizeof(Word) * 8 == EDLIB_CONTROL_WORD_BITS, "unexpected diagnosti
 #include <thread>
 #include <utility>
 #include <vector>
+#ifdef BEND_EDLIB_NATIVE_METRICS
+#include <chrono>
+#endif
 
 struct Query {
     std::string text;
@@ -140,6 +143,30 @@ public:
         return rs;
     }
 };
+// Optional attribution binary only. The service controls leave this disabled.
+// This boundary includes result-vector allocation, thread dispatch, public
+// edlibAlign/free (or explicitly internal cached search), and the ordered join.
+#ifdef BEND_EDLIB_NATIVE_METRICS
+static std::vector<int> native_run(Workers &workers, const Query &q,
+                                 const std::vector<Span> &ts, int maximum,
+                                 const std::vector<Query> *jobs = nullptr) {
+    const auto started = std::chrono::steady_clock::now();
+    auto scores = workers.run(q, ts, maximum, jobs);
+    auto ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+        std::chrono::steady_clock::now() - started).count();
+    fprintf(stderr, "BEND_EDLIB_NATIVE {\"native_api_ns\":%llu,\"count\":%zu,\"word_bits\":%zu,\"backend\":\"%s\"}\n",
+        (unsigned long long)ns, ts.size(), sizeof(Word) * 8,
+#ifdef CACHED_PROFILE
+        "internal-cached-edlib"
+#else
+        "public-edlib"
+#endif
+    );
+    return scores;
+}
+#else
+#define native_run(workers, ...) (workers).run(__VA_ARGS__)
+#endif
 static void control(unsigned op, unsigned status, uint32_t handle, uint32_t bytes, uint32_t count) {
     unsigned char out[24]; memcpy(out, "BER2", 4);
     uint32_t values[5] = {op, status, handle, bytes, count};
@@ -193,7 +220,7 @@ int main(int argc, char **argv) {
                 targets.push_back({(const char *)request.target, (int)request.target_length});
             }
             Query dummy;
-            auto scores = workers.run(dummy, targets, -1, &jobs);
+            auto scores = native_run(workers, dummy, targets, -1, &jobs);
             control(4, 0, 0, retained, (uint32_t)targets.size());
             be_batch_output = 1;
             for (size_t i = 0; i < scores.size(); ++i) result(scores[i], targets[i].second);
@@ -230,7 +257,7 @@ int main(int argc, char **argv) {
                     ts.push_back({(const char *)r.data+pos,(int)n}); pos+=n;
                 }
             }
-            auto scores = workers.run(it->second, ts, (int32_t)r.threshold);
+            auto scores = native_run(workers, it->second, ts, (int32_t)r.threshold);
             if (r.operation == 5) { control(5,0,handle,retained,(uint32_t)ts.size()); be_batch_output=1; }
             for (size_t i = 0; i < ts.size(); ++i) result(scores[i],ts[i].second);
             if (r.operation == 5) { be_batch_output=0; if (fflush(stdout)) be_die("write failed"); }

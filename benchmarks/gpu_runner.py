@@ -136,7 +136,7 @@ def prerequisites(cc):
 
 
 def build_probe(*, cuda_enabled=False, cpu_control=False, cc=None):
-    cc = cc or shlex.split(os.environ.get("CC", "clang-19"))
+    cc = cc or shlex.split(os.environ.get("CC", str(ROOT / "scripts/cc")))
     version = command(["bend", "version"])
     if version != "bend " + (ROOT / ".bend-version").read_text().strip():
         raise RuntimeError(f"Unexpected Bend compiler: {version}")
@@ -545,6 +545,10 @@ def legacy_main(argv=None):
 
 def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
+    if "--sessions" in argv:
+        argv.remove("--sessions")
+        from benchmarks.session_runner import main as session_main
+        return session_main(argv)
     if "--gate" in argv:
         argv.remove("--gate")
         argv = [arg for arg in argv if arg != "--no-report"]

@@ -40,7 +40,13 @@ def provenance(args, cc, cxx, compilers):
     roots = {}
     for name, root in (("baseline", args.baseline), ("candidate", args.candidate)):
         root = root.resolve()
-        roots[name] = {"path": str(root), "commit": G.run_command(["git", "-C", root, "rev-parse", "HEAD"]),
+        # Immutable source archives need not contain a mutable Git database.
+        # Exact compiled-source hashes remain mandatory in build metadata.
+        if not (root / ".git").exists():
+            roots[name] = {"path": str(root), "kind": "source snapshot", "commit": None,
+                           "status": "No Git metadata; identify by compiled-source hashes"}
+            continue
+        roots[name] = {"path": str(root), "kind": "git checkout", "commit": G.run_command(["git", "-C", root, "rev-parse", "HEAD"]),
             "status": G.run_command(["git", "-C", root, "status", "--porcelain", "--untracked-files=normal"]),
             "diff_sha256": G.digest(G.run_command(["git", "-C", root, "diff", "HEAD"]).encode())}
     return {"roots": roots, "python": executable(sys.executable), "cc": executable(cc[0]), "cxx": executable(cxx[0]),
@@ -410,9 +416,14 @@ def run(args, document, suite, cpus, bends, cc, cxx, output):
         "public_edlib": "Public edlibAlign and edlibFreeAlignResult, raw query/equalities retained, persistent C++ workers; ordinary U64 implementation",
         "cached_edlib": "INTERNAL diagnostic: pinned U64 NW, retained compact alphabet/Peq, per-thread target mapping buffer; Edlib block scratch allocated per call; supports NW DISTANCE only, all bytes/equalities/thresholds/empty exceptions",
         "memory": "retained_budget_bytes is conservative admission accounting; rss_kib is current process RSS; peak_rss_kib is process VmHWM. Neither emitted C size nor budgets are live memory",
-        "native_attribution": "Production native_api_ns includes search/planning/ordering/restoration/validation. Separate intrusive diagnostics use production pool primitives and Q.run_nw/R.reconstruct_known/A.path_validate; other modes retain combined execution. Legacy search_ns is never substituted",
+        "native_attribution": "Production native_api_ns includes search/planning/ordering/restoration/validation. Separate intrusive diagnostics use production pool primitives, Q.run_nw/K.best, legacy HW recovery, R.reconstruct_known and R.valid_path; generic/empty inputs retain combined execution. Legacy search_ns is never substituted",
         "process_usage": "Native launcher wait4: process_peak_rss_kib covers the backend child from a small native fork, excluding Python's inherited RSS. spawn_to_exit_peak_rss_kib covers the outer launcher including pre-exec Python inheritance. Live RSS/VmHWM are separate /proc observations"})
-    document["phase_semantics"]["path_validation_ns"] = "Serial production NW diagnostic only: location validity plus R.valid_path, reported from slot 8; CIGAR and result construction use result_ns"
+    document["phase_semantics"]["path_validation_ns"] = "Serial search-diagnostic for NW/SHW/HW PATH: location validity plus R.valid_path, slot 8; interval_ns is extraction; CIGAR and result construction use result_ns. Empty/generic cases remain combined"
+    document["phase_semantics"]["search-diagnostic"] = "Serial prepared byte searches: NW Q.run_nw or directional K.best. Search work counters are observed only for NW; search_counts_exact=0 for directional searches. Reconstruction remains aggregate: midpoint preparation/passes/split scan, small traceback and path-list work are not individually timed"
+    document["phase_semantics"]["hw_inputs_ns"] = "Serial diagnostic: target length and reversed query/target construction; no retained reverse owner"
+    document["phase_semantics"]["hw_profile_ns"] = "Serial diagnostic: production legacy V.build_peq reversed-query profile, excluding reversed input construction"
+    document["phase_semantics"]["hw_recovery_ns"] = "Serial diagnostic: all ordered endpoint start searches and assembly, or the existing fixed-interval route. Forward search is search_ns"
+    document["phase_semantics"]["interval_ns"] = "Serial diagnostic: extraction of only the first ordered PATH interval"
     document["phase_semantics"]["empty_batches"] = "Call overhead only: no per-target metric, throughput, or Bend/Edlib alignment ratio"
     document["phase_semantics"]["planned_active_leaves"] = "Separate intrusive diagnostic counts actual constructed plan leaves, preserving affine owners. Traversal is excluded from adjacent timers. This is not a count of simultaneously running threads; zero in other binaries means unobserved"
     document["phase_semantics"]["diagnostic_observers"] = "Allocation/RSS observer time is excluded from the following stage. Stage times still include effect/boundary costs; result_ns is not an isolated allocator or search timer"
@@ -643,7 +654,7 @@ def run(args, document, suite, cpus, bends, cc, cxx, output):
                                             raise RuntimeError("Missing production allocation diagnostic")
                                         document["allocations"].append({"variant": variant, "workload": w.name,
                                             "threads": thread, "diagnostic_mode": diagnostic_mode,
-                                            "boundary": {"string-diagnostic": "intrusive production String pool stages", "owned-diagnostic": "intrusive owned pool stages; decoded packed inputs before reset; locations_ns is owner selection, work_ns includes search/results/fork-join", "search-diagnostic": "serial production Q.run_nw search/result diagnostic"}[diagnostic_mode],
+                                            "boundary": {"string-diagnostic": "intrusive production String pool stages", "owned-diagnostic": "intrusive owned pool stages; decoded packed inputs before reset; locations_ns is owner selection, work_ns includes search/results/fork-join", "search-diagnostic": "serial production Q.run_nw/K.best with explicit legacy HW/restoration stages"}[diagnostic_mode],
                                             "setup": diagnostic.setup, **metrics,
                                             "path_validation_ns": metrics["locations_ns"] if diagnostic_mode == "search-diagnostic" else 0})
                                     diagnostic.worker.finish()

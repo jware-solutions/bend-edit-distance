@@ -1883,3 +1883,30 @@ def Laws.prepared_wide_threshold_rejection():
 
 def Laws.prepared_wide_threshold_acceptance():
   {==}
+
+def Laws.restoration_repeated_split_ties():
+  {==}
+
+def Laws.restoration_later_strict_minimum():
+  {==}
+
+def Laws.restoration_reverse_indexing():
+  {==}
+
+def Laws.restoration_frontier_distant_prefixes():
+  {==}
+
+def Laws.restoration_empty_reverse_interval(end):
+  {==}
+
+def Laws.restoration_last_reverse_tie():
+  {==}
+
+def Laws.restoration_direct_graph_validation():
+  {==}
+
+def Laws.restoration_empty_interval_consumption():
+  {==}
+
+def Laws.restoration_matrix_cell_boundary():
+  {==}

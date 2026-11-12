@@ -64,3 +64,26 @@ def test_large_skew_and_nontransitive_equalities(frontier_probe):
     target = b"CA\xff\0N" * 7
     pairs = (EqualityPair("A", "N"), EqualityPair("N", "C"), EqualityPair(0, 255))
     assert scores(frontier_probe, query, target, pairs) == scalar(query, target, pairs)
+
+
+@pytest.mark.parametrize('threads', [1, 2, 4])
+def test_midpoints_scan_all_candidates_and_keep_first_minimum(frontier_probe, threads):
+    rng = random.Random(9901)
+    pairs = (EqualityPair('A', 'N'), EqualityPair('N', 'C'), EqualityPair('A', 'N'),
+             EqualityPair('N', 'A'), EqualityPair('A', 'A'), EqualityPair(0, 255))
+    cases = [(b'AA', b'AAA'), (b'AC' * 65, b'CA' * 65),
+             (b'A' * 257, b'A' * 3), (b'ABC', b'Z' * 1025 + b'ABC'),
+             (b'ABC', b'ABC' + b'Z' * 1025), (b'', b''), (b'ANC', b''),
+             (bytes(range(256)), bytes(reversed(range(256))))]
+    for qn, tn in ((31, 129), (33, 257), (65, 17), (97, 65), (129, 513)):
+        cases.append((bytes(rng.choices(b'ACN\0\xff', k=qn)), bytes(rng.choices(b'ACN\0\xff', k=tn))))
+    for query, target in cases:
+        half = len(query) // 2
+        forward = scalar(query[:half], target, pairs)
+        reverse = scalar(query[half:][::-1], target[::-1], pairs)
+        costs = [a + b for a, b in zip(forward, reversed(reverse))]
+        result = subprocess.run([frontier_probe, *runtime_prefix(threads=threads), 'midpoint'],
+            input=encode_request(query, target, AlignConfig(equalities=pairs)),
+            capture_output=True, check=True, timeout=30)
+        assert int(result.stdout) == costs.index(min(costs))
+        assert scores(frontier_probe, query, target, pairs, threads) == scalar(query, target, pairs)

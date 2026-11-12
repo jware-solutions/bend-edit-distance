@@ -2,7 +2,7 @@
 
 import random
 
-from alignment import AlignConfig, EqualityPair
+from alignment import AlignConfig, EqualityPair, Mode, Task
 
 # "Three" counts diagonal mismatches, not the independently checked edit optimum.
 CERTIFICATE_FAMILIES = ("two-begin", "two-boundary", "two-middle", "two-end", "two-mixed",
@@ -14,7 +14,11 @@ PREPARATION_FAMILIES = ("prep-one", "prep-small", "prep-dna", "prep-bytes", "pre
                         "prep-reflexive", "prep-dense", "prep-max-pairs", "prep-byte-duplicates",
                         "prep-unique-15", "prep-unique-16", "prep-unique-17")
 
-FAMILIES = (*PREPARATION_FAMILIES, "identical", "bytes-identical", "one", "two", "two-adjacent", "sparse", "indel", "dna-random", "bytes-random", "equalities",
+RESTORATION_FAMILIES = ("restore-small", "restore-16", "restore-17", "restore-general", "restore-skew",
+                        "restore-validation", "hw-unique", "hw-several", "hw-many", "hw-prefix", "hw-fixed",
+                        "cigar-homogeneous", "cigar-alternating")
+
+FAMILIES = (*PREPARATION_FAMILIES, *RESTORATION_FAMILIES, "identical", "bytes-identical", "one", "two", "two-adjacent", "sparse", "indel", "dna-random", "bytes-random", "equalities",
             "bytes-one", "bytes-two", "bytes-sparse", "rotation", "burst", "dense-prefix", "dense-suffix",
             "dna-10pct", "dna-25pct", "dna-50pct", *CERTIFICATE_FAMILIES)
 
@@ -33,7 +37,7 @@ def orientation_family(name, query_length, target_length, count, seed):
     symbols are real input, including their construction/traversal costs.
     Reverse dimensions are separate requests, never a timed oracle selector.
     """
-    if name in PREPARATION_FAMILIES or name not in FAMILIES:
+    if name in (*PREPARATION_FAMILIES, *RESTORATION_FAMILIES) or name not in FAMILIES:
         raise ValueError("Orientation requires an alignment family")
     if min(query_length, target_length, count) < 0:
         raise ValueError("Negative orientation dimension")
@@ -64,6 +68,8 @@ def family(name, length, count, seed):
         raise ValueError("Invalid production family")
     if name in PREPARATION_FAMILIES:
         return preparation_family(name, length, count, seed)
+    if name in RESTORATION_FAMILIES:
+        return restoration_family(name, length, count, seed)
     rng = random.Random(seed)
     byte_alphabet = name.startswith("bytes-")
     if byte_alphabet and name != "bytes-random":
@@ -132,6 +138,53 @@ def family(name, length, count, seed):
                     target = target.replace(b"A", b"N")
             targets.append(target)
         batches.append(tuple((query, t, config) for t in targets))
+    return query, config, tuple(batches)
+
+
+def restoration_family(name, length, count, seed):
+    """Bounded restoration regimes; nonzero HW ties exercise reverse recovery.
+
+    Three target groups vary consumed intervals or unrelated prefixes. The
+    repeated islands in a single HW target deliberately create ordered ties.
+    Their endpoint counts and actual distances are oracle results, not labels.
+    """
+    rng = random.Random(seed)
+    query = bytes(rng.choices(b"ACGT", k=length))
+    pairs = ()
+    if name == "restore-validation":
+        query = (b"AN\0\xffC" * ((length + 4) // 5))[:length]
+        pairs = tuple(EqualityPair(a, b) for a, b in [(65, 78), (78, 65)] * 128 + [(78, 67), (0, 255)])
+    if name.startswith("hw-"):
+        query = b"A" * length
+    if name.startswith("cigar-"):
+        query = b"A" * length
+    config = AlignConfig(Mode.HW if name.startswith("hw-") else Mode.NW, Task.PATH, equalities=pairs)
+    batches = []
+    for group in range(3):
+        jobs = []
+        for i in range(count):
+            if name.startswith("hw-"):
+                copies = {"hw-several": 3, "hw-many": 16}.get(name, 1)
+                island = query if name == "hw-fixed" else b"A" * max(1, length - 1)
+                if name in ("hw-unique", "hw-prefix") and length > 2:
+                    island = query[:length // 2] + b"B" + query[length // 2 + 1:]
+                prefix = b"Z" * ((length * 8 if name == "hw-prefix" else 1) + group + i)
+                target = prefix + (island + b"ZZ") * copies
+            elif name == "cigar-homogeneous":
+                target = query + b"A" * (group + i + 1)
+            elif name == "cigar-alternating":
+                target = (b"AC" * ((length + 1) // 2))[:length] + b"C" * group
+            elif name == "restore-skew":
+                target = bytes(rng.choices(b"ACGT", k=max(1, length // 16)))
+            elif name in ("restore-16", "restore-17"):
+                target = query + bytes([88 + (group + i) % 3]) * int(name[8:])
+            elif name == "restore-validation":
+                target = query.replace(b"A", b"N").replace(b"\0", b"\xff") + b"Z" * (group + 1)
+            else:
+                edits = {"restore-small": 3, "restore-16": 16, "restore-17": 17}.get(name, max(18, length // 3))
+                target = substitute(query, rng.sample(range(length), min(length, edits)), b"ACGT", rng)
+            jobs.append((query, target, config))
+        batches.append(tuple(jobs))
     return query, config, tuple(batches)
 
 

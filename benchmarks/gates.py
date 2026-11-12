@@ -29,7 +29,8 @@ from transport import LENGTH, MAX_FRAME_LENGTH, RESPONSE, decode_response, encod
 
 ROOT = Path(__file__).resolve().parents[1]
 PHASES = ("planning_ns", "work_ns", "ordering_ns", "profile_ns", "search_ns",
-          "reconstruction_ns", "serialization_ns", "prepare_ns", "locations_ns", "result_ns")
+          "reconstruction_ns", "serialization_ns", "prepare_ns", "locations_ns", "result_ns",
+          "hw_inputs_ns", "hw_profile_ns", "hw_recovery_ns", "interval_ns")
 READY = b"BEND_GATE_READY "
 METRICS = b"BEND_GATE_METRICS "
 ALLOC_ANCHOR = "INLINE u64 heap_alloc(Env e, u32 cls) {"
@@ -338,10 +339,11 @@ class Worker:
                 raise RuntimeError(f"Missing phase metrics: {line!r}")
             data = json.loads(line[len(METRICS):])
             phases = data.pop("phases", None)
-            if (data.pop("schema", None) != 1 or not isinstance(phases, list) or len(phases) != len(PHASES)
+            if (data.pop("schema", None) != 1 or not isinstance(phases, list) or len(phases) not in (10, len(PHASES))
                     or any(type(n) is not int or n < 0 for n in phases)
                     or any(type(n) is not int or n < 0 for n in data.values())):
                 raise RuntimeError("Invalid phase metrics")
+            sample.update(dict.fromkeys(PHASES, 0))
             sample.update(zip(PHASES, phases))
             sample.update(data)
             sample["total_cost_ns"] = sum(phases) - sample["serialization_ns"]

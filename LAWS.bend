@@ -2144,3 +2144,42 @@ law cpu_owned_cutoff_129:
 
 law cpu_owned_empty_and_singleton:
   {(PBP.active_owners(4n, 0n, 0n, 129n), PBP.active_owners(4n, 1n, 65537n, 129n)) == (1n, 1n) : Nat & Nat}
+
+# Restoration contracts: every split candidate matters, and equal minima keep
+# the earliest column. These examples do not assert universal optimality.
+law restoration_repeated_split_ties:
+  {R.split_column([3, 2, 1, 0], [0, 1, 2, 3], 0n, 0n, 4294967295) == 0n : Nat}
+
+law restoration_later_strict_minimum:
+  {R.split_column([5, 3, 2, 0], [0, 1, 2, 4], 0n, 0n, 4294967295) == 1n : Nat}
+
+law restoration_reverse_indexing:
+  {R.midpoint("AA", "BB", "AABB", Nil{}) == 2n : Nat}
+
+law restoration_frontier_distant_prefixes:
+  {F.row("AB", "ZZABZZ", Nil{}) == [2, 2, 2, 3, 2, 3, 4] : List<U32>}
+
+law restoration_empty_reverse_interval:
+  for +end: Nat
+  {Myers.hw_start(end, A.Location{E.BeforeStart{}, 0n}) ==
+    A.Location{E.Position{end}, 1n+end} : A.Location}
+
+law restoration_last_reverse_tie:
+  {Myers.hw_start_best(7n, A.Best{2, [A.Location{E.Position{2n}, 0n},
+    A.Location{E.Position{4n}, 0n}, A.Location{E.Position{5n}, 0n}]}) ==
+    A.Location{E.Position{7n}, 2n} : A.Location}
+
+law restoration_direct_graph_validation:
+  {(R.valid_path("AC", "CA", [E.Match{}, E.Match{}],
+      [E.EqualityPair{'A', 'N'}, E.EqualityPair{'N', 'C'}, E.EqualityPair{'A', 'A'}], 0n),
+    R.valid_path("AN", "NA", [E.Match{}, E.Match{}],
+      [E.EqualityPair{'A', 'N'}, E.EqualityPair{'N', 'A'}, E.EqualityPair{'A', 'N'}], 0n)) ==
+    (False{}, True{}) : Bool & Bool}
+
+law restoration_empty_interval_consumption:
+  {(R.valid_path("AC", "", [E.Insert{}, E.Insert{}], Nil{}, 2n),
+    R.valid_path("", "AC", [E.Delete{}, E.Delete{}], Nil{}, 2n)) == (True{}, True{}) : Bool & Bool}
+
+law restoration_matrix_cell_boundary:
+  {(R.small_matrix(63n, 62n), R.small_matrix(63n, 63n), R.small_matrix(63n, 64n)) ==
+    (True{}, True{}, False{}) : Bool & Bool & Bool}

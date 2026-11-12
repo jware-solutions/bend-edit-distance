@@ -300,8 +300,8 @@ def test_missing_required_metrics_and_coverage_fail_closed():
 
 
 def test_production_families_dna_and_batch_identities():
-    from benchmarks.production_workloads import family, FAMILIES, PREPARATION_FAMILIES
-    for name in set(FAMILIES) - set(PREPARATION_FAMILIES):
+    from benchmarks.production_workloads import family, FAMILIES, PREPARATION_FAMILIES, RESTORATION_FAMILIES
+    for name in set(FAMILIES) - set(PREPARATION_FAMILIES) - set(RESTORATION_FAMILIES):
         q, config, batches = family(name, 129, 8, 42)
         assert (q, config, batches) == family(name, 129, 8, 42)
         assert len(batches) == 3
@@ -545,6 +545,27 @@ def test_production_allocation_stages_are_separate(bend_tool, cpp_binary, tmp_pa
                     session.worker.finish()
                 finally:
                     session.close()
+
+    from alignment import Mode
+    from benchmarks.production_workloads import family
+    for name in ('hw-fixed', 'hw-unique', 'hw-several', 'hw-many', 'hw-prefix'):
+        q, config, batches = family(name, 33, 1, 899)
+        w = gates.Workload(name, batches[0], prepared_query=(q, config))
+        with AlignmentWorker([cpp_binary, '--worker']) as oracle:
+            session = Native(binary, 'search-diagnostic', w, 2, 2, 60, 3)
+            try:
+                for jobs in batches:
+                    actual, metrics = session.call(jobs)
+                    gates.validate(actual, [oracle.align(*j) for j in jobs], replace(w, jobs=jobs))
+                    assert metrics['search_ns'] > 0
+                    assert metrics['hw_recovery_ns'] > 0
+                    assert metrics['reconstruction_ns'] > 0 and metrics['interval_ns'] > 0
+                    assert metrics['locations_ns'] > 0 and metrics['result_ns'] > 0
+                    assert (metrics['hw_profile_ns'] == 0) == (name == 'hw-fixed')
+                    assert (metrics['hw_inputs_ns'] == 0) == (name == 'hw-fixed')
+                session.worker.finish()
+            finally:
+                session.close()
 
 
 def test_configuration_option_and_empty_metric_rejection():
@@ -875,3 +896,53 @@ def test_profile_scratch_trace_releases_temporary_adjacency(bend_tool, tmp_path)
         session.worker.finish()
     finally:
         session.close()
+
+
+def test_restoration_families_have_independent_groups_and_real_hw_ties():
+    from benchmarks.production_workloads import family, RESTORATION_FAMILIES
+    from tests.test_frontiers import scalar
+    for name in RESTORATION_FAMILIES:
+        q, config, batches = family(name, 33, 2, 91)
+        assert (q, config, batches) == family(name, 33, 2, 91)
+        assert len(set(batches)) == 3
+        assert all(len(batch) == 2 for batch in batches)
+        assert config.task == Task.PATH
+        for batch in batches:
+            for query, target, c in batch:
+                assert query == q and c == config
+                if name.startswith('hw-') and name != 'hw-fixed':
+                    assert q not in target  # Every island needs a nonzero edit.
+                if name == 'restore-16':
+                    assert scalar(query, target, ())[len(target)] == 16
+                if name == 'restore-17':
+                    assert scalar(query, target, ())[len(target)] == 17
+
+
+@pytest.mark.parametrize('length', [10, len(gates.PHASES)])
+def test_phase_metrics_accept_legacy_and_restoration_slots(length):
+    import os
+    from types import SimpleNamespace
+    worker = object.__new__(gates.Worker)
+    worker.timeout = 1
+    worker._wait = lambda *_: None
+    worker.line = lambda: gates.METRICS + json.dumps({'schema': 1, 'phases': list(range(length))}).encode()
+    with open(os.devnull, 'wb') as sink:
+        worker.process = SimpleNamespace(stdin=sink)
+        values, metrics = worker.request(b'', 0)
+    assert values == []
+    assert [metrics[k] for k in gates.PHASES] == list(range(length)) + [0] * (len(gates.PHASES) - length)
+    assert metrics['total_cost_ns'] == sum(range(length)) - 6
+
+
+@pytest.mark.parametrize('phases', [[0] * 11, [0] * 13, [0] * 15, [0] * 13 + [-1], [0] * 13 + [True]])
+def test_restoration_metrics_reject_incomplete_or_invalid_slots(phases):
+    import os
+    from types import SimpleNamespace
+    worker = object.__new__(gates.Worker)
+    worker.timeout = 1
+    worker._wait = lambda *_: None
+    worker.line = lambda: gates.METRICS + json.dumps({'schema': 1, 'phases': phases}).encode()
+    with open(os.devnull, 'wb') as sink:
+        worker.process = SimpleNamespace(stdin=sink)
+        with pytest.raises(RuntimeError, match='Invalid phase metrics'):
+            worker.request(b'', 0)

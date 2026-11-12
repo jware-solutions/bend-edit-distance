@@ -4,7 +4,7 @@
 #include <inttypes.h>
 #include <sys/resource.h>
 
-static uint64_t gate_last, gate_phases[10];
+static uint64_t gate_last, gate_phases[14];
 static uint32_t gate_owners;
 static uint32_t gate_leaves;
 #if defined(CID(search_counts))
@@ -13,8 +13,8 @@ static uint32_t gate_counts_exact;
 #endif
 #ifdef GATE_ALLOCATIONS
 static uint64_t gate_live_start;
-static uint64_t gate_phase_live[10], gate_phase_peak[10];
-static uint64_t gate_phase_rss[10], gate_phase_hwm[10];
+static uint64_t gate_phase_live[14], gate_phase_peak[14];
+static uint64_t gate_phase_rss[14], gate_phase_hwm[14];
 static void gate_memory(unsigned phase) {
   unsigned long pages, resident;
   FILE *file = fopen("/proc/self/statm", "r");
@@ -67,7 +67,7 @@ Term reset_run(Env e, Term* f, IoWork* w) {
 
 Term mark_run(Env e, Term* f, IoWork* w) {
   uint64_t now = gate_now();
-  if ((u32)f[0] >= 10) abort();
+  if ((u32)f[0] >= 14) abort();
   gate_phases[(u32)f[0]] += now - gate_last;
   gate_last = now;
 #ifdef GATE_SCRATCH_TRACE
@@ -84,8 +84,14 @@ Term mark_run(Env e, Term* f, IoWork* w) {
 }
 
 Term finish_run(Env e, Term* f, IoWork* w) {
+#ifdef GATE_SCRATCH_TRACE
+  // Preparation closes at its forced boundary; restoration rounds close only
+  // after serialization has consumed the results. Trace matched lifetimes,
+  // never infer scratch by subtracting retention from a high-water mark.
+  if (atomic_load(&gate_tracing)) gate_trace_stop();
+#endif
   fprintf(stderr, "BEND_GATE_METRICS {\"schema\":1,\"phases\":[");
-  for (unsigned i = 0; i < 10; ++i)
+  for (unsigned i = 0; i < 14; ++i)
     fprintf(stderr, "%s%" PRIu64, i ? "," : "", gate_phases[i]);
   fprintf(stderr, "],\"effective_owners\":%u,\"planned_active_leaves\":%u", gate_owners, gate_leaves);
 #if defined(CID(search_counts))
@@ -109,7 +115,7 @@ Term finish_run(Env e, Term* f, IoWork* w) {
     ",\"heap_peak_bytes\":%" PRIu64,
     (uint64_t)atomic_load(&gate_allocated_bytes), gate_live_start,
     (uint64_t)atomic_load(&gate_live_bytes), (uint64_t)atomic_load(&gate_peak_bytes));
-  for (unsigned i = 0; i < 10; ++i)
+  for (unsigned i = 0; i < 14; ++i)
     fprintf(stderr, ",\"heap_phase%u_live_bytes\":%" PRIu64
       ",\"heap_phase%u_peak_bytes\":%" PRIu64 ",\"phase%u_rss_kib\":%" PRIu64
       ",\"phase%u_hwm_kib\":%" PRIu64, i, gate_phase_live[i], i, gate_phase_peak[i],
@@ -150,7 +156,7 @@ Term search_counts_run(Env e, Term* f, IoWork* w) {
 #endif
 
 Term dispose_run(Env e, Term* f, IoWork* w) {
-  if ((u32)f[0] >= 10) abort();
+  if ((u32)f[0] >= 14) abort();
   term_drop(e, f[1]);
   uint64_t now = gate_now();
   gate_phases[(u32)f[0]] += now - gate_last;

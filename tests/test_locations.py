@@ -157,3 +157,32 @@ def test_exhaustive_hw_starts_with_custom_equalities(bend_binary, cpp_binary):
             actual = bend_align(query, target, config, binary=bend_binary)
             expected = cpp_edlib_align(query, target, config, binary=cpp_binary)
             assert actual == expected, (query, target, config, actual, expected)
+
+
+@pytest.mark.parametrize('threads', [1, 2, 4])
+@pytest.mark.parametrize('task', [Task.LOC, Task.PATH])
+def test_general_hw_nonzero_ties_across_every_padding_length(bend_binary, cpp_binary, threads, task):
+    from dataclasses import replace
+    # Every island is one query symbol short. Both the insertion and trailing
+    # mismatch endpoints tie; all ends must survive, with earliest starts.
+    pairs = (EqualityPair('A', 'N'), EqualityPair('N', 'C'), EqualityPair('N', 'A'),
+             EqualityPair('A', 'N'), EqualityPair('A', 'A'), EqualityPair(0, 255))
+    config = AlignConfig(Mode.HW, task, equalities=pairs)
+    with AlignmentWorker([bend_binary, *runtime_prefix(threads=threads), '--worker']) as worker:
+        for n in (*range(2, 34), 63, 64, 65, 95, 96, 97, 127, 128, 129, 255, 256, 257):
+            query = b'A' * n
+            target = b'Z' * 67 + (b'N' * (n - 1) + b'ZZ') * 3
+            expected = cpp_edlib_align(query, target, config, binary=cpp_binary)
+            assert expected.edit_distance == 1 and len(expected.end_locations) == 6
+            with worker.prepare(query, pairs) as prepared:
+                for limit in (Unlimited(), MaxDistance(0), MaxDistance(1), MaxDistance(2)):
+                    c = replace(config, threshold=limit)
+                    actual = prepared.align(target, c)
+                    oracle = cpp_edlib_align(query, target, c, binary=cpp_binary)
+                    assert (actual.status, actual.distance, actual.end_locations, actual.start_locations) == (
+                        oracle.status, oracle.distance, oracle.end_locations, oracle.start_locations)
+                    assert_valid_path(query, target, c, actual)
+                # Restore mixed-mode workspace state, then recover all ties again.
+                prepared.align(query[::-1], AlignConfig(Mode.SHW, Task.DISTANCE, equalities=pairs))
+                assert prepared.align(target, config) == prepared.align(target, config)
+            assert worker.retained_bytes == 0

@@ -9,6 +9,9 @@ import ../src/Transport.bend as BT
 import ../src/SearchKernel.bend as K
 import ../src/Alignment.bend as A
 import ../src/Reconstruction.bend as R
+import ../src/Myers.bend as M
+import ../src/BitVector.bend as V
+import ../src/Word.bend as Word
 import ./gate_metrics.bend as T
 import ./gate_input.bend as Input
 
@@ -135,25 +138,84 @@ def inspect(pool: P.Pool) -> IO(P.Pool):
   P.Pool{owners, +shards, length, budget} = pool
   T.owners(P.Pool, P.Pool{owners, shards, length, budget}, U32.from_nat(shards))
 
-def restore(+query: String, +target: String, +pairs: List<&2, E.EqualityPair>, task: E.Task,
-            format: E.CigarFormat, +end: E.Coordinate, distance: E.EditDistance) -> IO(E.AlignResult):
-  match task distance:
-    case E.Path{} E.Found{+score}:
-      +location = {A.Location{end, 0n} : A.Location}
-      +segment = A.span(target, location)
+# Serial restoration attribution. Slots 10/11/12 separate reversed inputs,
+# legacy reverse profile construction, and every ordered endpoint recovery.
+# Result construction includes CIGAR. No PATH-minus-DISTANCE subtraction.
+def restore_best(+query: String, +target: String, +pairs: List<&2, E.EqualityPair>, task: E.Task,
+                 format: E.CigarFormat, best: A.Best) -> IO(E.AlignResult):
+  match task best:
+    case E.Path{} A.Best{+score, +location <> tail}:
       do IO<E.AlignResult>:
-        operations : List<&2, E.Operation> <- T.mark(List<&2, E.Operation>, 5,
-          R.reconstruct_known(query, segment, pairs, score))
-        +shared : List<&2, E.Operation> = operations
+        +segment : String <- T.mark(String, 13, A.span(target, location))
+        +operations : List<&2, E.Operation> <- T.mark(List<&2, E.Operation>, 5,
+          R.reconstruct_known(query, segment, pairs, U32.to_nat(score)))
         valid_location : Bool <- T.mark(Bool, 8, A.location_valid(target, location))
-        valid_path : Bool <- T.mark(Bool, 8, R.valid_path(query, segment, shared, pairs, score))
-        T.mark(E.AlignResult, 9, A.path_checked(U32.from_nat(score), [location], format,
-          shared, Bool.and(valid_location, valid_path)))
-    case _ E.NotFound{}:
+        valid_path : Bool <- T.mark(Bool, 8, R.valid_path(query, segment, operations, pairs, U32.to_nat(score)))
+        T.mark(E.AlignResult, 9, A.path_checked(score, location <> tail, format,
+          operations, Bool.and(valid_location, valid_path)))
+    case _ _:
+      T.mark(E.AlignResult, 9, A.result(query, target, task, pairs, format, best, True{}))
+
+def restore(+query: String, +target: String, +pairs: List<&2, E.EqualityPair>, task: E.Task,
+            format: E.CigarFormat, end: E.Coordinate, distance: E.EditDistance) -> IO(E.AlignResult):
+  match distance:
+    case E.Found{score}:
+      restore_best(query, target, pairs, task, format, A.Best{U32.from_nat(score), [A.Location{end, 0n}]})
+    case E.NotFound{}:
       T.mark(E.AlignResult, 9, E.not_found())
-    case other E.Found{score}:
-      T.mark(E.AlignResult, 9, A.result(query, target, other, pairs, format,
-        A.Best{U32.from_nat(score), [A.Location{end, 0n}]}, True{}))
+
+def hw_general(+query: String, +target: String, +pairs: List<&2, E.EqualityPair>, task: E.Task,
+               format: E.CigarFormat, +score: U32, +locations: List<&2, A.Location>, +length: Nat) -> IO(E.AlignResult):
+  do IO<E.AlignResult>:
+    columns : Nat <- T.mark(Nat, 10, String.length(target))
+    rq : String <- T.mark(String, 10, String.reverse(query))
+    rt : String <- T.mark(String, 10, String.reverse(target))
+    profiles : List<&2, V.Peq> <- T.mark(List<&2, V.Peq>, 11,
+      V.build_peq(Word.blocks(length), rq, pairs))
+    resolved : List<&2, A.Location> <- T.mark(List<&2, A.Location>, 12,
+      M.hw_locations(List.length(&2, A.Location, locations), locations,
+        rt, columns, profiles, length, U32.to_nat(score)))
+    restore_best(query, target, pairs, task, format, A.Best{score, resolved})
+
+def hw_restored(+query: String, +target: String, +pairs: List<&2, E.EqualityPair>, task: E.Task,
+                format: E.CigarFormat, +score: U32, +locations: List<&2, A.Location>, +length: Nat,
+                fixed: Bool) -> IO(E.AlignResult):
+  match fixed:
+    case True{}:
+      do IO<E.AlignResult>:
+        resolved : List<&2, A.Location> <- T.mark(List<&2, A.Location>, 12, M.hw_fixed(locations, length))
+        restore_best(query, target, pairs, task, format, A.Best{score, resolved})
+    case False{}:
+      hw_general(query, target, pairs, task, format, score, locations, length)
+
+def semi_accepted(+query: String, +target: String, +pairs: List<&2, E.EqualityPair>, task: E.Task,
+                  mode: E.Mode, format: E.CigarFormat, +length: Nat, best: A.Best) -> IO(E.AlignResult):
+  match task mode best:
+    case E.Distance{} _ _:
+      restore_best(query, target, pairs, task, format, best)
+    case _ E.HW{} A.Best{+score, +locations}:
+      hw_restored(query, target, pairs, task, format, score, locations, length,
+        Bool.or(U32.is_eq(score, 0), Nat.is_eq(length, 1n)))
+    case _ _ _:
+      restore_best(query, target, pairs, task, format, best)
+
+def semi_finish(query: String, target: String, pairs: List<&2, E.EqualityPair>, task: E.Task,
+                mode: E.Mode, format: E.CigarFormat, length: Nat, best: A.Best, accepted: Bool) -> IO(E.AlignResult):
+  match accepted:
+    case True{}:
+      semi_accepted(query, target, pairs, task, mode, format, length, best)
+    case False{}:
+      T.mark(E.AlignResult, 9, E.not_found())
+
+def semi_restored(+query: String, +target: String, +pairs: List<&2, E.EqualityPair>, +length: Nat,
+                  task: E.Task, +mode: E.Mode, threshold: E.Threshold, format: E.CigarFormat,
+                  found: K.BestRun) -> IO(Q.Prepared & E.AlignResult):
+  K.BestRun{profile, workspace, +best, _} = found
+  A.Best{score, _} = best
+  do IO<Q.Prepared & E.AlignResult>:
+    accepted : Bool <- T.mark(Bool, 7, E.within_threshold(threshold, U32.to_nat(score)))
+    value : E.AlignResult <- semi_finish(query, target, pairs, task, mode, format, length, best, accepted)
+    return (Q.Prepared{query, pairs, length, Some{profile}, workspace}, value)
 
 def restored(+query: String, +target: String, +pairs: List<&2, E.EqualityPair>, +length: Nat,
              columns: Nat, task: E.Task, format: E.CigarFormat, found: K.Run) -> IO(Q.Prepared & E.AlignResult):
@@ -181,6 +243,13 @@ def search(owner: Q.Prepared, job: E.AlignJob) -> IO(Q.Prepared & E.AlignResult)
         found : K.Run <- T.mark(K.Run, 4, Q.run_nw(target, profile, workspace, length, shared, threshold))
         counted : K.Run <- record_search_counts(found)
         restored(query, target, pairs, length, shared, task, format, counted)
+    case Q.Prepared{+query, +pairs, +length, Some{profile}, workspace}
+         E.AlignJob{_, +target, E.AlignConfig{+mode, task, +threshold, _, format}}:
+      do IO<Q.Prepared & E.AlignResult>:
+        found : K.BestRun <- T.mark(K.BestRun, 4,
+          K.best(target, profile, workspace, length, M.semiglobal_maximum(threshold, length), mode))
+        uncounted : K.BestRun <- T.search_counts(K.BestRun, found, 0, 0, 0, 0)
+        semi_restored(query, target, pairs, length, task, mode, threshold, format, uncounted)
     case prepared E.AlignJob{_, target, E.AlignConfig{mode, task, threshold, _, format}}:
       T.mark(Q.Prepared & E.AlignResult, 1, L.align_prepared(prepared, target, Q.Options{mode, task, threshold, format}))
 

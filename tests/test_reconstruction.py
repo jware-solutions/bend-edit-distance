@@ -188,3 +188,50 @@ def test_large_byte_paths_with_equalities(bend_binary, cpp_binary, query, target
     assert_same_locations(actual, expected)
     assert_valid_path(query, target, config, actual)
     assert_valid_path(query, target, config, expected)
+
+
+@pytest.fixture(scope='module')
+def path_validation_probe(bend_tool):
+    from tests.helpers import execute
+    binary = ROOT / 'build/path-validation-probe'
+    execute([bend_tool, ROOT / 'tests/path_validation_probe.bend', '-o', binary], timeout=180)
+    return binary
+
+
+@pytest.mark.parametrize('threads', [1, 2, 4])
+def test_injected_paths_fail_closed_and_direct_equalities(path_validation_probe, threads):
+    from alignment import Status
+    from benchmarks.gates import validate_path
+    pairs = (EqualityPair('A', 'N'), EqualityPair('N', 'C'), EqualityPair('N', 'A'),
+             EqualityPair('A', 'N'), EqualityPair('A', 'A'), EqualityPair(0, 255))
+    cases = [
+        (b'AN', b'NA', '00', 0, 1, 0, True),
+        (b'AC', b'CA', '00', 0, 1, 0, False),  # no transitive closure
+        (b'A', b'A', '3', 0, 0, 1, False),
+        (b'A', b'C', '0', 0, 0, 0, False),
+        (b'A', b'C', '3', 0, 0, 1, True),
+        (b'AC', b'AC', '0', 0, 1, 0, False),
+        (b'A', b'A', '01', 0, 0, 1, False),
+        (b'A', b'Z', '1', 0, -1, 1, True),
+        (b'A', b'Z', '2', 0, -1, 1, False),
+        (b'', b'AC', '22', 0, 1, 2, True),
+        (b'', b'AC', '11', 0, 1, 2, False),
+        (b'AN', b'NA', '00', 0, 1, 1, False),
+        (b'A', b'A', '0', 0, 1, 0, False),  # end outside target
+        (b'', b'A', '', 2, 0, 0, False),
+        (b'', b'A', '', 1, -1, 0, False),
+        (b'', b'A', '', 1, 0, 0, True),  # permitted empty interval
+        (b'\0\xff', b'\xff\0', '00', 0, 1, 0, True),
+    ]
+    for query, target, codes, start, end, cost, valid in cases:
+        worker = cached_worker([path_validation_probe, *runtime_prefix(threads=threads),
+                                codes, str(start), str(end), '--worker'], cwd=ROOT)
+        for format in CigarFormat:
+            config = AlignConfig(task=Task.PATH, threshold=MaxDistance(cost), equalities=pairs, cigar_format=format)
+            result = worker.align(query, target, config)
+            if valid:
+                assert result.status == Status.OK
+                validate_path((query, target, config), result)
+            else:
+                assert result.status == Status.ERROR and result.edit_distance == -1
+                assert result.alignment is None and result.cigar is None and result.start_locations is None
